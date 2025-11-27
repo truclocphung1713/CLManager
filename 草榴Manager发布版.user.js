@@ -21,10 +21,8 @@
 // @grant        unsafeWindow
 // @connect      www.rmdown.com
 // @connect      *
-// @updateURL    https://raw.githubusercontent.com/truclocphung1713/CLManager/refs/heads/main/CLManager.user.js
-// @downloadURL  https://raw.githubusercontent.com/truclocphung1713/CLManager/refs/heads/main/CLManager.user.js
-// ==/UserScript==
-
+// @updateURL    https://raw.githubusercontent.com/truclocphung1713/CLManager/refs/heads/master/CLManager.user.js
+// @downloadURL  https://raw.githubusercontent.com/truclocphung1713/CLManager/refs/heads/master/CLManager.user.js
 (function () {
     'use strict';
 
