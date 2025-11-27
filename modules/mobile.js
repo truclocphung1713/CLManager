@@ -10,4 +10,9 @@
     // 例如：
     // CLM.initMobileEnhancements = function () { ... };
 
+    if (!CLM._mobileModuleLoaded) {
+        CLM._mobileModuleLoaded = true;
+        console.log('草榴Manager: mobile 模塊已加載');
+    }
+
 })(window);
