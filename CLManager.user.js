@@ -1,7 +1,7 @@
     // ==UserScript==
     // @name         草榴Manager
     // @namespace    http://tampermonkey.net/
-    // @version      1.8.0011
+    // @version      1.8.0012
     // @description  草榴搜索/板块悬停放大封面、标题预览图、品质徽章与 qBittorrent 一键发送和下载按钮。
     // @author       truclocphung1713
     // @match        https://t66y.com/search.php*
@@ -252,7 +252,23 @@
                 const cached = GM_getValue(cacheKey);
                 if (cached) {
                     console.log(`草榴Manager: 使用缓存 ${cacheKey}`);
-                    return JSON.parse(cached);
+                    
+                    // 兼容旧缓存格式 {data, timestamp} 和新格式（直接字符串）
+                    try {
+                        const parsed = JSON.parse(cached);
+                        // 如果是旧格式（有 data 和 timestamp 字段）
+                        if (parsed && typeof parsed === 'object' && 'data' in parsed) {
+                            console.log(`草榴Manager: 检测到旧缓存格式，清除并重新加载 ${cacheKey}`);
+                            GM_deleteValue(cacheKey);
+                            // 继续执行下面的远程加载逻辑
+                        } else {
+                            // 新格式：直接返回字符串
+                            return parsed;
+                        }
+                    } catch (e) {
+                        // JSON 解析失败，可能是纯字符串，直接返回
+                        return cached;
+                    }
                 }
             } catch (e) {
                 console.warn(`草榴Manager: 读取缓存失败 ${cacheKey}`, e);
@@ -973,7 +989,7 @@
             moduleInfo.style.fontSize = '12px';
             moduleInfo.style.color = '#6b7280';
             moduleInfo.style.marginBottom = '12px';
-            moduleInfo.textContent = '当前版本: 1.8.0011 | 模块基于版本号缓存，更新时自动清除旧版本';
+            moduleInfo.textContent = '当前版本: 1.8.0012 | 模块基于版本号缓存，更新时自动清除旧版本';
             moduleSection.appendChild(moduleInfo);
 
             const moduleButtons = document.createElement('div');
