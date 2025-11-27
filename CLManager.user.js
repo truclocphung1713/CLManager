@@ -1,7 +1,7 @@
     // ==UserScript==
     // @name         草榴Manager
     // @namespace    http://tampermonkey.net/
-    // @version      1.8.0009
+    // @version      1.8.0010
     // @description  草榴搜索/板块悬停放大封面、标题预览图、品质徽章与 qBittorrent 一键发送和下载按钮。
     // @author       truclocphung1713
     // @match        https://t66y.com/search.php*
@@ -932,6 +932,76 @@
             logSection.appendChild(logButtons);
 
             body.appendChild(logSection);
+
+            // 模块管理
+            const moduleSection = document.createElement('div');
+            moduleSection.className = 'clm-settings-section';
+            const moduleTitle = document.createElement('div');
+            moduleTitle.className = 'clm-settings-section-title';
+            moduleTitle.textContent = '模塊管理';
+            moduleSection.appendChild(moduleTitle);
+
+            const moduleInfo = document.createElement('div');
+            moduleInfo.style.fontSize = '12px';
+            moduleInfo.style.color = '#6b7280';
+            moduleInfo.style.marginBottom = '12px';
+            moduleInfo.textContent = '當前版本: 1.8.0010 | 模塊會自動緩存 24 小時';
+            moduleSection.appendChild(moduleInfo);
+
+            const moduleButtons = document.createElement('div');
+            moduleButtons.style.display = 'flex';
+            moduleButtons.style.gap = '8px';
+            
+            const checkUpdateBtn = document.createElement('button');
+            checkUpdateBtn.className = 'clm-small-btn clm-primary-btn';
+            checkUpdateBtn.textContent = '檢查模塊更新';
+            checkUpdateBtn.addEventListener('click', async () => {
+                checkUpdateBtn.disabled = true;
+                checkUpdateBtn.textContent = '檢查中...';
+                
+                try {
+                    // 清除所有模块缓存
+                    const keys = [];
+                    for (let i = 0; i < localStorage.length; i++) {
+                        const key = localStorage.key(i);
+                        if (key && (key.startsWith('CLM_MODULE_') || key === 'CLM_MANIFEST')) {
+                            keys.push(key);
+                        }
+                    }
+                    
+                    keys.forEach(key => {
+                        try {
+                            GM_deleteValue(key);
+                        } catch (e) {
+                            console.warn('草榴Manager: 清除緩存失敗', key, e);
+                        }
+                    });
+                    
+                    showToast(`已清除 ${keys.length} 個模塊緩存，請刷新頁面加載最新版本`, 'success');
+                    
+                    setTimeout(() => {
+                        checkUpdateBtn.disabled = false;
+                        checkUpdateBtn.textContent = '檢查模塊更新';
+                    }, 2000);
+                } catch (e) {
+                    console.error('草榴Manager: 檢查更新失敗', e);
+                    showToast('檢查更新失敗: ' + e.message, 'error');
+                    checkUpdateBtn.disabled = false;
+                    checkUpdateBtn.textContent = '檢查模塊更新';
+                }
+            });
+            moduleButtons.appendChild(checkUpdateBtn);
+            
+            const reloadBtn = document.createElement('button');
+            reloadBtn.className = 'clm-small-btn';
+            reloadBtn.textContent = '刷新頁面';
+            reloadBtn.addEventListener('click', () => {
+                window.location.reload();
+            });
+            moduleButtons.appendChild(reloadBtn);
+            
+            moduleSection.appendChild(moduleButtons);
+            body.appendChild(moduleSection);
 
             const footer = document.createElement('div');
             footer.className = 'clm-settings-footer';
