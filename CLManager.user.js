@@ -1,7 +1,7 @@
     // ==UserScript==
     // @name         草榴Manager
     // @namespace    http://tampermonkey.net/
-    // @version      1.8.0007
+    // @version      1.8.0008
     // @description  草榴搜索/板块悬停放大封面、标题预览图、品质徽章与 qBittorrent 一键发送和下载按钮。
     // @author       truclocphung1713
     // @match        https://t66y.com/search.php*
@@ -989,7 +989,38 @@
          * ========================================
          */
         const pageType = detectPageType();
-        initRemoteModules(pageType);
+        
+        // 初始化远程模块
+        initRemoteModules(pageType).then(() => {
+            console.log('草榴Manager: 开始初始化模块上下文');
+            
+            // 暴露工具函数到全局 CLM 命名空间
+            if (!window.CLM) {
+                window.CLM = {};
+            }
+            
+            // 暴露核心工具函数
+            window.CLM.isMobilePage = isMobilePage;
+            window.CLM.injectStyle = injectStyle;
+            window.CLM.getAbsoluteUrl = getAbsoluteUrl;
+            window.CLM.normalizeThreadKey = normalizeThreadKey;
+            window.CLM.showToast = showToast;
+            
+            // 暴露数据管理函数
+            window.CLM.hasGalleryVisitedThread = hasGalleryVisitedThread;
+            window.CLM.markThreadGalleryVisited = markThreadGalleryVisited;
+            window.CLM.applyVisitedStateToElement = applyVisitedStateToElement;
+            window.CLM.hasDownloadedThread = hasDownloadedThread;
+            window.CLM.markThreadDownloaded = markThreadDownloaded;
+            window.CLM.subscribeDownloadStatus = subscribeDownloadStatus;
+            
+            // 暴露 qBittorrent 函数
+            window.CLM.sendToQbittorrent = sendToQbittorrent;
+            window.CLM.loadSettings = loadSettings;
+            window.CLM.saveSettings = saveSettings;
+            
+            console.log('草榴Manager: 核心函数已暴露到 CLM 命名空间');
+        });
 
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', createSettingsUI);
