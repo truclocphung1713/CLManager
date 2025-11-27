@@ -1,7 +1,7 @@
     // ==UserScript==
     // @name         草榴Manager
     // @namespace    http://tampermonkey.net/
-    // @version      1.8.0013
+    // @version      1.8.0014
     // @description  草榴搜索/板块悬停放大封面、标题预览图、品质徽章与 qBittorrent 一键发送和下载按钮。
     // @author       truclocphung1713
     // @match        https://t66y.com/search.php*
@@ -989,7 +989,7 @@
             moduleInfo.style.fontSize = '12px';
             moduleInfo.style.color = '#6b7280';
             moduleInfo.style.marginBottom = '12px';
-            moduleInfo.textContent = '当前版本: 1.8.0013 | 模块基于版本号缓存，更新时自动清除旧版本';
+            moduleInfo.textContent = '当前版本: 1.8.0014 | 模块基于版本号缓存，更新时自动清除旧版本';
             moduleSection.appendChild(moduleInfo);
 
             const moduleButtons = document.createElement('div');
@@ -1006,16 +1006,23 @@
                 try {
                     // 清除所有模块缓存
                     const keys = [];
-                    for (let i = 0; i < localStorage.length; i++) {
-                        const key = localStorage.key(i);
-                        if (key && (key.startsWith('CLM_MODULE_') || key === 'CLM_MANIFEST')) {
-                            keys.push(key);
-                        }
+                    
+                    // 使用 GM_listValues 获取所有存储的键
+                    if (typeof GM_listValues === 'function') {
+                        const allKeys = GM_listValues();
+                        allKeys.forEach(key => {
+                            if (key && (key.startsWith('CLM_MODULE_') || key === 'CLM_MANIFEST')) {
+                                keys.push(key);
+                            }
+                        });
                     }
+                    
+                    console.log('草榴Manager: 准备清除缓存', keys);
                     
                     keys.forEach(key => {
                         try {
                             GM_deleteValue(key);
+                            console.log('草榴Manager: 已清除', key);
                         } catch (e) {
                             console.warn('草榴Manager: 清除緩存失敗', key, e);
                         }
@@ -1154,6 +1161,15 @@
             };
             
             // 调用模块初始化函数
+            console.log('草榴Manager: 检查模块初始化函数', {
+                initForumModule: typeof window.CLM.initForumModule,
+                initSearchModule: typeof window.CLM.initSearchModule,
+                initDownloadModule: typeof window.CLM.initDownloadModule,
+                initSettingsModule: typeof window.CLM.initSettingsModule,
+                initGalleryModule: typeof window.CLM.initGalleryModule,
+                initMobileModule: typeof window.CLM.initMobileModule
+            });
+            
             if (typeof window.CLM.initForumModule === 'function') {
                 try {
                     window.CLM.initForumModule(moduleCtx);
@@ -1161,6 +1177,8 @@
                 } catch (e) {
                     console.warn('草榴Manager: Forum 模块初始化失败', e);
                 }
+            } else {
+                console.warn('草榴Manager: initForumModule 不是函数', typeof window.CLM.initForumModule);
             }
             
             if (typeof window.CLM.initSearchModule === 'function') {
