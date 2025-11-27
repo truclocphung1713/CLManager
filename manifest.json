@@ -1,12 +1,12 @@
 {
-  "version": "1.8.0008",
+  "version": "1.8.0009",
   "modules": {
     "core": {
-      "version": "1.8.0008",
+      "version": "1.8.0009",
       "url": "https://raw.githubusercontent.com/truclocphung1713/CLManager/main/modules/core.js"
     },
     "gallery": {
-      "version": "1.8.0008",
+      "version": "1.8.0009",
       "url": "https://raw.githubusercontent.com/truclocphung1713/CLManager/main/modules/gallery.js",
       "targets": [
         "desktop-thread",
@@ -18,7 +18,7 @@
       ]
     },
     "mobile": {
-      "version": "1.8.0008",
+      "version": "1.8.0009",
       "url": "https://raw.githubusercontent.com/truclocphung1713/CLManager/main/modules/mobile.js",
       "targets": [
         "mobile-thread",
@@ -27,7 +27,7 @@
       ]
     },
     "search": {
-      "version": "1.8.0008",
+      "version": "1.8.0009",
       "url": "https://raw.githubusercontent.com/truclocphung1713/CLManager/main/modules/search.js",
       "targets": [
         "desktop-search",
@@ -35,7 +35,7 @@
       ]
     },
     "forum": {
-      "version": "1.8.0008",
+      "version": "1.8.0009",
       "url": "https://raw.githubusercontent.com/truclocphung1713/CLManager/main/modules/forum.js",
       "targets": [
         "desktop-forum",
@@ -43,7 +43,7 @@
       ]
     },
     "download": {
-      "version": "1.8.0008",
+      "version": "1.8.0009",
       "url": "https://raw.githubusercontent.com/truclocphung1713/CLManager/main/modules/download.js",
       "targets": [
         "desktop-thread",
@@ -55,7 +55,7 @@
       ]
     },
     "settings": {
-      "version": "1.8.0008",
+      "version": "1.8.0009",
       "url": "https://raw.githubusercontent.com/truclocphung1713/CLManager/main/modules/settings.js",
       "targets": [
         "desktop-thread",
