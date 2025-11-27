@@ -1,0 +1,30 @@
+{
+  "version": "1.0.0",
+  "modules": {
+    "core": {
+      "version": "1.0.0",
+      "url": "https://raw.githubusercontent.com/truclocphung1713/CLManager/main/modules/core.js"
+    },
+    "gallery": {
+      "version": "1.0.0",
+      "url": "https://raw.githubusercontent.com/truclocphung1713/CLManager/main/modules/gallery.js",
+      "targets": [
+        "desktop-thread",
+        "desktop-search",
+        "desktop-forum",
+        "mobile-thread",
+        "mobile-search",
+        "mobile-forum"
+      ]
+    },
+    "mobile": {
+      "version": "1.0.0",
+      "url": "https://raw.githubusercontent.com/truclocphung1713/CLManager/main/modules/mobile.js",
+      "targets": [
+        "mobile-thread",
+        "mobile-search",
+        "mobile-forum"
+      ]
+    }
+  }
+}

@@ -21,8 +21,8 @@
 // @grant        unsafeWindow
 // @connect      www.rmdown.com
 // @connect      *
-// @updateURL    https://raw.githubusercontent.com/truclocphung1713/CLManager/refs/heads/master/CLManager.user.js
-// @downloadURL  https://raw.githubusercontent.com/truclocphung1713/CLManager/refs/heads/master/CLManager.user.js
+// @updateURL    https://raw.githubusercontent.com/truclocphung1713/CLManager/refs/heads/main/CLManager.user.js
+// @downloadURL  https://raw.githubusercontent.com/truclocphung1713/CLManager/refs/heads/main/CLManager.user.js
 (function () {
     'use strict';
 
@@ -6161,6 +6161,11 @@
      */
     const pageType = detectPageType();
     const isMobile = isMobilePage();
+
+    // 初始化远程模块（按页面类型加载 GitHub 上的模块）
+    initRemoteModules(pageType).catch((e) => {
+        console.warn('草榴Manager: 初始化遠程模塊失敗', e);
+    });
 
     // 手机端板块页面（thread0806.php 图文模式）
     if (isMobile && href.indexOf('thread0806.php') !== -1) {
