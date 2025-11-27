@@ -161,6 +161,278 @@
         }
     }
 
+    function registerMobileComments(ctx) {
+        if (!ctx || !ctx.overlay || !ctx.commentsPanel || !ctx.mobileCommentBtn) return;
+
+        const overlay = ctx.overlay;
+        const commentsPanel = ctx.commentsPanel;
+        const mobileCommentBtn = ctx.mobileCommentBtn;
+        const mobileCommentCloseBtn = ctx.mobileCommentCloseBtn || null;
+
+        if (commentsPanel._clmMobileCommentsAttached) {
+            return;
+        }
+        commentsPanel._clmMobileCommentsAttached = true;
+
+        let commentsExpanded = false;
+        const closeComments = () => {
+            commentsExpanded = false;
+            commentsPanel.classList.remove('clm-comments-expanded');
+        };
+        const openComments = () => {
+            commentsExpanded = true;
+            commentsPanel.classList.add('clm-comments-expanded');
+        };
+
+        mobileCommentBtn.addEventListener('click', (e) => {
+            // 避免点击事件冒泡到图片 viewer，导致误触翻页
+            e.stopPropagation();
+            if (commentsExpanded) {
+                closeComments();
+            } else {
+                openComments();
+            }
+        });
+
+        if (mobileCommentCloseBtn) {
+            mobileCommentCloseBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                closeComments();
+            });
+        }
+
+        // 手机端：点击评论面板外区域关闭评论内容
+        overlay.addEventListener('click', (e) => {
+            if (!commentsExpanded) return;
+            const target = e.target;
+            // 点击在评论面板内部或评论按钮本身时不关闭
+            if (target.closest('.clm-gallery-panel-comments') || target.closest('.clm-mobile-comment-btn')) {
+                return;
+            }
+            closeComments();
+            // 避免事件继续冒泡到 viewer 引发翻页
+            e.stopPropagation();
+        });
+    }
+
+    function initMobileForumEnhancements(ctx) {
+        if (!ctx) return;
+
+        const getAbsoluteUrl = ctx.getAbsoluteUrl;
+        const resolveQualityTagFromListItem = ctx.resolveQualityTagFromListItem;
+        const updateQualityBadgeElement = ctx.updateQualityBadgeElement;
+        const bindGalleryVisitedIndicator = ctx.bindGalleryVisitedIndicator;
+        const openGalleryForThread = ctx.openGalleryForThread;
+        const setupThreadDownloadButton = ctx.setupThreadDownloadButton;
+
+        const doc = window.document;
+        if (!doc || !doc.body) return;
+        if (doc.body.dataset.clmMobileForumInitialized === '1') return;
+        doc.body.dataset.clmMobileForumInitialized = '1';
+
+        injectStyle(`
+                .wf_item .image-big {
+                    overflow: hidden !important;
+                    position: relative;
+                }
+                .wf_item .image-big img {
+                    transition: none !important;
+                    transform: none !important;
+                }
+                .wf_item .image-big:hover img {
+                    transform: none !important;
+                }
+                .wf_item .clm-cover-gallery-btn {
+                    position: absolute;
+                    left: 50%;
+                    bottom: 35%;
+                    transform: translateX(-50%);
+                    padding: 10px 20px;
+                    font-size: 15px;
+                    font-weight: 600;
+                    border-radius: 8px;
+                    border: 1px solid rgba(255, 255, 255, 0.6);
+                    background: rgba(0, 0, 0, 0.85);
+                    color: #fff;
+                    cursor: pointer;
+                    display: inline-flex;
+                    align-items: center;
+                    z-index: 10000;
+                    touch-action: manipulation;
+                    -webkit-tap-highlight-color: transparent;
+                    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+                }
+                .wf_item .clm-cover-gallery-btn:active {
+                    background: rgba(0, 0, 0, 0.95);
+                    transform: translateX(-50%) scale(0.95);
+                }
+                .wf_item .clm-cover-download {
+                    position: absolute;
+                    top: 8px;
+                    right: 8px;
+                    padding: 6px 12px;
+                    font-size: 13px;
+                    border-radius: 6px;
+                    border: 1px solid rgba(255, 255, 255, 0.4);
+                    background: rgba(0, 0, 0, 0.75);
+                    color: #fff;
+                    cursor: pointer;
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 6px;
+                    z-index: 2;
+                    touch-action: manipulation;
+                    -webkit-tap-highlight-color: transparent;
+                }
+                .wf_item .clm-cover-download:active {
+                    background: rgba(0, 0, 0, 0.9);
+                    transform: scale(0.95);
+                }
+                .wf_item .clm-cover-download.clm-downloaded {
+                    background: rgba(16, 185, 129, 0.9);
+                    border-color: rgba(255, 255, 255, 0.55);
+                }
+                .wf_item .clm-cover-download::before {
+                    content: '\u2b07';
+                    font-size: 13px;
+                }
+                .wf_item .clm-cover-quality {
+                    position: absolute;
+                    left: 8px;
+                    top: 8px;
+                    z-index: 10000;
+                    max-width: 50px;
+                    font-size: 9px;
+                    padding: 2px 5px;
+                }
+                .wf_item .clm-text-quality {
+                    position: relative;
+                    left: auto;
+                    bottom: auto;
+                    display: inline-flex;
+                    margin-top: 6px;
+                    transform: none;
+                }
+                .wf_item.clm-thread-downloaded {
+                    position: relative;
+                    box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.25);
+                    border-radius: 6px;
+                }
+                .wf_item.clm-thread-downloaded::after {
+                    content: '\u5df2\u4e0b\u8f7d';
+                    position: absolute;
+                    top: 8px;
+                    left: 8px;
+                    background: rgba(34, 197, 94, 0.85);
+                    color: #fff;
+                    font-size: 10px;
+                    padding: 2px 6px;
+                    border-radius: 999px;
+                    letter-spacing: 0.08em;
+                    z-index: 2;
+                }
+            `);
+
+        function attachMobileCoverButtons() {
+            const covers = doc.querySelectorAll('.wf_item .image-big');
+            covers.forEach((cover) => {
+                if (cover.dataset.clmMobileBtnAttached === '1') return;
+                cover.dataset.clmMobileBtnAttached = '1';
+                const wfItem = cover.closest('.wf_item');
+
+                const galleryBtn = doc.createElement('button');
+                galleryBtn.type = 'button';
+                galleryBtn.className = 'clm-cover-gallery-btn';
+                galleryBtn.textContent = '\u753b\u5eca';
+                cover.appendChild(galleryBtn);
+
+                const downloadBtn = doc.createElement('button');
+                downloadBtn.type = 'button';
+                downloadBtn.className = 'clm-cover-download';
+                downloadBtn.textContent = '\u4e0b\u8f7d';
+                cover.appendChild(downloadBtn);
+
+                const qualityBadge = doc.createElement('div');
+                qualityBadge.className = 'clm-quality-badge clm-cover-quality';
+                cover.appendChild(qualityBadge);
+
+                const threadAnchor = wfItem ? wfItem.querySelector('a[href]') : null;
+                const rawHref = threadAnchor ? (threadAnchor.getAttribute('href') || threadAnchor.href) : null;
+                const threadUrl = rawHref && typeof getAbsoluteUrl === 'function' ? getAbsoluteUrl(rawHref) : null;
+                const qualityTag = typeof resolveQualityTagFromListItem === 'function' ? resolveQualityTagFromListItem(wfItem, threadAnchor) : null;
+                if (typeof updateQualityBadgeElement === 'function') {
+                    updateQualityBadgeElement(qualityBadge, qualityTag);
+                }
+
+                if (threadUrl) {
+                    cover.dataset.clmThreadKey = threadUrl;
+                    if (typeof bindGalleryVisitedIndicator === 'function') {
+                        bindGalleryVisitedIndicator(cover, threadUrl, 'cover');
+                    }
+
+                    galleryBtn.addEventListener('click', (ev) => {
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                        if (typeof openGalleryForThread === 'function') {
+                            openGalleryForThread(threadUrl, { instant: true, qualityTag });
+                        }
+                    });
+
+                    const threadTitle = (threadAnchor && threadAnchor.textContent ? threadAnchor.textContent : '').trim();
+                    if (typeof setupThreadDownloadButton === 'function') {
+                        setupThreadDownloadButton(downloadBtn, {
+                            threadUrl,
+                            container: wfItem,
+                            containerClass: 'clm-thread-downloaded',
+                            label: '\u4e0b\u8f7d',
+                            downloadedLabel: '\u5df2\u4e0b\u8f7d',
+                            threadTitle
+                        });
+                    }
+                }
+            });
+        }
+
+        function attachMobileTextOnlyQualityBadges() {
+            const items = doc.querySelectorAll('.wf_item');
+            items.forEach((item) => {
+                if (item.querySelector('.image-big')) {
+                    return;
+                }
+                const threadAnchor = item.querySelector('a[href]');
+                const qualityTag = typeof resolveQualityTagFromListItem === 'function' ? resolveQualityTagFromListItem(item, threadAnchor) : null;
+                let badge = item.querySelector('.clm-text-quality');
+                if (!qualityTag) {
+                    if (badge) {
+                        badge.remove();
+                    }
+                    return;
+                }
+                const textContainer = item.querySelector('.wf_text');
+                if (!textContainer) {
+                    return;
+                }
+                if (!badge) {
+                    badge = doc.createElement('div');
+                    badge.className = 'clm-quality-badge clm-text-quality';
+                    textContainer.appendChild(badge);
+                }
+                if (typeof updateQualityBadgeElement === 'function') {
+                    updateQualityBadgeElement(badge, qualityTag);
+                }
+            });
+        }
+
+        attachMobileCoverButtons();
+        attachMobileTextOnlyQualityBadges();
+
+        const mobileObserver = new MutationObserver(() => {
+            attachMobileCoverButtons();
+            attachMobileTextOnlyQualityBadges();
+        });
+        mobileObserver.observe(doc.body, { childList: true, subtree: true });
+    }
+
     function initMobileEnhancements() {
         // 手机端画廊模式适配 - 抖音短视频风格
         injectStyle(`
@@ -950,6 +1222,8 @@
 
     CLM.initMobileEnhancements = CLM.initMobileEnhancements || initMobileEnhancements;
     CLM.registerMobileGalleryGestures = CLM.registerMobileGalleryGestures || registerMobileGalleryGestures;
+    CLM.registerMobileComments = CLM.registerMobileComments || registerMobileComments;
+    CLM.initMobileForumEnhancements = CLM.initMobileForumEnhancements || initMobileForumEnhancements;
 
     if (!CLM._mobileModuleLoaded) {
         CLM._mobileModuleLoaded = true;
@@ -965,6 +1239,22 @@
                 console.warn('草榴Manager: 初始化 mobile 手勢失敗', e);
             }
             window.CLM_PENDING_MOBILE_GESTURE_CTX = null;
+        }
+        if (window.CLM_PENDING_MOBILE_COMMENTS_CTX) {
+            try {
+                CLM.registerMobileComments(window.CLM_PENDING_MOBILE_COMMENTS_CTX);
+            } catch (e) {
+                console.warn('草榴Manager: 初始化 mobile 評論抽屜失敗', e);
+            }
+            window.CLM_PENDING_MOBILE_COMMENTS_CTX = null;
+        }
+        if (window.CLM_PENDING_MOBILE_FORUM_CTX) {
+            try {
+                CLM.initMobileForumEnhancements(window.CLM_PENDING_MOBILE_FORUM_CTX);
+            } catch (e) {
+                console.warn('草榴Manager: 初始化 mobile 板塊頁失敗', e);
+            }
+            window.CLM_PENDING_MOBILE_FORUM_CTX = null;
         }
     } catch (e) {
         console.warn('草榴Manager: 初始化 mobile 模塊失敗', e);
