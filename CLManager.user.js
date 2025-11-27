@@ -1,7 +1,7 @@
     // ==UserScript==
     // @name         草榴Manager
     // @namespace    http://tampermonkey.net/
-    // @version      1.8.0001
+    // @version      1.8.0002
     // @description  草榴搜索/板块悬停放大封面、标题预览图、品质徽章与 qBittorrent 一键发送和下载按钮。
     // @author       truclocphung1713
     // @match        https://t66y.com/search.php*
@@ -3720,133 +3720,25 @@
 
             // 手机端触控手势支持（仅在非缩放状态下启用）
             if (isMobilePage()) {
-                let touchStartX = 0;
-                let touchStartY = 0;
-                let touchEndX = 0;
-                let touchEndY = 0;
-                let initialPinchDistance = 0;
-                let isZooming = false;
+                const mobileGestureCtx = {
+                    overlay,
+                    viewer,
+                    topicPanel,
+                    toggleTopicPanelState,
+                    showNext,
+                    showPrev,
+                    showTapIndicator
+                };
 
-                viewer.addEventListener('touchstart', (e) => {
-                    if (!overlay.classList.contains('clm-active')) return;
-                    // 只在手机端画廊模式下处理触摸事件
-                    if (!document.body.classList.contains('clm-mobile-gallery')) return;
-
-                    // 检查触摸是否在评论面板、按钮或主题面板上
-                    const target = e.target;
-                    if (target.closest('.clm-gallery-panel-comments') ||
-                        target.closest('.clm-mobile-comment-btn') ||
-                        target.closest('.clm-gallery-close') ||
-                        target.closest('.clm-gallery-panel-topic') ||
-                        target.closest('.clm-gallery-ads-slot-viewer-top')) {
-                        return;
+                const globalObj = window;
+                if (globalObj.CLM && typeof globalObj.CLM.registerMobileGalleryGestures === 'function') {
+                    try {
+                        globalObj.CLM.registerMobileGalleryGestures(mobileGestureCtx);
+                    } catch (e) {
+                        console.warn('草榴Manager: 綁定手機端手勢失敗', e);
                     }
-
-                    if (e.touches.length === 2) {
-                        // 双指触控 - 记录初始距离
-                        const dx = e.touches[0].clientX - e.touches[1].clientX;
-                        const dy = e.touches[0].clientY - e.touches[1].clientY;
-                        initialPinchDistance = Math.sqrt(dx * dx + dy * dy);
-                        isZooming = true;
-                        console.log('草榴Manager: 检测到双指触摸，初始距离:', initialPinchDistance);
-                    } else if (e.touches.length === 1) {
-                        // 单指触控
-                        touchStartX = e.touches[0].clientX;
-                        touchStartY = e.touches[0].clientY;
-                        isZooming = false;
-                        console.log('草榴Manager: 触摸开始', touchStartX, touchStartY);
-                    }
-                }, { passive: true });
-
-                viewer.addEventListener('touchmove', (e) => {
-                    if (!overlay.classList.contains('clm-active')) return;
-                    if (!document.body.classList.contains('clm-mobile-gallery')) return;
-
-                    if (e.touches.length === 2 && initialPinchDistance > 0) {
-                        // 双指移动 - 检测缩放
-                        const dx = e.touches[0].clientX - e.touches[1].clientX;
-                        const dy = e.touches[0].clientY - e.touches[1].clientY;
-                        const currentDistance = Math.sqrt(dx * dx + dy * dy);
-
-                        if (Math.abs(currentDistance - initialPinchDistance) > 10) {
-                            isZooming = true;
-                            const scale = currentDistance / initialPinchDistance;
-                            console.log('草榴Manager: 双指缩放比例:', scale);
-                        }
-                    }
-                }, { passive: true });
-
-                viewer.addEventListener('touchend', (e) => {
-                    if (!overlay.classList.contains('clm-active')) return;
-                    if (!document.body.classList.contains('clm-mobile-gallery')) return;
-
-                    // 检查触摸是否在评论面板、按钮或主题面板上
-                    const target = e.target;
-                    if (target.closest('.clm-gallery-panel-comments') ||
-                        target.closest('.clm-mobile-comment-btn') ||
-                        target.closest('.clm-gallery-close') ||
-                        target.closest('.clm-gallery-panel-topic') ||
-                        target.closest('.clm-gallery-ads-slot-viewer-top')) {
-                        return;
-                    }
-
-                    if (e.touches.length === 0 && !isZooming) {
-                        // 单指滑动结束且未缩放
-                        touchEndX = e.changedTouches[0].clientX;
-                        touchEndY = e.changedTouches[0].clientY;
-                        console.log('草榴Manager: 触摸结束', touchEndX, touchEndY);
-                        handleGesture();
-                    }
-
-                    if (e.touches.length === 0) {
-                        isZooming = false;
-                        initialPinchDistance = 0;
-                    }
-                }, { passive: true });
-
-                function handleGesture() {
-                    const deltaX = touchEndX - touchStartX;
-                    const deltaY = touchEndY - touchStartY;
-                    const absDeltaX = Math.abs(deltaX);
-                    const absDeltaY = Math.abs(deltaY);
-                    const minSwipeDistance = 80;
-                    const minVerticalSwipeDistance = 60;
-
-                    console.log('草榴Manager: 手势检测 deltaX:', deltaX, 'deltaY:', deltaY);
-
-                    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || document.body.clientHeight || 0;
-                    const isTopicExpanded = topicPanel.classList.contains('clm-topic-expanded');
-
-                    // 垂直滑动：控制主题抽屉（仅在底部区域触发）
-                    if (!isZooming && absDeltaY > absDeltaX && absDeltaY > minVerticalSwipeDistance && viewportHeight > 0) {
-                        const startY = touchStartY;
-                        const bottomThreshold = viewportHeight * 0.5;
-                        if (startY > bottomThreshold && typeof toggleTopicPanelState === 'function') {
-                            if (!isTopicExpanded && deltaY < 0) {
-                                console.log('草榴Manager: 上滑，展开主题抽屉');
-                                toggleTopicPanelState();
-                            } else if (isTopicExpanded && deltaY > 0) {
-                                console.log('草榴Manager: 下滑，收起主题抽屉');
-                                toggleTopicPanelState();
-                            }
-                        }
-                        return;
-                    }
-
-                    // 水平滑动（仅在非缩放状态下）：与点击左右区域方向保持一致
-                    if (!isZooming && absDeltaX > absDeltaY && absDeltaX > minSwipeDistance) {
-                        if (deltaX > 0) {
-                            // 向右滑动 - 下一张（与点击右侧区域一致）
-                            console.log('草榴Manager: 向右滑动，显示下一张');
-                            showNext();
-                            showTapIndicator('right');
-                        } else {
-                            // 向左滑动 - 上一张（与点击左侧区域一致）
-                            console.log('草榴Manager: 向左滑动，显示上一张');
-                            showPrev();
-                            showTapIndicator('left');
-                        }
-                    }
+                } else {
+                    globalObj.CLM_PENDING_MOBILE_GESTURE_CTX = mobileGestureCtx;
                 }
             }
 

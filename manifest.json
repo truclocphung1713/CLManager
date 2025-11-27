@@ -1,12 +1,12 @@
 {
-  "version": "1.8.0001",
+  "version": "1.8.0002",
   "modules": {
     "core": {
-      "version": "1.8.0001",
+      "version": "1.8.0002",
       "url": "https://raw.githubusercontent.com/truclocphung1713/CLManager/main/modules/core.js"
     },
     "gallery": {
-      "version": "1.8.0001",
+      "version": "1.8.0002",
       "url": "https://raw.githubusercontent.com/truclocphung1713/CLManager/main/modules/gallery.js",
       "targets": [
         "desktop-thread",
@@ -18,7 +18,7 @@
       ]
     },
     "mobile": {
-      "version": "1.8.0001",
+      "version": "1.8.0002",
       "url": "https://raw.githubusercontent.com/truclocphung1713/CLManager/main/modules/mobile.js",
       "targets": [
         "mobile-thread",

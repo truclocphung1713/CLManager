@@ -18,6 +18,149 @@
         head.appendChild(style);
     }
 
+    function registerMobileGalleryGestures(ctx) {
+        if (!ctx || !ctx.viewer || !ctx.overlay) return;
+
+        const viewer = ctx.viewer;
+        const overlay = ctx.overlay;
+        const topicPanel = ctx.topicPanel;
+        const toggleTopicPanelState = ctx.toggleTopicPanelState;
+        const showNext = ctx.showNext;
+        const showPrev = ctx.showPrev;
+        const showTapIndicator = ctx.showTapIndicator;
+
+        if (viewer._clmMobileGesturesAttached) {
+            return;
+        }
+        viewer._clmMobileGesturesAttached = true;
+
+        let touchStartX = 0;
+        let touchStartY = 0;
+        let touchEndX = 0;
+        let touchEndY = 0;
+        let initialPinchDistance = 0;
+        let isZooming = false;
+
+        viewer.addEventListener('touchstart', (e) => {
+            if (!overlay.classList.contains('clm-active')) return;
+            if (!document.body.classList.contains('clm-mobile-gallery')) return;
+
+            const target = e.target;
+            if (target.closest('.clm-gallery-panel-comments') ||
+                target.closest('.clm-mobile-comment-btn') ||
+                target.closest('.clm-gallery-close') ||
+                target.closest('.clm-gallery-panel-topic') ||
+                target.closest('.clm-gallery-ads-slot-viewer-top')) {
+                return;
+            }
+
+            if (e.touches.length === 2) {
+                const dx = e.touches[0].clientX - e.touches[1].clientX;
+                const dy = e.touches[0].clientY - e.touches[1].clientY;
+                initialPinchDistance = Math.sqrt(dx * dx + dy * dy);
+                isZooming = true;
+                console.log('草榴Manager: 检测到双指触摸，初始距离:', initialPinchDistance);
+            } else if (e.touches.length === 1) {
+                touchStartX = e.touches[0].clientX;
+                touchStartY = e.touches[0].clientY;
+                isZooming = false;
+                console.log('草榴Manager: 触摸开始', touchStartX, touchStartY);
+            }
+        }, { passive: true });
+
+        viewer.addEventListener('touchmove', (e) => {
+            if (!overlay.classList.contains('clm-active')) return;
+            if (!document.body.classList.contains('clm-mobile-gallery')) return;
+
+            if (e.touches.length === 2 && initialPinchDistance > 0) {
+                const dx = e.touches[0].clientX - e.touches[1].clientX;
+                const dy = e.touches[0].clientY - e.touches[1].clientY;
+                const currentDistance = Math.sqrt(dx * dx + dy * dy);
+
+                if (Math.abs(currentDistance - initialPinchDistance) > 10) {
+                    isZooming = true;
+                    const scale = currentDistance / initialPinchDistance;
+                    console.log('草榴Manager: 双指缩放比例:', scale);
+                }
+            }
+        }, { passive: true });
+
+        viewer.addEventListener('touchend', (e) => {
+            if (!overlay.classList.contains('clm-active')) return;
+            if (!document.body.classList.contains('clm-mobile-gallery')) return;
+
+            const target = e.target;
+            if (target.closest('.clm-gallery-panel-comments') ||
+                target.closest('.clm-mobile-comment-btn') ||
+                target.closest('.clm-gallery-close') ||
+                target.closest('.clm-gallery-panel-topic') ||
+                target.closest('.clm-gallery-ads-slot-viewer-top')) {
+                return;
+            }
+
+            if (e.touches.length === 0 && !isZooming && e.changedTouches && e.changedTouches[0]) {
+                touchEndX = e.changedTouches[0].clientX;
+                touchEndY = e.changedTouches[0].clientY;
+                console.log('草榴Manager: 触摸结束', touchEndX, touchEndY);
+                handleGesture();
+            }
+
+            if (e.touches.length === 0) {
+                isZooming = false;
+                initialPinchDistance = 0;
+            }
+        }, { passive: true });
+
+        function handleGesture() {
+            const deltaX = touchEndX - touchStartX;
+            const deltaY = touchEndY - touchStartY;
+            const absDeltaX = Math.abs(deltaX);
+            const absDeltaY = Math.abs(deltaY);
+            const minSwipeDistance = 80;
+            const minVerticalSwipeDistance = 60;
+
+            console.log('草榴Manager: 手势检测 deltaX:', deltaX, 'deltaY:', deltaY);
+
+            const viewportHeight = window.innerHeight || document.documentElement.clientHeight || document.body.clientHeight || 0;
+            const isTopicExpanded = topicPanel && topicPanel.classList.contains('clm-topic-expanded');
+
+            if (!isZooming && absDeltaY > absDeltaX && absDeltaY > minVerticalSwipeDistance && viewportHeight > 0) {
+                const startY = touchStartY;
+                const bottomThreshold = viewportHeight * 0.5;
+                if (startY > bottomThreshold && typeof toggleTopicPanelState === 'function') {
+                    if (!isTopicExpanded && deltaY < 0) {
+                        console.log('草榴Manager: 上滑，展开主题抽屉');
+                        toggleTopicPanelState();
+                    } else if (isTopicExpanded && deltaY > 0) {
+                        console.log('草榴Manager: 下滑，收起主题抽屉');
+                        toggleTopicPanelState();
+                    }
+                }
+                return;
+            }
+
+            if (!isZooming && absDeltaX > absDeltaY && absDeltaX > minSwipeDistance) {
+                if (deltaX > 0) {
+                    console.log('草榴Manager: 向右滑动，显示下一张');
+                    if (typeof showNext === 'function') {
+                        showNext();
+                    }
+                    if (typeof showTapIndicator === 'function') {
+                        showTapIndicator('right');
+                    }
+                } else {
+                    console.log('草榴Manager: 向左滑动，显示上一张');
+                    if (typeof showPrev === 'function') {
+                        showPrev();
+                    }
+                    if (typeof showTapIndicator === 'function') {
+                        showTapIndicator('left');
+                    }
+                }
+            }
+        }
+    }
+
     function initMobileEnhancements() {
         // 手机端画廊模式适配 - 抖音短视频风格
         injectStyle(`
@@ -806,6 +949,7 @@
     }
 
     CLM.initMobileEnhancements = CLM.initMobileEnhancements || initMobileEnhancements;
+    CLM.registerMobileGalleryGestures = CLM.registerMobileGalleryGestures || registerMobileGalleryGestures;
 
     if (!CLM._mobileModuleLoaded) {
         CLM._mobileModuleLoaded = true;
@@ -814,6 +958,14 @@
 
     try {
         CLM.initMobileEnhancements();
+        if (window.CLM_PENDING_MOBILE_GESTURE_CTX) {
+            try {
+                CLM.registerMobileGalleryGestures(window.CLM_PENDING_MOBILE_GESTURE_CTX);
+            } catch (e) {
+                console.warn('草榴Manager: 初始化 mobile 手勢失敗', e);
+            }
+            window.CLM_PENDING_MOBILE_GESTURE_CTX = null;
+        }
     } catch (e) {
         console.warn('草榴Manager: 初始化 mobile 模塊失敗', e);
     }
