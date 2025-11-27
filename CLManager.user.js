@@ -1,7 +1,7 @@
     // ==UserScript==
     // @name         草榴Manager
     // @namespace    http://tampermonkey.net/
-    // @version      1.8.0014
+    // @version      1.8.0015
     // @description  草榴搜索/板块悬停放大封面、标题预览图、品质徽章与 qBittorrent 一键发送和下载按钮。
     // @author       truclocphung1713
     // @match        https://t66y.com/search.php*
@@ -331,15 +331,22 @@
                         const moduleCode = await fetchWithCache(config.url, cacheKey, config.version);
                         console.log(`草榴Manager: 模块 ${name} 加载成功`);
                         
-                        const script = document.createElement('script');
-                        script.textContent = moduleCode;
-                        (document.head || document.body).appendChild(script);
+                        // 使用 eval 同步执行模块代码，确保立即暴露到 window.CLM
+                        try {
+                            (0, eval)(moduleCode);
+                            console.log(`草榴Manager: 模块 ${name} 已执行`);
+                        } catch (evalError) {
+                            console.warn(`草榴Manager: 模块 ${name} 执行失败`, evalError);
+                        }
                     } catch (e) {
                         console.warn(`草榴Manager: 模块 ${name} 加载失败`, e);
                     }
                 }
 
                 console.log('草榴Manager: 所有模块加载完成');
+                
+                // 等待一小段时间确保所有模块都已执行完毕
+                await new Promise(resolve => setTimeout(resolve, 100));
             } catch (e) {
                 console.error('草榴Manager: manifest 加载失败，将使用本地实现', e);
             }
@@ -989,7 +996,7 @@
             moduleInfo.style.fontSize = '12px';
             moduleInfo.style.color = '#6b7280';
             moduleInfo.style.marginBottom = '12px';
-            moduleInfo.textContent = '当前版本: 1.8.0014 | 模块基于版本号缓存，更新时自动清除旧版本';
+            moduleInfo.textContent = '当前版本: 1.8.0015 | 模块基于版本号缓存，更新时自动清除旧版本';
             moduleSection.appendChild(moduleInfo);
 
             const moduleButtons = document.createElement('div');
