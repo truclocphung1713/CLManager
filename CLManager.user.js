@@ -1,7 +1,7 @@
     // ==UserScript==
     // @name         草榴Manager
     // @namespace    http://tampermonkey.net/
-    // @version      1.8.0010
+    // @version      1.8.0011
     // @description  草榴搜索/板块悬停放大封面、标题预览图、品质徽章与 qBittorrent 一键发送和下载按钮。
     // @author       truclocphung1713
     // @match        https://t66y.com/search.php*
@@ -18,6 +18,7 @@
     // @grant        GM_getValue
     // @grant        GM_setValue
     // @grant        GM_deleteValue
+    // @grant        GM_listValues
     // @grant        unsafeWindow
     // @connect      www.rmdown.com
     // @connect      *
@@ -216,35 +217,59 @@
         const MANIFEST_URL = 'https://raw.githubusercontent.com/truclocphung1713/CLManager/main/manifest.json';
         const MODULE_CACHE_PREFIX = 'CLM_MODULE_';
         const MANIFEST_CACHE_KEY = 'CLM_MANIFEST';
-        const CACHE_DURATION = 24 * 60 * 60 * 1000; // 24小时
 
-        async function fetchWithCache(url, cacheKey) {
+        // 清除指定模块的所有旧版本缓存
+        function clearOldModuleVersions(moduleName, currentVersion) {
+            try {
+                const allKeys = [];
+                // 收集所有 GM_getValue 的键
+                for (let i = 0; i < 1000; i++) {
+                    try {
+                        const key = GM_getValue(`__test_key_${i}__`);
+                        if (key === undefined) break;
+                    } catch (e) {
+                        break;
+                    }
+                }
+                
+                // 使用 GM_listValues 如果可用
+                if (typeof GM_listValues === 'function') {
+                    const keys = GM_listValues();
+                    keys.forEach(key => {
+                        if (key.startsWith(`${MODULE_CACHE_PREFIX}${moduleName}_v`) && !key.endsWith(`_v${currentVersion}`)) {
+                            console.log(`草榴Manager: 清除旧版本缓存 ${key}`);
+                            GM_deleteValue(key);
+                        }
+                    });
+                }
+            } catch (e) {
+                console.warn('草榴Manager: 清除旧版本缓存失败', e);
+            }
+        }
+
+        async function fetchWithCache(url, cacheKey, version) {
             try {
                 const cached = GM_getValue(cacheKey);
                 if (cached) {
-                    const { data, timestamp } = JSON.parse(cached);
-                    if (Date.now() - timestamp < CACHE_DURATION) {
-                        console.log(`草榴Manager: 使用缓存 ${cacheKey}`);
-                        return data;
-                    }
+                    console.log(`草榴Manager: 使用缓存 ${cacheKey}`);
+                    return JSON.parse(cached);
                 }
             } catch (e) {
                 console.warn(`草榴Manager: 读取缓存失败 ${cacheKey}`, e);
             }
 
             return new Promise((resolve, reject) => {
+                console.log(`草榴Manager: 从远程加载 ${cacheKey}`);
                 GM_xmlhttpRequest({
                     method: 'GET',
-                    url: url,
+                    url: url + '?t=' + Date.now(), // 添加时间戳避免 CDN 缓存
                     timeout: 10000,
                     onload: (response) => {
                         if (response.status === 200) {
                             const data = response.responseText;
                             try {
-                                GM_setValue(cacheKey, JSON.stringify({
-                                    data,
-                                    timestamp: Date.now()
-                                }));
+                                GM_setValue(cacheKey, JSON.stringify(data));
+                                console.log(`草榴Manager: 缓存已保存 ${cacheKey}`);
                             } catch (e) {
                                 console.warn(`草榴Manager: 保存缓存失败 ${cacheKey}`, e);
                             }
@@ -283,8 +308,11 @@
 
                 for (const { name, config } of modulesToLoad) {
                     try {
+                        // 清除该模块的旧版本缓存
+                        clearOldModuleVersions(name, config.version);
+                        
                         const cacheKey = `${MODULE_CACHE_PREFIX}${name}_v${config.version}`;
-                        const moduleCode = await fetchWithCache(config.url, cacheKey);
+                        const moduleCode = await fetchWithCache(config.url, cacheKey, config.version);
                         console.log(`草榴Manager: 模块 ${name} 加载成功`);
                         
                         const script = document.createElement('script');
@@ -945,7 +973,7 @@
             moduleInfo.style.fontSize = '12px';
             moduleInfo.style.color = '#6b7280';
             moduleInfo.style.marginBottom = '12px';
-            moduleInfo.textContent = '當前版本: 1.8.0010 | 模塊會自動緩存 24 小時';
+            moduleInfo.textContent = '当前版本: 1.8.0011 | 模块基于版本号缓存，更新时自动清除旧版本';
             moduleSection.appendChild(moduleInfo);
 
             const moduleButtons = document.createElement('div');
