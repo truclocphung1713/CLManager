@@ -1,7 +1,7 @@
     // ==UserScript==
     // @name         草榴Manager
     // @namespace    http://tampermonkey.net/
-    // @version      1.8.0015
+    // @version      1.8.0016
     // @description  草榴搜索/板块悬停放大封面、标题预览图、品质徽章与 qBittorrent 一键发送和下载按钮。
     // @author       truclocphung1713
     // @match        https://t66y.com/search.php*
@@ -29,6 +29,11 @@
         'use strict';
 
         const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+        // 统一 CLM 命名空间到页面 window，确保主脚本和远程模块共享同一个对象
+        const CLM = pageWindow.CLM || (pageWindow.CLM = {});
+        if (pageWindow !== window) {
+            window.CLM = CLM;
+        }
 
         /**
          * ========================================
@@ -331,12 +336,16 @@
                         const moduleCode = await fetchWithCache(config.url, cacheKey, config.version);
                         console.log(`草榴Manager: 模块 ${name} 加载成功`);
                         
-                        // 使用 eval 同步执行模块代码，确保立即暴露到 window.CLM
+                        // 通过往页面注入 <script> 的方式在页面环境中执行模块代码
                         try {
-                            (0, eval)(moduleCode);
-                            console.log(`草榴Manager: 模块 ${name} 已执行`);
-                        } catch (evalError) {
-                            console.warn(`草榴Manager: 模块 ${name} 执行失败`, evalError);
+                            const doc = pageWindow.document || document;
+                            const script = doc.createElement('script');
+                            script.type = 'text/javascript';
+                            script.textContent = moduleCode;
+                            (doc.head || doc.documentElement || doc.body).appendChild(script);
+                            console.log(`草榴Manager: 模块 ${name} 已注入页面并执行`);
+                        } catch (injectError) {
+                            console.warn(`草榴Manager: 模块 ${name} 注入失败`, injectError);
                         }
                     } catch (e) {
                         console.warn(`草榴Manager: 模块 ${name} 加载失败`, e);
@@ -344,9 +353,6 @@
                 }
 
                 console.log('草榴Manager: 所有模块加载完成');
-                
-                // 等待一小段时间确保所有模块都已执行完毕
-                await new Promise(resolve => setTimeout(resolve, 100));
             } catch (e) {
                 console.error('草榴Manager: manifest 加载失败，将使用本地实现', e);
             }
@@ -1122,30 +1128,29 @@
         initRemoteModules(pageType).then(() => {
             console.log('草榴Manager: 开始初始化模块上下文');
             
-            // 暴露工具函数到全局 CLM 命名空间
-            if (!window.CLM) {
-                window.CLM = {};
-            }
+            // 使用共享的 CLM 对象，并同步到页面 window 与沙盒 window
+            pageWindow.CLM = CLM;
+            window.CLM = CLM;
             
             // 暴露核心工具函数
-            window.CLM.isMobilePage = isMobilePage;
-            window.CLM.injectStyle = injectStyle;
-            window.CLM.getAbsoluteUrl = getAbsoluteUrl;
-            window.CLM.normalizeThreadKey = normalizeThreadKey;
-            window.CLM.showToast = showToast;
+            CLM.isMobilePage = isMobilePage;
+            CLM.injectStyle = injectStyle;
+            CLM.getAbsoluteUrl = getAbsoluteUrl;
+            CLM.normalizeThreadKey = normalizeThreadKey;
+            CLM.showToast = showToast;
             
             // 暴露数据管理函数
-            window.CLM.hasGalleryVisitedThread = hasGalleryVisitedThread;
-            window.CLM.markThreadGalleryVisited = markThreadGalleryVisited;
-            window.CLM.applyVisitedStateToElement = applyVisitedStateToElement;
-            window.CLM.hasDownloadedThread = hasDownloadedThread;
-            window.CLM.markThreadDownloaded = markThreadDownloaded;
-            window.CLM.subscribeDownloadStatus = subscribeDownloadStatus;
+            CLM.hasGalleryVisitedThread = hasGalleryVisitedThread;
+            CLM.markThreadGalleryVisited = markThreadGalleryVisited;
+            CLM.applyVisitedStateToElement = applyVisitedStateToElement;
+            CLM.hasDownloadedThread = hasDownloadedThread;
+            CLM.markThreadDownloaded = markThreadDownloaded;
+            CLM.subscribeDownloadStatus = subscribeDownloadStatus;
             
             // 暴露 qBittorrent 函数
-            window.CLM.sendToQbittorrent = sendToQbittorrent;
-            window.CLM.loadSettings = loadSettings;
-            window.CLM.saveSettings = saveSettings;
+            CLM.sendToQbittorrent = sendToQbittorrent;
+            CLM.loadSettings = loadSettings;
+            CLM.saveSettings = saveSettings;
             
             console.log('草榴Manager: 核心函数已暴露到 CLM 命名空间');
             
@@ -1169,64 +1174,64 @@
             
             // 调用模块初始化函数
             console.log('草榴Manager: 检查模块初始化函数', {
-                initForumModule: typeof window.CLM.initForumModule,
-                initSearchModule: typeof window.CLM.initSearchModule,
-                initDownloadModule: typeof window.CLM.initDownloadModule,
-                initSettingsModule: typeof window.CLM.initSettingsModule,
-                initGalleryModule: typeof window.CLM.initGalleryModule,
-                initMobileModule: typeof window.CLM.initMobileModule
+                initForumModule: typeof CLM.initForumModule,
+                initSearchModule: typeof CLM.initSearchModule,
+                initDownloadModule: typeof CLM.initDownloadModule,
+                initSettingsModule: typeof CLM.initSettingsModule,
+                initGalleryModule: typeof CLM.initGalleryModule,
+                initMobileModule: typeof CLM.initMobileModule
             });
             
-            if (typeof window.CLM.initForumModule === 'function') {
+            if (typeof CLM.initForumModule === 'function') {
                 try {
-                    window.CLM.initForumModule(moduleCtx);
+                    CLM.initForumModule(moduleCtx);
                     console.log('草榴Manager: Forum 模块已初始化');
                 } catch (e) {
                     console.warn('草榴Manager: Forum 模块初始化失败', e);
                 }
             } else {
-                console.warn('草榴Manager: initForumModule 不是函数', typeof window.CLM.initForumModule);
+                console.warn('草榴Manager: initForumModule 不是函数', typeof CLM.initForumModule);
             }
             
-            if (typeof window.CLM.initSearchModule === 'function') {
+            if (typeof CLM.initSearchModule === 'function') {
                 try {
-                    window.CLM.initSearchModule(moduleCtx);
+                    CLM.initSearchModule(moduleCtx);
                     console.log('草榴Manager: Search 模块已初始化');
                 } catch (e) {
                     console.warn('草榴Manager: Search 模块初始化失败', e);
                 }
             }
             
-            if (typeof window.CLM.initDownloadModule === 'function') {
+            if (typeof CLM.initDownloadModule === 'function') {
                 try {
-                    window.CLM.initDownloadModule(moduleCtx);
+                    CLM.initDownloadModule(moduleCtx);
                     console.log('草榴Manager: Download 模块已初始化');
                 } catch (e) {
                     console.warn('草榴Manager: Download 模块初始化失败', e);
                 }
             }
             
-            if (typeof window.CLM.initSettingsModule === 'function') {
+            if (typeof CLM.initSettingsModule === 'function') {
                 try {
-                    window.CLM.initSettingsModule(moduleCtx);
+                    CLM.initSettingsModule(moduleCtx);
                     console.log('草榴Manager: Settings 模块已初始化');
                 } catch (e) {
                     console.warn('草榴Manager: Settings 模块初始化失败', e);
                 }
             }
             
-            if (typeof window.CLM.initGalleryModule === 'function') {
+            if (typeof CLM.initGalleryModule === 'function') {
                 try {
-                    window.CLM.initGalleryModule(moduleCtx);
+                    CLM.initGalleryModule(moduleCtx);
                     console.log('草榴Manager: Gallery 模块已初始化');
                 } catch (e) {
                     console.warn('草榴Manager: Gallery 模块初始化失败', e);
                 }
             }
             
-            if (typeof window.CLM.initMobileModule === 'function') {
+            if (typeof CLM.initMobileModule === 'function') {
                 try {
-                    window.CLM.initMobileModule(moduleCtx);
+                    CLM.initMobileModule(moduleCtx);
                     console.log('草榴Manager: Mobile 模块已初始化');
                 } catch (e) {
                     console.warn('草榴Manager: Mobile 模块初始化失败', e);

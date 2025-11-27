@@ -1220,6 +1220,21 @@
         `);
     }
 
+    // 统一的模块初始化入口
+    function initMobileModule(ctx) {
+        if (!ctx) {
+            console.warn('草榴Manager: mobile 模块初始化参数不完整');
+            return;
+        }
+        
+        CLM._mobileModuleLoaded = true;
+        console.log('草榴Manager: mobile 模块已加载');
+        
+        // 自动初始化手机端增强
+        initMobileEnhancements();
+    }
+    
+    CLM.initMobileModule = CLM.initMobileModule || initMobileModule;
     CLM.initMobileEnhancements = CLM.initMobileEnhancements || initMobileEnhancements;
     CLM.registerMobileGalleryGestures = CLM.registerMobileGalleryGestures || registerMobileGalleryGestures;
     CLM.registerMobileComments = CLM.registerMobileComments || registerMobileComments;
