@@ -1,7 +1,7 @@
     // ==UserScript==
     // @name         草榴Manager
     // @namespace    http://tampermonkey.net/
-    // @version      1.8.0012
+    // @version      1.8.0013
     // @description  草榴搜索/板块悬停放大封面、标题预览图、品质徽章与 qBittorrent 一键发送和下载按钮。
     // @author       truclocphung1713
     // @match        https://t66y.com/search.php*
@@ -989,7 +989,7 @@
             moduleInfo.style.fontSize = '12px';
             moduleInfo.style.color = '#6b7280';
             moduleInfo.style.marginBottom = '12px';
-            moduleInfo.textContent = '当前版本: 1.8.0012 | 模块基于版本号缓存，更新时自动清除旧版本';
+            moduleInfo.textContent = '当前版本: 1.8.0013 | 模块基于版本号缓存，更新时自动清除旧版本';
             moduleSection.appendChild(moduleInfo);
 
             const moduleButtons = document.createElement('div');
@@ -1134,6 +1134,79 @@
             window.CLM.saveSettings = saveSettings;
             
             console.log('草榴Manager: 核心函数已暴露到 CLM 命名空间');
+            
+            // 初始化各个模块
+            const moduleCtx = {
+                isMobilePage,
+                injectStyle,
+                getAbsoluteUrl,
+                normalizeThreadKey,
+                showToast,
+                hasGalleryVisitedThread,
+                markThreadGalleryVisited,
+                applyVisitedStateToElement,
+                hasDownloadedThread,
+                markThreadDownloaded,
+                subscribeDownloadStatus,
+                sendToQbittorrent,
+                loadSettings,
+                saveSettings
+            };
+            
+            // 调用模块初始化函数
+            if (typeof window.CLM.initForumModule === 'function') {
+                try {
+                    window.CLM.initForumModule(moduleCtx);
+                    console.log('草榴Manager: Forum 模块已初始化');
+                } catch (e) {
+                    console.warn('草榴Manager: Forum 模块初始化失败', e);
+                }
+            }
+            
+            if (typeof window.CLM.initSearchModule === 'function') {
+                try {
+                    window.CLM.initSearchModule(moduleCtx);
+                    console.log('草榴Manager: Search 模块已初始化');
+                } catch (e) {
+                    console.warn('草榴Manager: Search 模块初始化失败', e);
+                }
+            }
+            
+            if (typeof window.CLM.initDownloadModule === 'function') {
+                try {
+                    window.CLM.initDownloadModule(moduleCtx);
+                    console.log('草榴Manager: Download 模块已初始化');
+                } catch (e) {
+                    console.warn('草榴Manager: Download 模块初始化失败', e);
+                }
+            }
+            
+            if (typeof window.CLM.initSettingsModule === 'function') {
+                try {
+                    window.CLM.initSettingsModule(moduleCtx);
+                    console.log('草榴Manager: Settings 模块已初始化');
+                } catch (e) {
+                    console.warn('草榴Manager: Settings 模块初始化失败', e);
+                }
+            }
+            
+            if (typeof window.CLM.initGalleryModule === 'function') {
+                try {
+                    window.CLM.initGalleryModule(moduleCtx);
+                    console.log('草榴Manager: Gallery 模块已初始化');
+                } catch (e) {
+                    console.warn('草榴Manager: Gallery 模块初始化失败', e);
+                }
+            }
+            
+            if (typeof window.CLM.initMobileModule === 'function') {
+                try {
+                    window.CLM.initMobileModule(moduleCtx);
+                    console.log('草榴Manager: Mobile 模块已初始化');
+                } catch (e) {
+                    console.warn('草榴Manager: Mobile 模块初始化失败', e);
+                }
+            }
         });
 
         if (document.readyState === 'loading') {
