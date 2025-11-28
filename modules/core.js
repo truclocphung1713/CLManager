@@ -533,6 +533,28 @@
         }
     }
 
+    const QUALITY_TAG_PATTERNS = [
+        { tag: '2160P', regex: /\b(2160p|4k|uhd)\b/i },
+        { tag: '1440P', regex: /\b(1440p|2k)\b/i },
+        { tag: '1080P', regex: /\b1080p\b/i },
+        { tag: '720P', regex: /\b720p\b/i },
+        { tag: 'BluRay', regex: /\b(bluray|blu-ray|bd)\b/i },
+        { tag: 'HDR', regex: /\bHDR\b/i },
+        { tag: 'VR', regex: /\bVR\b/i },
+        { tag: 'HD', regex: /\bHD\b/i },
+        { tag: 'SD', regex: /\bSD\b/i }
+    ];
+
+    function detectQualityTagFromTitle(titleText) {
+        if (!titleText) return null;
+        for (const { tag, regex } of QUALITY_TAG_PATTERNS) {
+            if (regex.test(titleText)) {
+                return tag;
+            }
+        }
+        return null;
+    }
+
     function resolveQualityTagFromListItem(wfItem, threadAnchor = null) {
         if (!wfItem) return null;
         const selectors = [
@@ -571,25 +593,7 @@
             }
         }
         const combined = pieces.join(' ').trim();
-        
-        // 检测画质标签
-        const patterns = [
-            { tag: '2160P', regex: /\b(2160p|4k|uhd)\b/i },
-            { tag: '1440P', regex: /\b(1440p|2k)\b/i },
-            { tag: '1080P', regex: /\b1080p\b/i },
-            { tag: '720P', regex: /\b720p\b/i },
-            { tag: 'BluRay', regex: /\b(bluray|blu-ray|bd)\b/i },
-            { tag: 'HDR', regex: /\bHDR\b/i },
-            { tag: 'VR', regex: /\bVR\b/i },
-            { tag: 'HD', regex: /\bHD\b/i },
-            { tag: 'SD', regex: /\bSD\b/i }
-        ];
-        for (const { tag, regex } of patterns) {
-            if (regex.test(combined)) {
-                return tag;
-            }
-        }
-        return null;
+        return detectQualityTagFromTitle(combined);
     }
 
     function setupThreadDownloadButton(btn, options = {}) {
@@ -657,6 +661,47 @@
     function initCoreModule(ctx) {
         console.log('草榴Manager: core 模块已加载');
         
+        // 注入清晰度徽章的基础样式，使桌面端和手机端外观与舊版保持一致
+        try {
+            const inject = (ctx && ctx.injectStyle) || CLM.injectStyle;
+            if (typeof inject === 'function') {
+                inject(`
+                    .clm-quality-badge {
+                        position: absolute;
+                        left: 12px;
+                        bottom: 12px;
+                        padding: 3px 8px 4px;
+                        font-size: 11px;
+                        line-height: 1.2;
+                        border-radius: 999px;
+                        border: 1px solid rgba(255, 255, 255, 0.5);
+                        background: rgba(12, 12, 20, 0.82);
+                        color: #fff;
+                        font-weight: 700;
+                        letter-spacing: 0.08em;
+                        text-transform: uppercase;
+                        pointer-events: none;
+                        display: none;
+                        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+                        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+                        align-items: center;
+                        justify-content: center;
+                        min-width: 48px;
+                        max-width: 80px;
+                        max-height: 24px;
+                        overflow: hidden;
+                        text-overflow: ellipsis;
+                        white-space: nowrap;
+                    }
+                    .clm-quality-badge:empty {
+                        display: none !important;
+                    }
+                `);
+            }
+        } catch (e) {
+            console.warn('草榴Manager: 注入清晰度徽章樣式失敗', e);
+        }
+
         // 将核心函数暴露到 CLM 命名空间
         CLM.fetchThreadData = fetchThreadData;
         CLM.openGalleryForThread = openGalleryForThread;
@@ -671,6 +716,7 @@
         CLM.bindGalleryVisitedIndicator = bindGalleryVisitedIndicator;
         CLM.updateQualityBadgeElement = updateQualityBadgeElement;
         CLM.resolveQualityTagFromListItem = resolveQualityTagFromListItem;
+        CLM.detectQualityTagFromTitle = detectQualityTagFromTitle;
         CLM.setupThreadDownloadButton = setupThreadDownloadButton;
         
         // 创建画廊覆盖层
