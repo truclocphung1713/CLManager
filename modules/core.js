@@ -429,6 +429,158 @@
     }
 
     // ========================================
+    // Gallery 辅助函数（mobile 模块需要）
+    // ========================================
+    
+    function bindGalleryVisitedIndicator(element, threadUrl, variant) {
+        if (!element || !threadUrl) return null;
+        const normalizeThreadKey = CLM.normalizeThreadKey;
+        const hasGalleryVisitedThread = CLM.hasGalleryVisitedThread;
+        const applyVisitedStateToElement = CLM.applyVisitedStateToElement;
+        
+        if (!normalizeThreadKey || !hasGalleryVisitedThread || !applyVisitedStateToElement) {
+            console.warn('草榴Manager: bindGalleryVisitedIndicator 缺少必要函数');
+            return null;
+        }
+        
+        const threadKey = normalizeThreadKey(threadUrl);
+        if (!threadKey) return null;
+        element.dataset.clmThreadKey = threadKey;
+        if (variant) {
+            element.dataset.clmGalleryVisitedVariant = variant;
+        }
+        applyVisitedStateToElement(element, hasGalleryVisitedThread(threadKey));
+        return threadKey;
+    }
+
+    function updateQualityBadgeElement(badgeEl, tag) {
+        if (!badgeEl) return;
+        if (tag) {
+            badgeEl.textContent = tag.toUpperCase();
+            badgeEl.style.display = 'inline-flex';
+        } else {
+            badgeEl.textContent = '';
+            badgeEl.style.display = 'none';
+        }
+    }
+
+    function resolveQualityTagFromListItem(wfItem, threadAnchor = null) {
+        if (!wfItem) return null;
+        const selectors = [
+            '.title a',
+            '.title',
+            '.subject a',
+            '.subject',
+            '.t_subject',
+            '.tsubject',
+            '.wf_text tl',
+            '.wf_text .tl',
+            '.wf_text a',
+            '.wf_text'
+        ];
+        const pieces = [];
+        selectors.forEach((sel) => {
+            const el = wfItem.querySelector(sel);
+            if (!el) return;
+            if (el.textContent) {
+                pieces.push(el.textContent);
+            }
+            if (el.getAttribute) {
+                const attrTitle = el.getAttribute('title');
+                if (attrTitle) {
+                    pieces.push(attrTitle);
+                }
+            }
+        });
+        if (threadAnchor) {
+            if (threadAnchor.textContent) {
+                pieces.push(threadAnchor.textContent);
+            }
+            const anchorTitle = threadAnchor.getAttribute('title');
+            if (anchorTitle) {
+                pieces.push(anchorTitle);
+            }
+        }
+        const combined = pieces.join(' ').trim();
+        
+        // 检测画质标签
+        const patterns = [
+            { tag: '2160P', regex: /\b(2160p|4k|uhd)\b/i },
+            { tag: '1440P', regex: /\b(1440p|2k)\b/i },
+            { tag: '1080P', regex: /\b1080p\b/i },
+            { tag: '720P', regex: /\b720p\b/i },
+            { tag: 'BluRay', regex: /\b(bluray|blu-ray|bd)\b/i },
+            { tag: 'HDR', regex: /\bHDR\b/i },
+            { tag: 'VR', regex: /\bVR\b/i },
+            { tag: 'HD', regex: /\bHD\b/i },
+            { tag: 'SD', regex: /\bSD\b/i }
+        ];
+        for (const { tag, regex } of patterns) {
+            if (regex.test(combined)) {
+                return tag;
+            }
+        }
+        return null;
+    }
+
+    function setupThreadDownloadButton(btn, options = {}) {
+        if (!btn || !options) return;
+        
+        const normalizeThreadKey = CLM.normalizeThreadKey;
+        const hasDownloadedThread = CLM.hasDownloadedThread;
+        const subscribeDownloadStatus = CLM.subscribeDownloadStatus;
+        
+        if (!normalizeThreadKey || !hasDownloadedThread || !subscribeDownloadStatus) {
+            console.warn('草榴Manager: setupThreadDownloadButton 缺少必要函数');
+            return;
+        }
+        
+        const defaultLabel = options.label || '下载';
+        const downloadedLabel = options.downloadedLabel || '已下载';
+        btn.textContent = defaultLabel;
+        const threadKey = normalizeThreadKey(options.threadUrl);
+        if (!threadKey) {
+            btn.disabled = true;
+            btn.title = '无法解析帖子地址';
+            return;
+        }
+        const container = options.container || null;
+        const containerClass = options.containerClass || '';
+        const defaultTitle = '下载到 qBittorrent';
+        const downloadedTitle = '已下载，可再次发送到 qBittorrent';
+        if (options.threadTitle) {
+            btn.dataset.clmThreadTitle = options.threadTitle;
+        } else {
+            delete btn.dataset.clmThreadTitle;
+        }
+
+        const updateState = () => {
+            const downloaded = hasDownloadedThread(threadKey);
+            btn.classList.toggle('clm-downloaded', downloaded);
+            btn.textContent = downloaded ? downloadedLabel : defaultLabel;
+            btn.title = downloaded ? downloadedTitle : defaultTitle;
+            if (container && containerClass) {
+                container.classList.toggle(containerClass, downloaded);
+            }
+            if (btn.dataset.clmBusy !== '1') {
+                btn.disabled = false;
+            }
+        };
+
+        btn.dataset.clmThreadKey = threadKey;
+        btn.__clmRefreshDownloadState = updateState;
+        updateState();
+        subscribeDownloadStatus(threadKey, () => updateState());
+
+        btn.addEventListener('click', (ev) => {
+            ev.preventDefault();
+            ev.stopPropagation();
+            if (btn.dataset.clmBusy === '1') return;
+            handleThreadDownloadButtonClick(btn);
+        });
+    }
+
+    // ========================================
     // 初始化核心模块
     // ========================================
     
@@ -443,6 +595,12 @@
         CLM.setCurrentListHoverCtx = setCurrentListHover;
         CLM.handleThreadDownloadButtonClick = handleThreadDownloadButtonClick;
         CLM.createGalleryOverlayFactory = createGalleryOverlayFactory;
+        
+        // Gallery 辅助函数
+        CLM.bindGalleryVisitedIndicator = bindGalleryVisitedIndicator;
+        CLM.updateQualityBadgeElement = updateQualityBadgeElement;
+        CLM.resolveQualityTagFromListItem = resolveQualityTagFromListItem;
+        CLM.setupThreadDownloadButton = setupThreadDownloadButton;
         
         // 创建画廊覆盖层
         CLM.galleryOverlay = createGalleryOverlayFactory(ctx);

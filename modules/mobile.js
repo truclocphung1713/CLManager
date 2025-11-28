@@ -1230,8 +1230,45 @@
         CLM._mobileModuleLoaded = true;
         console.log('草榴Manager: mobile 模块已加载');
         
-        // 自动初始化手机端增强
+        // 1. 注入手机端样式
         initMobileEnhancements();
+        
+        // 2. 初始化手机端板块页面功能
+        const pageType = detectCurrentPageType();
+        console.log('草榴Manager: mobile 模块检测页面类型 =', pageType);
+        
+        if (pageType === 'mobile-forum') {
+            // 需要构建完整的上下文对象
+            const mobileCtx = {
+                ...ctx,
+                getAbsoluteUrl: CLM.getAbsoluteUrl || ctx.getAbsoluteUrl,
+                resolveQualityTagFromListItem: CLM.resolveQualityTagFromListItem,
+                updateQualityBadgeElement: CLM.updateQualityBadgeElement,
+                bindGalleryVisitedIndicator: CLM.bindGalleryVisitedIndicator,
+                openGalleryForThread: CLM.openGalleryForThread,
+                setupThreadDownloadButton: CLM.setupThreadDownloadButton
+            };
+            initMobileForumEnhancements(mobileCtx);
+        }
+    }
+    
+    // 检测当前页面类型
+    function detectCurrentPageType() {
+        const href = window.location.href;
+        const isMobile = CLM.isMobilePage ? CLM.isMobilePage() : false;
+        
+        if (!isMobile) return 'desktop';
+        
+        if (href.indexOf('/htm_mob/') !== -1 || href.indexOf('/htm_data/') !== -1) {
+            return 'mobile-thread';
+        }
+        if (href.indexOf('search.php') !== -1) {
+            return 'mobile-search';
+        }
+        if (href.indexOf('thread0806.php') !== -1) {
+            return 'mobile-forum';
+        }
+        return 'mobile-unknown';
     }
     
     CLM.initMobileModule = CLM.initMobileModule || initMobileModule;
