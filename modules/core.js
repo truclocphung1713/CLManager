@@ -1,11 +1,14 @@
 /**
  * =========================================
- *  核心模块（完整实现）- v2.1.0
+ *  核心模块（完整实现）
  * =========================================
+ * 
+ * 版本由 manifest.json 统一管理
  * 
  * 这个模块包含核心功能的完整实现：
  * - 工具函数
  * - 数据存储（画廊访问记录、下载记录）
+ * - 核心业务逻辑
  * - 为主脚本提供统一的 API
  */
 
@@ -332,18 +335,178 @@
         });
     }
 
+    // ========================================
+    // 核心业务逻辑 - Phase 3
+    // ========================================
+
     /**
-     * ========================================
-     *  初始化核心模块
-     * ========================================
+     * 收集帖子中的画廊图片
+     */
+    function collectGalleryImages(threadContent, baseHref = location.href) {
+        if (!threadContent) return [];
+        const seen = new Set();
+        const gallery = [];
+
+        function pushItem(rawUrl, label) {
+            if (!rawUrl) return;
+            // 排除广告占位符和无效URL
+            if (rawUrl.includes('adblo_ck.jpg') || rawUrl.includes('http://a.d/')) return;
+            const abs = getAbsoluteUrl(rawUrl, baseHref);
+            if (!abs || seen.has(abs)) return;
+            seen.add(abs);
+            gallery.push({
+                src: abs,
+                url: abs,
+                label: label || ''
+            });
+        }
+
+        // 收集所有带有真实图片数据的img标签
+        // 优先查找在.tpc_content中的图片，排除广告区域
+        const contentArea = threadContent.querySelector('.tpc_content') || threadContent;
+        const allImages = contentArea.querySelectorAll('img[ess-data], img[iyl-data], img[data-src], img[src]');
+        
+        allImages.forEach(img => {
+            // 优先使用ess-data，然后是data-src，然后是iyl-data，最后是src
+            const imgUrl = img.getAttribute('ess-data') ||
+                img.getAttribute('data-src') ||
+                img.getAttribute('iyl-data') ||
+                img.src;
+            
+            if (imgUrl && !imgUrl.includes('adblo_ck.jpg') && !imgUrl.includes('http://a.d/')) {
+                // 过滤掉太小的图片（可能是图标或广告）
+                const width = img.naturalWidth || img.width || 0;
+                const height = img.naturalHeight || img.height || 0;
+                if (width < 100 && height < 100 && img.src && !img.getAttribute('ess-data') && !img.getAttribute('data-src')) {
+                    return; // 跳过小图片
+                }
+                
+                const label = img.getAttribute('title') || 
+                    img.getAttribute('alt') || 
+                    (gallery.length === 0 ? '封面' : `圖片 ${gallery.length + 1}`);
+                pushItem(imgUrl, label);
+            }
+        });
+
+        // 如果没有找到任何图片，尝试查找封面图片（兼容旧逻辑）
+        if (gallery.length === 0) {
+            const coverImg = threadContent.querySelector('img[ess-data], img[iyl-data], img[data-src], img[src*="pb_"], img[src*="cover"]');
+            if (coverImg) {
+                const coverUrl = coverImg.getAttribute('ess-data') ||
+                    coverImg.getAttribute('data-src') ||
+                    coverImg.getAttribute('iyl-data') ||
+                    coverImg.src;
+                if (coverUrl) {
+                    pushItem(coverUrl, coverImg.getAttribute('title') || '封面');
+                }
+            }
+        }
+
+        // 收集.cl-gallery中的链接（兼容旧逻辑）
+        const galleryAnchors = threadContent.querySelectorAll('.cl-gallery a[href]');
+        galleryAnchors.forEach(anchor => {
+            const href = anchor.getAttribute('href');
+            if (!href) return;
+            const label = anchor.querySelector('img')?.getAttribute('title') || anchor.textContent.trim() || '預覽';
+            pushItem(href, label);
+        });
+
+        return gallery;
+    }
+
+    /**
+     * 提取清洁的文本内容
+     */
+    function extractCleanText(node) {
+        if (!node) return '';
+        const clone = node.cloneNode(true);
+        const removable = clone.querySelectorAll('script, style, iframe, video, audio');
+        removable.forEach(el => el.remove());
+        
+        // 将 <br> 和 <br/> 标签转换为换行符
+        const brElements = clone.querySelectorAll('br');
+        brElements.forEach(br => {
+            const textNode = document.createTextNode('\n');
+            br.parentNode.replaceChild(textNode, br);
+        });
+        
+        const text = clone.textContent
+            .replace(/\u00A0/g, ' ')
+            .replace(/\s+\n/g, '\n')
+            .replace(/\n{2,}/g, '\n')
+            .replace(/[ \t]{2,}/g, ' ')
+            .trim();
+        return text;
+    }
+
+    /**
+     * 从内容元素中提取帖子用户名（支持电脑端和手机端）
+     */
+    function extractPostUser(contentEl) {
+        if (!contentEl) return '';
+        
+        // 手机端 htm_mob：.tpc_cont 与 .tpc_detail 在同一块内，优先从同一块里的 .tpc_detail 读取用户名
+        if (contentEl.classList && contentEl.classList.contains('tpc_cont')) {
+            const parent = contentEl.parentElement;
+            if (parent) {
+                const mobileDetail = parent.querySelector('.tpc_detail.f10.fl li');
+                if (mobileDetail) {
+                    const html = mobileDetail.innerHTML || '';
+                    // 提取 <br> 之前的内容（用户名），如：血色不浪漫<br>#1樓 ...
+                    const match = html.match(/^([^<]+?)(?:<br|<BR)/i);
+                    if (match && match[1]) {
+                        const username = match[1].trim();
+                        if (username && !username.includes('#') && !username.includes('樓')) {
+                            return username;
+                        }
+                    }
+                    // 如果没有 <br>，回退到第一行文本
+                    const text = mobileDetail.textContent || mobileDetail.innerText || '';
+                    const lines = text.split('\n').map(l => l.trim()).filter(l => l);
+                    if (lines.length > 0 && !lines[0].includes('#') && !lines[0].includes('樓')) {
+                        return lines[0];
+                    }
+                }
+            }
+        }
+        
+        // 电脑端 / 其他布局：尝试从 .tpc_detail.f10.fl 所在的 .t.t2/.t2/.t 容器中提取用户名
+        const postContainer = contentEl.closest('.t.t2, .t2, .t');
+        if (postContainer) {
+            const tpcDetail = postContainer.querySelector('.tpc_detail.f10.fl li');
+            if (tpcDetail) {
+                // 获取 innerHTML 并解析
+                const html = tpcDetail.innerHTML || '';
+                // 提取 <br> 之前的内容（用户名）
+                const match = html.match(/^([^<]+?)(?:<br|<BR)/i);
+                if (match && match[1]) {
+                    const username = match[1].trim();
+                    if (username && !username.includes('#') && !username.includes('樓')) {
+                        return username;
+                    }
+                }
+                // 如果没有 <br>，尝试提取第一行
+                const text = tpcDetail.textContent || tpcDetail.innerText || '';
+                const lines = text.split('\n').map(l => l.trim()).filter(l => l);
+                if (lines.length > 0 && !lines[0].includes('#') && !lines[0].includes('樓')) {
+                    return lines[0];
+                }
+            }
+        }
+        
+        // 更多备用方案省略...（主脚本中的完整实现）
+        return '';
+    }
+
+    // ========================================
+    // 模块初始化
+    // ========================================
+
+    /**
+     * 初始化核心模块
      */
     function initCoreModule(ctx) {
-        console.log('%c草榴Manager: core 模块（完整实现 v2.1.0）已加载', 'color: #3b82f6; font-weight: bold;');
-        
-        // 标记模块已加载
-        CLM._coreModuleLoaded = true;
-        CLM._coreModuleVersion = '2.1.0';
-        CLM._remoteModuleLoadTime = Date.now();
+        console.log('草榴Manager: core 模块（完整实现）已加载');
         
         // 暴露工具函数（覆盖主脚本版本）
         CLM.isMobilePage = isMobilePage;
@@ -363,6 +526,11 @@
         CLM.markThreadDownloaded = markThreadDownloaded;
         CLM.subscribeDownloadStatus = subscribeDownloadStatus;
         
+        // 暴露核心业务逻辑函数（Phase 3）
+        CLM.collectGalleryImages = collectGalleryImages;
+        CLM.extractCleanText = extractCleanText;
+        CLM.extractPostUser = extractPostUser;
+        
         console.log('✓ 核心工具函数已加载（来自远程模块）');
         console.log('- isMobilePage:', typeof CLM.isMobilePage);
         console.log('- detectPageType:', typeof CLM.detectPageType);
@@ -379,7 +547,12 @@
         console.log('- markThreadDownloaded:', typeof CLM.markThreadDownloaded);
         console.log('- subscribeDownloadStatus:', typeof CLM.subscribeDownloadStatus);
         
-        console.log('%c草榴Manager: core 模块初始化完成 - 已覆盖 12 个主脚本函数', 'color: #22c55e; font-weight: bold;');
+        console.log('✓ 核心业务逻辑函数已加载（Phase 3）');
+        console.log('- collectGalleryImages:', typeof CLM.collectGalleryImages);
+        console.log('- extractCleanText:', typeof CLM.extractCleanText);
+        console.log('- extractPostUser:', typeof CLM.extractPostUser);
+        
+        console.log('%c草榴Manager: core 模块初始化完成 - 已覆盖 15 个主脚本函数', 'color: #22c55e; font-weight: bold;');
     }
 
     // 暴露初始化函数

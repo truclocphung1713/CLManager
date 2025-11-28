@@ -1,7 +1,9 @@
 /**
  * =========================================
- *  桌面端模块（代理层）- v1.0.2
+ *  桌面端模块（代理层）
  * =========================================
+ * 
+ * 版本由 manifest.json 统一管理
  * 
  * 这是一个代理层模块，不重复实现任何逻辑。
  * 所有桌面端功能已经在主脚本 CLManager.user.js 中实现。
@@ -22,7 +24,7 @@
      * 所有桌面端功能已经在主脚本中实现
      */
     function initDesktopModule(ctx) {
-        console.log('草榴Manager: desktop 模块（代理层 v1.0.2）已加载');
+        console.log('草榴Manager: desktop 模块（代理层）已加载');
         
         // 标记模块已加载
         CLM._desktopModuleLoaded = true;
