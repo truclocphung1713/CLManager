@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         草榴Manager
 // @namespace    http://tampermonkey.net/
-// @version      1.11.0
+// @version      1.11.1
 // @description  草榴搜索/板块悬停放大封面、标题预览图、品质徽章与 qBittorrent 一键发送和下载按钮。
 // @author       truclocphung1713
 // @match        https://t66y.com/search.php*
@@ -4425,8 +4425,15 @@
         }
     }
 
-    // 搜索页面（search.php）- 电脑端和手机端通用处理
-    if (href.indexOf('search.php') !== -1) {
+    /**
+     * ========================================
+     *  页面特定功能初始化
+     *  注意：此函数将在远程模块加载完成后调用
+     * ========================================
+     */
+    function initPageSpecificFeatures() {
+        // 搜索页面（search.php）- 电脑端和手机端通用处理
+        if (href.indexOf('search.php') !== -1) {
         const isSearchMobile = isMobilePage();
         
         // 手机端搜索页：缓存电脑端搜索结果，避免重复请求
@@ -7707,6 +7714,7 @@
     
     // 注意：已迁移到 core.js 的函数不再在此暴露
     // 它们将由远程模块加载后自动暴露到 CLM 命名空间
+    }  // initPageSpecificFeatures 函数结束
     
     console.log('草榴Manager: 核心函数已暴露到 CLM 命名空间');
 
@@ -7755,9 +7763,14 @@
             }
             
             console.log('%c草榴Manager: 远程模块初始化完成', 'color: #22c55e; font-weight: bold;');
+            
+            // 远程模块加载完成后，初始化页面特定功能
+            initPageSpecificFeatures();
+            console.log('草榴Manager: 页面特定功能初始化完成');
         } catch (err) {
             console.error('草榴Manager: 远程模块加载失败', err);
-            // 失败不影响主脚本功能，因为所有功能都已经在主脚本中实现
+            // 即使远程模块加载失败，也要初始化页面特定功能（使用降级处理）
+            initPageSpecificFeatures();
         }
     })();
 
