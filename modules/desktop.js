@@ -180,12 +180,38 @@
     function enhanceForumItem(item) {
         // 查找封面和标题
         const coverContainer = item.querySelector('.image-big');
-        const titleLink = item.querySelector('.wf_text a[href*="htm_data"]');
+        const titleLink = item.querySelector('.wf_text a[href*="htm_data"], .wf_text a[href*="htm_mob"]');
         
         if (!coverContainer || !titleLink) return;
 
-        const threadUrl = titleLink.href;
+        const rawHref = titleLink.getAttribute('href') || titleLink.href;
+        const threadUrl = (CLM.getAbsoluteUrl ? CLM.getAbsoluteUrl(rawHref) : rawHref) || rawHref;
         if (!threadUrl) return;
+
+        // 清晰度徽章（封面左上角）
+        let qualityBadge = coverContainer.querySelector('.clm-quality-badge.clm-cover-quality');
+        if (!qualityBadge) {
+            qualityBadge = document.createElement('div');
+            qualityBadge.className = 'clm-quality-badge clm-cover-quality';
+            coverContainer.appendChild(qualityBadge);
+        }
+        if (CLM.resolveQualityTagFromListItem && CLM.updateQualityBadgeElement) {
+            try {
+                const qualityTag = CLM.resolveQualityTagFromListItem(item, titleLink);
+                CLM.updateQualityBadgeElement(qualityBadge, qualityTag);
+            } catch (e) {
+                console.warn('草榴Manager: 更新桌面端清晰度徽章失败', e);
+            }
+        }
+
+        // 访问标记（根据画廊访问记录改变样式）
+        if (CLM.bindGalleryVisitedIndicator) {
+            try {
+                CLM.bindGalleryVisitedIndicator(coverContainer, threadUrl, 'cover');
+            } catch (e) {
+                console.warn('草榴Manager: 绑定桌面端访问标记失败', e);
+            }
+        }
 
         // 添加画廊按钮
         if (!coverContainer.querySelector('.clm-gallery-btn')) {
@@ -196,7 +222,16 @@
                 e.preventDefault();
                 e.stopPropagation();
                 if (CLM.openGalleryForThread) {
-                    CLM.openGalleryForThread(threadUrl, { instant: true });
+                    // 将封面检测到的清晰度传入画廊，保持与旧版行为一致
+                    let qualityTag = null;
+                    if (CLM.resolveQualityTagFromListItem) {
+                        try {
+                            qualityTag = CLM.resolveQualityTagFromListItem(item, titleLink);
+                        } catch (err) {
+                            console.warn('草榴Manager: 解析清晰度失败', err);
+                        }
+                    }
+                    CLM.openGalleryForThread(threadUrl, { instant: true, qualityTag });
                 }
             });
             coverContainer.appendChild(galleryBtn);
@@ -212,6 +247,8 @@
             if (CLM.setupThreadDownloadButton) {
                 CLM.setupThreadDownloadButton(downloadBtn, {
                     threadUrl: threadUrl,
+                    container: item,
+                    containerClass: 'clm-thread-downloaded',
                     threadTitle: titleLink.textContent.trim(),
                     label: '下载',
                     downloadedLabel: '已下载'
@@ -232,11 +269,20 @@
         // 添加悬停预览功能
         coverContainer.addEventListener('mouseenter', () => {
             if (CLM.setCurrentListHoverCtx) {
+                // 把清晰度也塞进悬停上下文，便于画廊入口使用
+                let qualityTag = null;
+                if (CLM.resolveQualityTagFromListItem) {
+                    try {
+                        qualityTag = CLM.resolveQualityTagFromListItem(item, titleLink);
+                    } catch (err) {
+                        console.warn('草榴Manager: 解析清晰度失败', err);
+                    }
+                }
                 CLM.setCurrentListHoverCtx({
                     source: 'board',
                     threadUrl: threadUrl,
                     cover: coverContainer,
-                    qualityTag: null
+                    qualityTag
                 });
             }
         });

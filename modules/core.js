@@ -347,6 +347,74 @@
     }
 
     // ========================================
+    // 画廊入口：openGalleryForThread
+    // ========================================
+
+    async function openGalleryForThread(threadUrl, options = {}) {
+        if (!threadUrl) return null;
+
+        const { instant = false, qualityTag: requestedQualityTag = null } = options;
+
+        // 根据当前悬停项高亮来源
+        try {
+            focusGallerySource(threadUrl, currentListHoverCtx);
+        } catch (e) {
+            console.warn('草榴Manager: focusGallerySource 调用失败', e);
+        }
+
+        const loadToken = ++galleryLoadToken;
+        const overlay = CLM.galleryOverlay || createGalleryOverlayFactory({});
+
+        if (instant && overlay && typeof overlay.showLoading === 'function') {
+            overlay.showLoading();
+        }
+
+        const data = await fetchThreadData(threadUrl);
+        if (loadToken !== galleryLoadToken) {
+            // 已有新的加载请求，丢弃本次结果
+            return null;
+        }
+
+        if (!data || !Array.isArray(data.gallery) || !data.gallery.length) {
+            clearGallerySourceHighlight();
+            if (instant && overlay && typeof overlay.isOpen === 'function' && overlay.isOpen() && typeof overlay.close === 'function') {
+                overlay.close();
+            }
+            alert('未找到该帖子的画廊内容');
+            return null;
+        }
+
+        const hoverQualityTag =
+            requestedQualityTag ?? (currentListHoverCtx && currentListHoverCtx.qualityTag) ?? null;
+
+        if (overlay && typeof overlay.open === 'function') {
+            try {
+                overlay.open(data.gallery, {
+                    startIndex: 0,
+                    topic: data.topic || null,
+                    comments: data.comments || [],
+                    download: data.download || null,
+                    threadUrl,
+                    qualityTag: data.qualityTag || hoverQualityTag || null,
+                    ads: data.ads || []
+                });
+            } catch (e) {
+                console.warn('草榴Manager: 打开画廊失败', e);
+            }
+        }
+
+        if (typeof CLM.markThreadGalleryVisited === 'function') {
+            try {
+                CLM.markThreadGalleryVisited(threadUrl);
+            } catch (e) {
+                console.warn('草榴Manager: 标记画廊访问状态失败', e);
+            }
+        }
+
+        return data;
+    }
+
+    // ========================================
     // 下载按钮点击处理（简化版）
     // ========================================
     
@@ -591,6 +659,7 @@
         
         // 将核心函数暴露到 CLM 命名空间
         CLM.fetchThreadData = fetchThreadData;
+        CLM.openGalleryForThread = openGalleryForThread;
         CLM.focusGallerySource = focusGallerySource;
         CLM.clearGallerySourceHighlight = clearGallerySourceHighlight;
         CLM.getCurrentListHoverCtx = getCurrentListHoverCtx;
