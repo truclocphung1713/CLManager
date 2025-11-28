@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         草榴Manager
 // @namespace    http://tampermonkey.net/
-// @version      1.11.2
+// @version      1.11.3
 // @description  草榴搜索/板块悬停放大封面、标题预览图、品质徽章与 qBittorrent 一键发送和下载按钮。
 // @author       truclocphung1713
 // @match        https://t66y.com/search.php*
@@ -4425,8 +4425,19 @@
         }
     }
 
-    // 搜索页面（search.php）- 电脑端和手机端通用处理
-    if (href.indexOf('search.php') !== -1) {
+    // ========================================
+    // 等待远程模块加载完成后再执行页面特定代码
+    // ========================================
+    (async function waitForRemoteModulesAndExecutePageCode() {
+        // 等待远程模块加载完成
+        while (!window.CLM_PAGE_CODE_READY) {
+            await new Promise(resolve => setTimeout(resolve, 50));
+        }
+        
+        console.log('草榴Manager: 远程模块已就绪，开始执行页面特定代码');
+        
+        // 搜索页面（search.php）- 电脑端和手机端通用处理
+        if (href.indexOf('search.php') !== -1) {
         const isSearchMobile = isMobilePage();
         
         // 手机端搜索页：缓存电脑端搜索结果，避免重复请求
@@ -7665,6 +7676,8 @@
         return false;
     }
 
+    })();  // waitForRemoteModulesAndExecutePageCode 结束
+    
     // 對外暴露到 window，方便後續與頁面其他腳本集成
     pageWindow.草榴ManagerSendToQb = sendToQbittorrent;
 
@@ -7676,9 +7689,22 @@
      */
     function initPageSpecificFeatures() {
         console.log('草榴Manager: 开始初始化页面特定功能...');
-        // 页面特定代码将在这里执行
-        // 目前所有页面特定代码都在主脚本中直接执行
-        // 未来可以将它们移到这里
+        
+        // 等待 DOM 加载完成后执行页面特定代码
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', executePageSpecificCode);
+        } else {
+            executePageSpecificCode();
+        }
+    }
+    
+    // 页面特定代码执行函数
+    function executePageSpecificCode() {
+        // 所有页面特定代码将在这里执行
+        // 此时远程模块已经加载完成
+        
+        // 标记：页面特定代码从这里开始执行
+        window.CLM_PAGE_CODE_READY = true;
     }
 
     /**
