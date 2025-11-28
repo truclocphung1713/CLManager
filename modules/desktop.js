@@ -1,17 +1,13 @@
 /**
  * =========================================
- *  桌面端模块（代理层）
+ *  桌面端模块
  * =========================================
  * 
  * 版本由 manifest.json 统一管理
  * 
- * 这是一个代理层模块，不重复实现任何逻辑。
- * 所有桌面端功能已经在主脚本 CLManager.user.js 中实现。
- * 
- * 这个模块的作用：
- * 1. 提供统一的模块初始化接口（initDesktopModule）
- * 2. 标记模块已加载状态（CLM._desktopModuleLoaded）
- * 3. 为将来的逻辑迁移提供占位符
+ * 包含桌面端特定的页面功能：
+ * - 搜索页面功能
+ * - 桌面端论坛板块功能
  */
 
 (function (window) {
@@ -20,28 +16,29 @@
     const CLM = window.CLM || (window.CLM = {});
 
     /**
-     * 初始化桌面端模块（代理层）
-     * 所有桌面端功能已经在主脚本中实现
+     * 初始化桌面端模块
+     * 调用桌面端特定的页面功能
      */
     function initDesktopModule(ctx) {
-        console.log('草榴Manager: desktop 模块（代理层）已加载');
+        console.log('草榴Manager: desktop 模块已加载');
         
         // 标记模块已加载
         CLM._desktopModuleLoaded = true;
         
-        // 桌面端功能已经在主脚本中实现：
-        // - 论坛板块页面：封面按钮、清晰度徽章、画廊/下载按钮
-        // - 搜索页面：标题链接点击打开画廊
-        // - 帖子详情页：相关增强功能
-        // - attachCoverDownloadButtons()
-        // - attachTextOnlyQualityBadges()
-        // - MutationObserver 监听动态内容
+        // 调用桌面端特定功能
+        if (typeof CLM.initSearchPageFeatures === 'function') {
+            CLM.initSearchPageFeatures();
+        }
         
-        console.log('草榴Manager: desktop 模块代理层初始化完成，所有功能由主脚本提供');
+        if (typeof CLM.initDesktopForumFeatures === 'function') {
+            CLM.initDesktopForumFeatures();
+        }
+        
+        console.log('草榴Manager: desktop 模块初始化完成');
     }
 
     // ========================================
-    // 暴露初始化函数
+    // 暴露初始化函数和页面功能
     // ========================================
     
     CLM.initDesktopModule = CLM.initDesktopModule || initDesktopModule;

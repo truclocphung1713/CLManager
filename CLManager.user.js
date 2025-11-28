@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         草榴Manager
 // @namespace    http://tampermonkey.net/
-// @version      1.12.0
+// @version      1.13.0
 // @description  草榴搜索/板块悬停放大封面、标题预览图、品质徽章与 qBittorrent 一键发送和下载按钮。
 // @author       truclocphung1713
 // @match        https://t66y.com/search.php*
@@ -7682,62 +7682,50 @@
     function initPageSpecificFeatures() {
         console.log('草榴Manager: 开始初始化页面特定功能...');
         
-        // 设置远程模块已加载标志（虽然现在不再需要，但保留以备将来使用）
+        // 设置远程模块已加载标志
         remoteModulesLoaded = true;
         
-        // 调用页面特定功能初始化函数
-        // 这些函数在脚本顶层定义，现在在远程模块加载完成后才调用
-        // 确保所有远程模块函数都已就绪
+        // 暴露页面特定功能到 CLM 命名空间，供模块调用
+        CLM.initSearchPageFeatures = initSearchPageFeatures;
+        CLM.initDesktopForumFeatures = initDesktopForumFeatures;
+        CLM.initMobileForumFeatures = initMobileForumFeatures;
+        CLM.initMobileGalleryStyles = initMobileGalleryStyles;
         
-        initSearchPageFeatures();
-        initDesktopForumFeatures();
-        initMobileForumFeatures();
-        initMobileGalleryStyles();
+        // 注意：实际的页面功能初始化由 desktop.js 和 mobile.js 模块负责
+        // 这些模块会调用上面暴露的函数
         
-        console.log('草榴Manager: 页面特定功能初始化完成');
+        console.log('草榴Manager: 页面特定功能已暴露到 CLM 命名空间');
     }
 
     /**
      * ========================================
-     *  暴露核心 API 到 CLM 命名空间
-     *  为将来的模块化架构做准备
+     *  暴露主脚本独有 API 到 CLM 命名空间
+     *  注意：核心业务逻辑已迁移到 core.js
      * ========================================
      */
-    
-    // 工具函数
-    CLM.isMobilePage = isMobilePage;
-    CLM.detectPageType = detectPageType;
-    CLM.getAbsoluteUrl = getAbsoluteUrl;
-    CLM.normalizeThreadKey = normalizeThreadKey;
-    CLM.showToast = showToast;
-    CLM.injectStyle = injectStyle;
     
     // 内部工具函数（供远程模块使用）
     pageWindow._CLM_showToast = showToast;
     pageWindow._CLM_ensureToastContainer = ensureToastContainer;
     
-    // 核心逻辑函数
-    CLM.fetchThreadData = fetchThreadData;
-    CLM.openGalleryForThread = openGalleryForThread;
+    // UI 创建函数（依赖主脚本的 DOM 和 GM API，保留在主脚本）
     CLM.createGalleryOverlay = createGalleryOverlay;
-    
-    // 下载相关函数
     CLM.createInlineDownloadWindow = createInlineDownloadWindow;
-    CLM.handleThreadDownloadButtonClick = handleThreadDownloadButtonClick;
-    CLM.setupThreadDownloadButton = setupThreadDownloadButton;
     
-    // 清晰度相关函数（未迁移）
-    CLM.updateQualityBadgeElement = updateQualityBadgeElement;
-    
-    // qBittorrent 相关函数
+    // qBittorrent 相关函数（依赖 GM_xmlhttpRequest，保留在主脚本）
     CLM.sendToQbittorrent = sendToQbittorrent;
     CLM.loadSettings = loadSettings;
     CLM.saveSettings = saveSettings;
     
-    // 注意：已迁移到 core.js 的函数不再在此暴露
-    // 它们将由远程模块加载后自动暴露到 CLM 命名空间
+    // 注意：以下函数已迁移到 core.js，由远程模块加载后自动暴露：
+    // - 工具函数：isMobilePage, detectPageType, getAbsoluteUrl, normalizeThreadKey, showToast, injectStyle
+    // - 数据存储：hasGalleryVisitedThread, markThreadGalleryVisited, bindGalleryVisitedIndicator, hasDownloadedThread, markThreadDownloaded, subscribeDownloadStatus
+    // - 核心逻辑：collectGalleryImages, extractCleanText, extractPostUser, parseTitleTags, collectThreadContext, extractThreadDownloadInfo, detectQualityTagFromTitle, resolveQualityTagFromDocument, resolveQualityTagFromListItem, collectThreadAdBlocks
+    // - 广告处理：createFtadGridElement, createSpinitTableElement, hydrateThreadAdsFromData, collectThreadAdsWithScriptFallback
+    // - 帖子数据：fetchThreadData, updateQualityBadgeElement
+    // - UI 交互：openGalleryForThread, setupThreadDownloadButton, handleThreadDownloadButtonClick
     
-    console.log('草榴Manager: 核心函数已暴露到 CLM 命名空间');
+    console.log('草榴Manager: 主脚本独有函数已暴露到 CLM 命名空间');
 
     /**
      * ========================================
