@@ -1,8 +1,8 @@
 {
-  "version": "1.8.1004",
+  "version": "1.9.1",
   "modules": {
     "core": {
-      "version": "2.0.0",
+      "version": "2.1.0",
       "url": "https://raw.githubusercontent.com/truclocphung1713/CLManager/main/modules/core.js",
       "targets": [
         "desktop-thread",
