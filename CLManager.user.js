@@ -318,6 +318,9 @@
                 const manifest = JSON.parse(manifestText);
                 console.log('草榴Manager: manifest 加载成功', manifest);
 
+                // 使用顶层统一版本号
+                const globalVersion = manifest.version || '1.0.0';
+
                 const modulesToLoad = [];
                 for (const [moduleName, moduleConfig] of Object.entries(manifest.modules || {})) {
                     if (shouldLoadModuleForPage(moduleConfig.targets, pageType)) {
@@ -329,11 +332,11 @@
 
                 for (const { name, config } of modulesToLoad) {
                     try {
-                        // 清除该模块的旧版本缓存
-                        clearOldModuleVersions(name, config.version);
+                        // 清除该模块的旧版本缓存（使用全局版本号）
+                        clearOldModuleVersions(name, globalVersion);
                         
-                        const cacheKey = `${MODULE_CACHE_PREFIX}${name}_v${config.version}`;
-                        const moduleCode = await fetchWithCache(config.url, cacheKey, config.version);
+                        const cacheKey = `${MODULE_CACHE_PREFIX}${name}_v${globalVersion}`;
+                        const moduleCode = await fetchWithCache(config.url, cacheKey, globalVersion);
                         console.log(`草榴Manager: 模块 ${name} 加载成功`);
                         
                         // 通过往页面注入 <script> 的方式在页面环境中执行模块代码
@@ -1172,63 +1175,34 @@
                 saveSettings
             };
             
-            // 调用模块初始化函数
+            // 调用模块初始化函数（新架构：core + desktop + mobile）
             console.log('草榴Manager: 检查模块初始化函数', {
-                initForumModule: typeof CLM.initForumModule,
-                initSearchModule: typeof CLM.initSearchModule,
-                initDownloadModule: typeof CLM.initDownloadModule,
-                initSettingsModule: typeof CLM.initSettingsModule,
-                initGalleryModule: typeof CLM.initGalleryModule,
+                initCoreModule: typeof CLM.initCoreModule,
+                initDesktopModule: typeof CLM.initDesktopModule,
                 initMobileModule: typeof CLM.initMobileModule
             });
             
-            if (typeof CLM.initForumModule === 'function') {
+            // 1. 初始化核心模块（必须最先初始化）
+            if (typeof CLM.initCoreModule === 'function') {
                 try {
-                    CLM.initForumModule(moduleCtx);
-                    console.log('草榴Manager: Forum 模块已初始化');
+                    CLM.initCoreModule(moduleCtx);
+                    console.log('草榴Manager: Core 模块已初始化');
                 } catch (e) {
-                    console.warn('草榴Manager: Forum 模块初始化失败', e);
-                }
-            } else {
-                console.warn('草榴Manager: initForumModule 不是函数', typeof CLM.initForumModule);
-            }
-            
-            if (typeof CLM.initSearchModule === 'function') {
-                try {
-                    CLM.initSearchModule(moduleCtx);
-                    console.log('草榴Manager: Search 模块已初始化');
-                } catch (e) {
-                    console.warn('草榴Manager: Search 模块初始化失败', e);
+                    console.warn('草榴Manager: Core 模块初始化失败', e);
                 }
             }
             
-            if (typeof CLM.initDownloadModule === 'function') {
+            // 2. 初始化桌面端模块
+            if (typeof CLM.initDesktopModule === 'function') {
                 try {
-                    CLM.initDownloadModule(moduleCtx);
-                    console.log('草榴Manager: Download 模块已初始化');
+                    CLM.initDesktopModule(moduleCtx);
+                    console.log('草榴Manager: Desktop 模块已初始化');
                 } catch (e) {
-                    console.warn('草榴Manager: Download 模块初始化失败', e);
+                    console.warn('草榴Manager: Desktop 模块初始化失败', e);
                 }
             }
             
-            if (typeof CLM.initSettingsModule === 'function') {
-                try {
-                    CLM.initSettingsModule(moduleCtx);
-                    console.log('草榴Manager: Settings 模块已初始化');
-                } catch (e) {
-                    console.warn('草榴Manager: Settings 模块初始化失败', e);
-                }
-            }
-            
-            if (typeof CLM.initGalleryModule === 'function') {
-                try {
-                    CLM.initGalleryModule(moduleCtx);
-                    console.log('草榴Manager: Gallery 模块已初始化');
-                } catch (e) {
-                    console.warn('草榴Manager: Gallery 模块初始化失败', e);
-                }
-            }
-            
+            // 3. 初始化移动端模块
             if (typeof CLM.initMobileModule === 'function') {
                 try {
                     CLM.initMobileModule(moduleCtx);

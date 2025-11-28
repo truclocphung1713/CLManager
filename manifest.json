@@ -2,12 +2,7 @@
   "version": "1.8.0009",
   "modules": {
     "core": {
-      "version": "1.8.0009",
-      "url": "https://raw.githubusercontent.com/truclocphung1713/CLManager/main/modules/core.js"
-    },
-    "gallery": {
-      "version": "1.8.0009",
-      "url": "https://raw.githubusercontent.com/truclocphung1713/CLManager/main/modules/gallery.js",
+      "url": "https://raw.githubusercontent.com/truclocphung1713/CLManager/main/modules/core.js",
       "targets": [
         "desktop-thread",
         "desktop-search",
@@ -15,52 +10,19 @@
         "mobile-thread",
         "mobile-search",
         "mobile-forum"
+      ]
+    },
+    "desktop": {
+      "url": "https://raw.githubusercontent.com/truclocphung1713/CLManager/main/modules/desktop.js",
+      "targets": [
+        "desktop-thread",
+        "desktop-search",
+        "desktop-forum"
       ]
     },
     "mobile": {
-      "version": "1.8.0009",
       "url": "https://raw.githubusercontent.com/truclocphung1713/CLManager/main/modules/mobile.js",
       "targets": [
-        "mobile-thread",
-        "mobile-search",
-        "mobile-forum"
-      ]
-    },
-    "search": {
-      "version": "1.8.0009",
-      "url": "https://raw.githubusercontent.com/truclocphung1713/CLManager/main/modules/search.js",
-      "targets": [
-        "desktop-search",
-        "mobile-search"
-      ]
-    },
-    "forum": {
-      "version": "1.8.0009",
-      "url": "https://raw.githubusercontent.com/truclocphung1713/CLManager/main/modules/forum.js",
-      "targets": [
-        "desktop-forum",
-        "mobile-forum"
-      ]
-    },
-    "download": {
-      "version": "1.8.0009",
-      "url": "https://raw.githubusercontent.com/truclocphung1713/CLManager/main/modules/download.js",
-      "targets": [
-        "desktop-thread",
-        "desktop-search",
-        "desktop-forum",
-        "mobile-thread",
-        "mobile-search",
-        "mobile-forum"
-      ]
-    },
-    "settings": {
-      "version": "1.8.0009",
-      "url": "https://raw.githubusercontent.com/truclocphung1713/CLManager/main/modules/settings.js",
-      "targets": [
-        "desktop-thread",
-        "desktop-search",
-        "desktop-forum",
         "mobile-thread",
         "mobile-search",
         "mobile-forum"
