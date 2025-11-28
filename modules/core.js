@@ -833,144 +833,223 @@
 
     /**
      * ========================================
-     *  Phase 4: 网络请求函数
+     *  Phase 4: 广告处理和 UI 创建函数
      * ========================================
      */
 
     /**
-     * 跨域文本请求
+     * 创建 ftad 网格元素
      */
-    function fetchCrossOriginText(url) {
-        if (!url) {
-            return Promise.reject(new Error('無效的請求地址'));
-        }
-        if (typeof GM_xmlhttpRequest === 'function') {
-            return new Promise((resolve, reject) => {
-                GM_xmlhttpRequest({
-                    method: 'GET',
-                    url,
-                    headers: {
-                        'Referer': 'https://www.rmdown.com/'
-                    },
-                    onload: (resp) => {
-                        if (resp.status >= 200 && resp.status < 400) {
-                            resolve(resp.responseText);
-                        } else {
-                            reject(new Error('HTTP ' + resp.status));
-                        }
-                    },
-                    onerror: () => reject(new Error('網絡錯誤')),
-                    ontimeout: () => reject(new Error('請求超時'))
-                });
-            });
-        }
-        return fetch(url, { credentials: 'include' }).then(resp => {
-            if (!resp.ok) {
-                throw new Error('HTTP ' + resp.status);
-            }
-            return resp.text();
+    function createFtadGridElement(doc, adEntries) {
+        if (!doc || !adEntries || !adEntries.length) return null;
+        const container = doc.createElement('div');
+        container.className = 'ftad-ct';
+        const columns = adEntries.length > 10 ? Math.ceil(adEntries.length / 2) : 'auto-fit';
+        container.style.gridTemplateColumns = `repeat(${columns}, minmax(100px, 1fr))`;
+        adEntries.forEach((entry) => {
+            if (!entry || !entry.u) return;
+            const item = doc.createElement('div');
+            item.className = 'ftad-item';
+            const link = doc.createElement('a');
+            link.setAttribute('target', '_blank');
+            link.setAttribute('title', entry.c || '');
+            link.setAttribute('href', entry.u);
+            const title = entry.t ? entry.t.split('|')[1] || entry.t : '';
+            link.textContent = title;
+            item.appendChild(link);
+            container.appendChild(item);
         });
+        return container;
     }
 
     /**
-     * 跨域二进制请求
+     * 创建 spinit 表格元素
      */
-    function fetchCrossOriginBinary(url, options = {}) {
-        if (!url) {
-            return Promise.reject(new Error('無效的請求地址'));
-        }
-        const headers = {
-            'Referer': options.referer || 'https://www.rmdown.com/',
-            ...(options.headers || {})
+    function createSpinitTableElement(doc, leftEntry, rightEntry, startIndex = 0) {
+        if (!doc || !leftEntry) return null;
+        const table = doc.createElement('table');
+        table.setAttribute('cellspacing', '0');
+        table.setAttribute('cellpadding', '5');
+        table.setAttribute('width', '100%');
+        table.className = 'sptable_do_not_remove';
+        const tbody = doc.createElement('tbody');
+        const tr = doc.createElement('tr');
+
+        const makeCell = (entry, linkIndex, appendInfo = false) => {
+            if (!entry) return null;
+            const td = doc.createElement('td');
+            td.setAttribute('width', '50%');
+            td.setAttribute('valign', 'top');
+            td.setAttribute('onclick', `clurl('${entry.u}', ${linkIndex})`);
+            const titleWrapper = doc.createElement('div');
+            titleWrapper.id = 'ti';
+            const titleLink = doc.createElement('a');
+            const title = entry.t ? entry.t.split('|')[0] || entry.t : '';
+            titleLink.textContent = title;
+            titleWrapper.appendChild(titleLink);
+            td.appendChild(titleWrapper);
+            if (entry.c) {
+                td.appendChild(doc.createTextNode(entry.c));
+            }
+            td.appendChild(doc.createElement('br'));
+            const anchor = doc.createElement('a');
+            anchor.id = `srcf${linkIndex}`;
+            anchor.setAttribute('href', entry.u);
+            anchor.setAttribute('target', '_blank');
+            anchor.setAttribute('onclick', 'event.stopPropagation();');
+            anchor.textContent = entry.l || entry.u;
+            td.appendChild(anchor);
+            return td;
         };
-        const method = options.method || 'GET';
-        if (typeof GM_xmlhttpRequest === 'function') {
-            return new Promise((resolve, reject) => {
-                GM_xmlhttpRequest({
-                    method,
-                    url,
-                    headers,
-                    responseType: 'arraybuffer',
-                    onload: (resp) => {
-                        if (resp.status >= 200 && resp.status < 400) {
-                            resolve({
-                                buffer: resp.response,
-                                headers: resp.responseHeaders || ''
-                            });
-                        } else {
-                            reject(new Error('HTTP ' + resp.status));
-                        }
-                    },
-                    onerror: () => reject(new Error('網絡錯誤')),
-                    ontimeout: () => reject(new Error('請求超時'))
-                });
-            });
+
+        const leftCell = makeCell(leftEntry, startIndex, false);
+        const rightCell = rightEntry ? makeCell(rightEntry, startIndex + 1, true) : null;
+        if (leftCell) {
+            tr.appendChild(leftCell);
         }
-        return fetch(url, {
-            method,
-            headers,
-            credentials: 'include'
-        }).then(async (resp) => {
-            if (!resp.ok) {
-                throw new Error('HTTP ' + resp.status);
-            }
-            const buffer = await resp.arrayBuffer();
-            return {
-                buffer,
-                headers: resp.headers
-            };
-        });
+        if (rightCell) {
+            tr.appendChild(rightCell);
+        }
+        tbody.appendChild(tr);
+        table.appendChild(tbody);
+        return table;
     }
 
     /**
-     * 广告脚本缓存
+     * 从数据恢复广告
      */
-    const adScriptCache = new Map();
+    function hydrateThreadAdsFromData(doc, adEntries) {
+        if (!doc || !adEntries || !adEntries.length) return false;
+        let mutated = false;
+        const inlineScripts = Array.from(doc.querySelectorAll('script')).filter((script) => {
+            return !script.src && /spinit2?\s*\(\s*\)/.test(script.textContent || '');
+        });
+        if (!inlineScripts.length) {
+            return false;
+        }
+        const ftadScripts = inlineScripts.filter((script) => /\bspinit2\s*\(/.test(script.textContent || ''));
+        ftadScripts.forEach((script) => {
+            const grid = createFtadGridElement(doc, adEntries);
+            if (grid) {
+                script.insertAdjacentElement('afterend', grid);
+                mutated = true;
+            }
+        });
+
+        const pairQueue = adEntries.slice();
+        let linkIndex = 0;
+        inlineScripts.filter((script) => /\bspinit\s*\(/.test(script.textContent || '') && !/\bspinit2\s*\(/.test(script.textContent || '')).forEach((script) => {
+            const left = pairQueue.shift();
+            if (!left) {
+                return;
+            }
+            const right = pairQueue.shift() || null;
+            const table = createSpinitTableElement(doc, left, right, linkIndex);
+            if (table) {
+                script.insertAdjacentElement('afterend', table);
+                linkIndex += right ? 2 : 1;
+                mutated = true;
+            }
+        });
+        return mutated;
+    }
 
     /**
-     * 获取广告脚本源码
+     * 收集广告（带脚本降级）
+     * 注意：此函数需要访问主脚本中的 fetchAdScriptSource、extractSpjsonPayload、getAbsoluteUrl
      */
-    async function fetchAdScriptSource(scriptUrl) {
-        if (!scriptUrl) return '';
-        if (adScriptCache.has(scriptUrl)) {
-            return adScriptCache.get(scriptUrl);
+    async function collectThreadAdsWithScriptFallback(doc, baseHref, rawHtml = '') {
+        const direct = collectThreadAdBlocks(doc);
+        // 检查是否已经找到了 ftad-ct
+        const hasFtadCt = direct.some(html => /\bftad-ct\b/i.test(html));
+        
+        // 如果已经找到了 ftad-ct，直接返回
+        if (hasFtadCt || !doc) {
+            return direct;
         }
-        const requester = (async () => {
-            // 直接使用 GM_xmlhttpRequest 避免 CORS 问题
-            if (typeof GM_xmlhttpRequest === 'function') {
-                return new Promise((resolve, reject) => {
-                    GM_xmlhttpRequest({
-                        method: 'GET',
-                        url: scriptUrl,
-                        headers: {
-                            'Referer': location.origin
-                        },
-                        onload: (resp) => {
-                            if (resp.status >= 200 && resp.status < 400) {
-                                resolve(resp.responseText);
-                            } else {
-                                reject(new Error('HTTP ' + resp.status));
-                            }
-                        },
-                        onerror: () => reject(new Error('網絡錯誤')),
-                        ontimeout: () => reject(new Error('請求超時'))
-                    });
-                });
+
+        const hydrateWithPayload = (payload) => {
+            if (!payload) {
+                return false;
             }
-            // 如果没有 GM_xmlhttpRequest，尝试使用 fetch（可能会遇到 CORS 问题）
             try {
-                const resp = await fetch(scriptUrl, { credentials: 'include' });
-                if (!resp.ok) {
-                    throw new Error('HTTP ' + resp.status);
+                const adEntries = JSON.parse(payload);
+                if (!Array.isArray(adEntries) || !adEntries.length) {
+                    return false;
                 }
-                return await resp.text();
+                return hydrateThreadAdsFromData(doc, adEntries);
             } catch (err) {
-                throw err;
+                console.warn('clm 解析 spJson 失敗', err);
+                return false;
             }
-        })();
-        requester.catch(() => adScriptCache.delete(scriptUrl));
-        adScriptCache.set(scriptUrl, requester);
-        return requester;
+        };
+
+        // 从主脚本获取 extractSpjsonPayload 函数
+        const extractSpjsonPayload = window.extractSpjsonPayload;
+        if (!extractSpjsonPayload) {
+            console.warn('clm extractSpjsonPayload 不可用');
+            return direct;
+        }
+
+        const inlinePayload = rawHtml ? extractSpjsonPayload(rawHtml) : '';
+        if (inlinePayload && hydrateWithPayload(inlinePayload)) {
+            const afterHydrate = collectThreadAdBlocks(doc);
+            // 合并直接找到的广告和恢复的广告，去重
+            const combined = [...direct];
+            afterHydrate.forEach(html => {
+                if (!combined.some(existing => existing === html)) {
+                    combined.push(html);
+                }
+            });
+            return combined;
+        }
+
+        const scriptNode = doc.querySelector('script[src*="post.js"]');
+        if (!scriptNode) {
+            return direct;
+        }
+
+        // 从主脚本获取 getAbsoluteUrl 函数
+        const getAbsoluteUrl = window.getAbsoluteUrl;
+        if (!getAbsoluteUrl) {
+            console.warn('clm getAbsoluteUrl 不可用');
+            return direct;
+        }
+
+        const scriptUrl = getAbsoluteUrl(scriptNode.getAttribute('src'), baseHref);
+        if (!scriptUrl) {
+            return direct;
+        }
+
+        // 从主脚本获取 fetchAdScriptSource 函数
+        const fetchAdScriptSource = window.fetchAdScriptSource;
+        if (!fetchAdScriptSource) {
+            console.warn('clm fetchAdScriptSource 不可用');
+            return direct;
+        }
+
+        try {
+            const scriptText = await fetchAdScriptSource(scriptUrl);
+            const payload = extractSpjsonPayload(scriptText);
+            if (!payload) {
+                return direct;
+            }
+            if (!hydrateWithPayload(payload)) {
+                return direct;
+            }
+            const afterHydrate = collectThreadAdBlocks(doc);
+            // 合并直接找到的广告和恢复的广告，去重
+            const combined = [...direct];
+            afterHydrate.forEach(html => {
+                if (!combined.some(existing => existing === html)) {
+                    combined.push(html);
+                }
+            });
+            return combined;
+        } catch (err) {
+            console.warn('clm 無法恢復社區贊助內容', err);
+            return direct;
+        }
     }
 
     // ========================================
@@ -1013,10 +1092,11 @@
         CLM.resolveQualityTagFromListItem = resolveQualityTagFromListItem;
         CLM.collectThreadAdBlocks = collectThreadAdBlocks;
         
-        // 暴露网络请求函数（Phase 4）
-        CLM.fetchCrossOriginText = fetchCrossOriginText;
-        CLM.fetchCrossOriginBinary = fetchCrossOriginBinary;
-        CLM.fetchAdScriptSource = fetchAdScriptSource;
+        // 暴露广告处理和 UI 创建函数（Phase 4）
+        CLM.createFtadGridElement = createFtadGridElement;
+        CLM.createSpinitTableElement = createSpinitTableElement;
+        CLM.hydrateThreadAdsFromData = hydrateThreadAdsFromData;
+        CLM.collectThreadAdsWithScriptFallback = collectThreadAdsWithScriptFallback;
         
         console.log('✓ 核心工具函数已加载（来自远程模块）');
         console.log('- isMobilePage:', typeof CLM.isMobilePage);
@@ -1046,12 +1126,13 @@
         console.log('- resolveQualityTagFromListItem:', typeof CLM.resolveQualityTagFromListItem);
         console.log('- collectThreadAdBlocks:', typeof CLM.collectThreadAdBlocks);
         
-        console.log('✓ 网络请求函数已加载（Phase 4）');
-        console.log('- fetchCrossOriginText:', typeof CLM.fetchCrossOriginText);
-        console.log('- fetchCrossOriginBinary:', typeof CLM.fetchCrossOriginBinary);
-        console.log('- fetchAdScriptSource:', typeof CLM.fetchAdScriptSource);
+        console.log('✓ 广告处理和 UI 创建函数已加载（Phase 4）');
+        console.log('- createFtadGridElement:', typeof CLM.createFtadGridElement);
+        console.log('- createSpinitTableElement:', typeof CLM.createSpinitTableElement);
+        console.log('- hydrateThreadAdsFromData:', typeof CLM.hydrateThreadAdsFromData);
+        console.log('- collectThreadAdsWithScriptFallback:', typeof CLM.collectThreadAdsWithScriptFallback);
         
-        console.log('%c草榴Manager: core 模块初始化完成 - 已覆盖 25 个主脚本函数', 'color: #22c55e; font-weight: bold;');
+        console.log('%c草榴Manager: core 模块初始化完成 - 已覆盖 26 个主脚本函数', 'color: #22c55e; font-weight: bold;');
     }
 
     // 暴露初始化函数
