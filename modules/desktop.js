@@ -181,13 +181,17 @@
     }
 
     function enhanceForumItem(item) {
-        // 查找封面和标题
+        // 查找封面
         const coverContainer = item.querySelector('.image-big');
-        const titleLink = item.querySelector('.wf_text a[href*="htm_data"], .wf_text a[href*="htm_mob"]');
-        
-        if (!coverContainer || !titleLink) return;
+        if (!coverContainer) return;
 
-        const rawHref = titleLink.getAttribute('href') || titleLink.href;
+        // 与旧版邏輯保持一致：優先從封面內部找鏈接，否則退回整個 .wf_item
+        let threadAnchor = coverContainer.querySelector('a[href]')
+            || item.querySelector('.wf_text a[href*="htm_data"], .wf_text a[href*="htm_mob"]')
+            || item.querySelector('a[href]');
+        if (!threadAnchor) return;
+
+        const rawHref = threadAnchor.getAttribute('href') || threadAnchor.href;
         const threadUrl = (CLM.getAbsoluteUrl ? CLM.getAbsoluteUrl(rawHref) : rawHref) || rawHref;
         if (!threadUrl) return;
 
@@ -200,7 +204,7 @@
         }
         if (CLM.resolveQualityTagFromListItem && CLM.updateQualityBadgeElement) {
             try {
-                const qualityTag = CLM.resolveQualityTagFromListItem(item, titleLink);
+                const qualityTag = CLM.resolveQualityTagFromListItem(item, threadAnchor);
                 CLM.updateQualityBadgeElement(qualityBadge, qualityTag);
             } catch (e) {
                 console.warn('草榴Manager: 更新桌面端清晰度徽章失败', e);
@@ -229,7 +233,7 @@
                     let qualityTag = null;
                     if (CLM.resolveQualityTagFromListItem) {
                         try {
-                            qualityTag = CLM.resolveQualityTagFromListItem(item, titleLink);
+                            qualityTag = CLM.resolveQualityTagFromListItem(item, threadAnchor);
                         } catch (err) {
                             console.warn('草榴Manager: 解析清晰度失败', err);
                         }
@@ -252,7 +256,7 @@
                     threadUrl: threadUrl,
                     container: item,
                     containerClass: 'clm-thread-downloaded',
-                    threadTitle: titleLink.textContent.trim(),
+                    threadTitle: (threadAnchor.textContent || '').trim(),
                     label: '下载',
                     downloadedLabel: '已下载'
                 });
@@ -276,7 +280,7 @@
                 let qualityTag = null;
                 if (CLM.resolveQualityTagFromListItem) {
                     try {
-                        qualityTag = CLM.resolveQualityTagFromListItem(item, titleLink);
+                        qualityTag = CLM.resolveQualityTagFromListItem(item, threadAnchor);
                     } catch (err) {
                         console.warn('草榴Manager: 解析清晰度失败', err);
                     }

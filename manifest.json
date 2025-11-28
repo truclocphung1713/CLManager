@@ -1,5 +1,5 @@
 {
-  "version": "1.8.0012",
+  "version": "1.8.0014",
   "modules": {
     "core": {
       "url": "https://raw.githubusercontent.com/truclocphung1713/CLManager/main/modules/core.js",
