@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         草榴Manager
 // @namespace    http://tampermonkey.net/
-// @version      1.11.3
+// @version      1.12.0
 // @description  草榴搜索/板块悬停放大封面、标题预览图、品质徽章与 qBittorrent 一键发送和下载按钮。
 // @author       truclocphung1713
 // @match        https://t66y.com/search.php*
@@ -40,6 +40,9 @@
     const DOWNLOAD_RECORDS_KEY = '草榴ManagerDownloadedThreads';
     let downloadRecordsCache = null;
     const downloadStatusListeners = new Map();
+    
+    // 标志：远程模块是否已加载完成
+    let remoteModulesLoaded = false;
 
     /**
      * 检测是否是手机端页面
@@ -4426,7 +4429,8 @@
     }
 
     // 搜索页面（search.php）- 电脑端和手机端通用处理
-    if (href.indexOf('search.php') !== -1) {
+    function initSearchPageFeatures() {
+        if (href.indexOf('search.php') === -1) return;
         const isSearchMobile = isMobilePage();
         
         // 手机端搜索页：缓存电脑端搜索结果，避免重复请求
@@ -5201,8 +5205,8 @@
     }
 
     // 电脑端板块图文模式页面（thread0806.php 图文模式）
-    // 只在电脑端应用，手机端有单独的样式
-    if (!isMobilePage() && href.indexOf('thread0806.php') !== -1) {
+    function initDesktopForumFeatures() {
+        if (isMobilePage() || href.indexOf('thread0806.php') === -1) return;
         // 圖文模式封面在 .wf_item .image-big img 中
         // 鼠標懸停封面圖時，放大約 2 倍（約 100% 放大），並保證不被父元素裁切
         injectStyle(`
@@ -5478,7 +5482,8 @@
     const isMobile = isMobilePage();
 
     // 手机端板块页面（thread0806.php 图文模式）
-    if (isMobile && href.indexOf('thread0806.php') !== -1) {
+    function initMobileForumFeatures() {
+        if (!isMobile || href.indexOf('thread0806.php') === -1) return;
         // 手机端图文模式，添加触控优化的画廊按钮，禁用放大
         injectStyle(`
             .wf_item .image-big {
@@ -5678,8 +5683,8 @@
     }
 
     // 手机端页面 - 画廊模式适配
-    // 只要是手机端，就注入抖音风格样式（不限于 htm_mob 页面）
-    if (isMobile) {
+    function initMobileGalleryStyles() {
+        if (!isMobile) return;
         // 手机端画廊模式适配 - 抖音短视频风格
         injectStyle(`
             /* 手机端画廊模式 - 抖音风格布局 - 覆盖所有桌面端样式 */
@@ -7677,24 +7682,19 @@
     function initPageSpecificFeatures() {
         console.log('草榴Manager: 开始初始化页面特定功能...');
         
-        // ⚠️ 已知问题：当前页面特定代码在脚本顶层直接执行（约 4429-6820 行）
-        // 这导致在远程模块加载前就调用了远程模块函数，产生大量"未从远程模块加载"警告
-        //
-        // 受影响的代码块：
-        // 1. 搜索页面处理（4429-5201 行）- 调用 detectQualityTagFromTitle, fetchThreadData 等
-        // 2. 电脑端板块页面（5205-5470 行）- 调用 resolveQualityTagFromListItem, updateQualityBadgeElement, setupThreadDownloadButton
-        // 3. 手机端板块页面（5481-5678 行）- 调用相同的远程模块函数
-        // 4. 手机端画廊模式适配（5682-6820 行）- UI 样式注入
-        //
-        // 解决方案（需要在 v1.12.0 中实现）：
-        // - 将所有页面特定代码块包装成函数
-        // - 在此处调用这些函数，确保只在远程模块加载完成后执行
-        // - 删除顶层的直接执行代码
-        //
-        // 当前状态（v1.11.3）：
-        // - 功能正常，但有警告信息（不影响使用）
-        // - 页面代码在顶层执行一次，在此处不重复执行
-        // - 等待 v1.12.0 进行大规模重构
+        // 设置远程模块已加载标志（虽然现在不再需要，但保留以备将来使用）
+        remoteModulesLoaded = true;
+        
+        // 调用页面特定功能初始化函数
+        // 这些函数在脚本顶层定义，现在在远程模块加载完成后才调用
+        // 确保所有远程模块函数都已就绪
+        
+        initSearchPageFeatures();
+        initDesktopForumFeatures();
+        initMobileForumFeatures();
+        initMobileGalleryStyles();
+        
+        console.log('草榴Manager: 页面特定功能初始化完成');
     }
 
     /**
