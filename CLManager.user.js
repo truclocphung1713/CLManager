@@ -1005,7 +1005,7 @@
             moduleInfo.style.fontSize = '12px';
             moduleInfo.style.color = '#6b7280';
             moduleInfo.style.marginBottom = '12px';
-            moduleInfo.textContent = '当前版本: 1.8.0015 | 模块基于版本号缓存，更新时自动清除旧版本';
+            moduleInfo.textContent = '当前版本: 1.8.0016 | 模块基于版本号缓存，更新时自动清除旧版本';
             moduleSection.appendChild(moduleInfo);
 
             const moduleButtons = document.createElement('div');
@@ -1018,55 +1018,136 @@
             checkUpdateBtn.addEventListener('click', async () => {
                 checkUpdateBtn.disabled = true;
                 checkUpdateBtn.textContent = '檢查中...';
-                
+
+                const BACKUP_PREFIX = 'CLM_BACKUP_';
+                const BACKUP_INDEX_KEY = 'CLM_BACKUP_INDEX';
+
                 try {
-                    // 清除所有模块缓存
-                    const keys = [];
-                    
-                    // 使用 GM_listValues 获取所有存储的键
+                    // 收集所有模块相关缓存键
+                    const moduleKeys = [];
                     if (typeof GM_listValues === 'function') {
                         const allKeys = GM_listValues();
-                        allKeys.forEach(key => {
-                            if (key && (key.startsWith('CLM_MODULE_') || key === 'CLM_MANIFEST')) {
-                                keys.push(key);
+                        allKeys.forEach((key) => {
+                            if (key && (key.startsWith('CLM_MODULE_') || key === MANIFEST_CACHE_KEY)) {
+                                moduleKeys.push(key);
                             }
                         });
                     }
-                    
-                    console.log('草榴Manager: 准备清除缓存', keys);
-                    
-                    keys.forEach(key => {
+
+                    console.log('草榴Manager: 准备備份並清除模塊緩存', moduleKeys);
+
+                    const backedUpKeys = [];
+                    // 1. 先備份舊緩存
+                    moduleKeys.forEach((key) => {
+                        try {
+                            const value = GM_getValue(key);
+                            if (typeof value !== 'undefined') {
+                                GM_setValue(BACKUP_PREFIX + key, value);
+                                backedUpKeys.push(key);
+                            }
+                        } catch (e) {
+                            console.warn('草榴Manager: 備份緩存失敗', key, e);
+                        }
+                    });
+
+                    try {
+                        GM_setValue(BACKUP_INDEX_KEY, JSON.stringify(backedUpKeys));
+                    } catch (e) {
+                        console.warn('草榴Manager: 保存備份索引失敗', e);
+                    }
+
+                    // 2. 再清除緩存
+                    moduleKeys.forEach((key) => {
                         try {
                             GM_deleteValue(key);
-                            console.log('草榴Manager: 已清除', key);
+                            console.log('草榴Manager: 已清除緩存', key);
                         } catch (e) {
                             console.warn('草榴Manager: 清除緩存失敗', key, e);
                         }
                     });
-                    
-                    showToast(`已清除 ${keys.length} 個模塊緩存，請刷新頁面加載最新版本`, 'success');
-                    
-                    setTimeout(() => {
+
+                    // 3. 嘗試從倉庫拉取 manifest（最多 3 次）
+                    const maxAttempts = 3;
+                    let success = false;
+                    let lastError = null;
+                    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+                        try {
+                            console.log(`草榴Manager: 第 ${attempt} 次嘗試加載 manifest`);
+                            await fetchWithCache(MANIFEST_URL, MANIFEST_CACHE_KEY);
+                            success = true;
+                            break;
+                        } catch (e) {
+                            lastError = e;
+                            console.warn(`草榴Manager: 第 ${attempt} 次加載 manifest 失敗`, e);
+                        }
+                    }
+
+                    if (success) {
+                        // 成功連接倉庫：清理備份，刷新頁面
+                        try {
+                            const indexJson = GM_getValue(BACKUP_INDEX_KEY);
+                            const keys = indexJson ? JSON.parse(indexJson) : [];
+                            if (Array.isArray(keys)) {
+                                keys.forEach((key) => {
+                                    try {
+                                        GM_deleteValue(BACKUP_PREFIX + key);
+                                    } catch (e) {
+                                        console.warn('草榴Manager: 刪除備份失敗', key, e);
+                                    }
+                                });
+                            }
+                            GM_deleteValue(BACKUP_INDEX_KEY);
+                        } catch (e) {
+                            console.warn('草榴Manager: 清理備份索引失敗', e);
+                        }
+
+                        showToast('模塊緩存已清除並成功連接倉庫，正在刷新頁面載入最新版本', 'success');
+                        setTimeout(() => {
+                            window.location.reload();
+                        }, 800);
+                    } else {
+                        // 多次失敗：恢復備份
+                        try {
+                            const indexJson = GM_getValue(BACKUP_INDEX_KEY);
+                            const keys = indexJson ? JSON.parse(indexJson) : [];
+                            if (Array.isArray(keys)) {
+                                keys.forEach((key) => {
+                                    try {
+                                        const backupVal = GM_getValue(BACKUP_PREFIX + key);
+                                        if (typeof backupVal !== 'undefined') {
+                                            GM_setValue(key, backupVal);
+                                        }
+                                    } catch (e) {
+                                        console.warn('草榴Manager: 恢復緩存失敗', key, e);
+                                    }
+                                    try {
+                                        GM_deleteValue(BACKUP_PREFIX + key);
+                                    } catch (e) {
+                                        console.warn('草榴Manager: 刪除備份鍵失敗', key, e);
+                                    }
+                                });
+                            }
+                            GM_deleteValue(BACKUP_INDEX_KEY);
+                        } catch (e) {
+                            console.warn('草榴Manager: 恢復備份索引失敗', e);
+                        }
+
+                        const msg = lastError && lastError.message ? lastError.message : String(lastError || '未知錯誤');
+                        console.error('草榴Manager: 模塊更新失敗，已恢復之前的版本', lastError);
+                        showToast('模塊更新失敗，已恢復之前的版本：' + msg, 'error');
+
                         checkUpdateBtn.disabled = false;
                         checkUpdateBtn.textContent = '檢查模塊更新';
-                    }, 2000);
+                    }
                 } catch (e) {
-                    console.error('草榴Manager: 檢查更新失敗', e);
-                    showToast('檢查更新失敗: ' + e.message, 'error');
+                    console.error('草榴Manager: 檢查更新過程中出錯', e);
+                    showToast('檢查更新失敗：' + (e && e.message ? e.message : e), 'error');
                     checkUpdateBtn.disabled = false;
                     checkUpdateBtn.textContent = '檢查模塊更新';
                 }
             });
             moduleButtons.appendChild(checkUpdateBtn);
-            
-            const reloadBtn = document.createElement('button');
-            reloadBtn.className = 'clm-small-btn';
-            reloadBtn.textContent = '刷新頁面';
-            reloadBtn.addEventListener('click', () => {
-                window.location.reload();
-            });
-            moduleButtons.appendChild(reloadBtn);
-            
+
             moduleSection.appendChild(moduleButtons);
             body.appendChild(moduleSection);
 

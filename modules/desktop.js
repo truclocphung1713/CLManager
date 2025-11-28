@@ -164,17 +164,20 @@
             return;
         }
 
-        // 处理所有帖子项
-        const items = document.querySelectorAll('.wf_item');
-        console.log(`草榴Manager: 找到 ${items.length} 个帖子项`);
+        // 初次附着封面按钮和清晰度徽章
+        attachDesktopCoverButtons();
+        attachDesktopTextOnlyQualityBadges();
 
-        items.forEach((item, index) => {
+        // 监听 DOM 变化，处理后续加载的帖子项
+        const observer = new MutationObserver(() => {
             try {
-                enhanceForumItem(item);
+                attachDesktopCoverButtons();
+                attachDesktopTextOnlyQualityBadges();
             } catch (e) {
-                console.warn(`草榴Manager: 处理帖子项 ${index} 失败`, e);
+                console.warn('草榴Manager: 更新桌面端封面按钮时出错', e);
             }
         });
+        observer.observe(document.body, { childList: true, subtree: true });
     }
 
     function enhanceForumItem(item) {
@@ -291,6 +294,54 @@
             if (CLM.setCurrentListHoverCtx) {
                 CLM.setCurrentListHoverCtx(null);
             }
+        });
+    }
+
+    // 参照旧版 attachCoverDownloadButtons：按封面元素维度附着按钮，避免重复处理
+    function attachDesktopCoverButtons() {
+        const covers = document.querySelectorAll('.wf_item .image-big');
+        covers.forEach((cover) => {
+            if (cover.dataset.clmDesktopCoverAttached === '1') return;
+            cover.dataset.clmDesktopCoverAttached = '1';
+            const wfItem = cover.closest('.wf_item');
+            if (!wfItem) return;
+            try {
+                enhanceForumItem(wfItem);
+            } catch (e) {
+                console.warn('草榴Manager: 处理桌面端封面项失败', e);
+            }
+        });
+    }
+
+    // 参照旧版 attachTextOnlyQualityBadges：无封面的帖子仅显示文字清晰度徽章
+    function attachDesktopTextOnlyQualityBadges() {
+        if (!CLM.resolveQualityTagFromListItem || !CLM.updateQualityBadgeElement) {
+            return;
+        }
+        const items = document.querySelectorAll('.wf_item');
+        items.forEach((item) => {
+            if (item.querySelector('.image-big')) {
+                return;
+            }
+            const threadAnchor = item.querySelector('a[href]');
+            const qualityTag = CLM.resolveQualityTagFromListItem(item, threadAnchor);
+            let badge = item.querySelector('.clm-text-quality');
+            if (!qualityTag) {
+                if (badge) {
+                    badge.remove();
+                }
+                return;
+            }
+            const textContainer = item.querySelector('.wf_text');
+            if (!textContainer) {
+                return;
+            }
+            if (!badge) {
+                badge = document.createElement('div');
+                badge.className = 'clm-quality-badge clm-text-quality';
+                textContainer.appendChild(badge);
+            }
+            CLM.updateQualityBadgeElement(badge, qualityTag);
         });
     }
 
