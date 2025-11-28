@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         草榴Manager
 // @namespace    http://tampermonkey.net/
-// @version      1.9.1
+// @version      1.9.2
 // @description  草榴搜索/板块悬停放大封面、标题预览图、品质徽章与 qBittorrent 一键发送和下载按钮。
 // @author       truclocphung1713
 // @match        https://t66y.com/search.php*
@@ -192,6 +192,9 @@
     // 远程模块加载配置：manifest 地址与本地缓存 key
     const REMOTE_MANIFEST_URL = 'https://raw.githubusercontent.com/truclocphung1713/CLManager/main/manifest.json';
     const REMOTE_MODULE_CACHE_KEY = 'CLM_RemoteModuleCache_v1';
+    const AUTO_UPDATE_CHECK_KEY = 'CLM_AutoUpdateCheck';
+    const LAST_UPDATE_CHECK_KEY = 'CLM_LastUpdateCheck';
+    const AUTO_UPDATE_INTERVAL = 30 * 60 * 1000; // 30 分钟
 
     function getRemoteModuleCache() {
         const empty = { manifestVersion: '', modules: {} };
@@ -246,78 +249,214 @@
         return targets.indexOf(pageType) !== -1;
     }
 
-    async function initRemoteModules(pageType) {
+    /**
+     * 初始化远程模块
+     * @param {string} pageType - 页面类型
+     * @param {boolean} forceUpdate - 是否强制更新（忽略缓存）
+     * @returns {Promise<{success: boolean, updated: boolean, error?: string}>}
+     */
+    async function initRemoteModules(pageType, forceUpdate = false) {
         const cache = getRemoteModuleCache();
-        let manifest = null;
-        try {
-            const text = await fetchCrossOriginText(REMOTE_MANIFEST_URL);
-            manifest = JSON.parse(text);
-        } catch (e) {
-            console.warn('草榴Manager: 無法從 GitHub 獲取 manifest，將回退到本地緩存模塊', e);
-        }
-
-        const modulesToExecute = [];
-
-        if (!manifest || !manifest.modules || typeof manifest.modules !== 'object') {
-            // 没有 manifest 时，只能执行已有緩存中的全部模塊
-            const cachedModules = cache.modules || {};
+        const result = { success: false, updated: false, error: null };
+        
+        // 1. 优先使用缓存的模块
+        const cachedModules = cache.modules || {};
+        const hasCachedModules = Object.keys(cachedModules).length > 0;
+        
+        // 如果有缓存且不强制更新，先执行缓存的模块
+        if (hasCachedModules && !forceUpdate) {
+            console.log('草榴Manager: 使用缓存的远程模块 (v' + (cache.manifestVersion || '未知') + ')');
+            const modulesToExecute = [];
             Object.keys(cachedModules).forEach((name) => {
                 const cached = cachedModules[name];
                 if (cached && cached.code) {
                     modulesToExecute.push({ name, code: cached.code });
                 }
             });
-        } else {
-            const newCache = {
-                manifestVersion: manifest.version || '',
-                modules: cache.modules || {}
-            };
-            const manifestModules = manifest.modules || {};
+            
+            modulesToExecute.forEach((mod) => {
+                try {
+                    const fn = new Function('window', '"use strict";\n' + mod.code + '\n//# sourceURL=CLM-remote-module-' + mod.name + '.js');
+                    fn(pageWindow);
+                    console.log('草榴Manager: 已執行緩存模塊', mod.name);
+                } catch (e) {
+                    console.error('草榴Manager: 執行緩存模塊出錯', mod.name, e);
+                }
+            });
+            
+            result.success = true;
+            result.updated = false;
+            return result;
+        }
+        
+        // 2. 尝试从 GitHub 获取 manifest
+        let manifest = null;
+        let fetchError = null;
+        
+        try {
+            const text = await fetchCrossOriginText(REMOTE_MANIFEST_URL);
+            manifest = JSON.parse(text);
+        } catch (e) {
+            fetchError = e;
+            console.warn('草榴Manager: 無法從 GitHub 獲取 manifest', e);
+        }
 
-            for (const name of Object.keys(manifestModules)) {
-                const entry = manifestModules[name];
-                if (!shouldLoadModuleForPage(entry, pageType)) continue;
-
-                const cached = (cache.modules && cache.modules[name]) || null;
-                let code = cached && cached.code;
-                const needsUpdate = !cached || cached.version !== entry.version || cached.url !== entry.url;
-
-                if (needsUpdate && entry.url) {
-                    try {
-                        code = await fetchCrossOriginText(entry.url);
-                        newCache.modules[name] = {
-                            version: entry.version || '',
-                            url: entry.url,
-                            code,
-                            lastUpdated: Date.now()
-                        };
-                        console.log('草榴Manager: 已更新遠程模塊', name, 'version=', entry.version);
-                    } catch (e) {
-                        console.error('草榴Manager: 加載遠程模塊失敗，嘗試使用緩存', name, e);
-                        if (cached && cached.code) {
-                            code = cached.code;
-                            newCache.modules[name] = cached;
-                        }
+        // 3. 如果获取失败，使用缓存
+        if (!manifest || !manifest.modules || typeof manifest.modules !== 'object') {
+            if (hasCachedModules) {
+                console.log('草榴Manager: manifest 獲取失敗，使用緩存模塊');
+                const modulesToExecute = [];
+                Object.keys(cachedModules).forEach((name) => {
+                    const cached = cachedModules[name];
+                    if (cached && cached.code) {
+                        modulesToExecute.push({ name, code: cached.code });
                     }
-                }
+                });
+                
+                modulesToExecute.forEach((mod) => {
+                    try {
+                        const fn = new Function('window', '"use strict";\n' + mod.code + '\n//# sourceURL=CLM-remote-module-' + mod.name + '.js');
+                        fn(pageWindow);
+                        console.log('草榴Manager: 已執行緩存模塊', mod.name);
+                    } catch (e) {
+                        console.error('草榴Manager: 執行緩存模塊出錯', mod.name, e);
+                    }
+                });
+                
+                result.success = true;
+                result.updated = false;
+                result.error = fetchError ? fetchError.message : '无法获取 manifest';
+                return result;
+            } else {
+                result.success = false;
+                result.error = '无法获取 manifest 且无缓存可用';
+                return result;
+            }
+        }
 
-                if (code) {
-                    modulesToExecute.push({ name, code });
+        // 4. 检查版本是否需要更新
+        const remoteVersion = manifest.version || '';
+        const cachedVersion = cache.manifestVersion || '';
+        const needsUpdate = forceUpdate || !cachedVersion || remoteVersion !== cachedVersion;
+        
+        if (!needsUpdate) {
+            console.log('草榴Manager: 远程版本 (' + remoteVersion + ') 与缓存版本一致，使用缓存');
+            const modulesToExecute = [];
+            Object.keys(cachedModules).forEach((name) => {
+                const cached = cachedModules[name];
+                if (cached && cached.code) {
+                    modulesToExecute.push({ name, code: cached.code });
                 }
+            });
+            
+            modulesToExecute.forEach((mod) => {
+                try {
+                    const fn = new Function('window', '"use strict";\n' + mod.code + '\n//# sourceURL=CLM-remote-module-' + mod.name + '.js');
+                    fn(pageWindow);
+                    console.log('草榴Manager: 已執行緩存模塊', mod.name);
+                } catch (e) {
+                    console.error('草榴Manager: 執行緩存模塊出錯', mod.name, e);
+                }
+            });
+            
+            result.success = true;
+            result.updated = false;
+            return result;
+        }
+
+        // 5. 需要更新：先下载所有新模块到临时缓存，全部成功后再替换
+        console.log('草榴Manager: 檢測到版本更新 (' + cachedVersion + ' → ' + remoteVersion + ')，開始更新模塊...');
+        
+        const newModules = {};
+        const manifestModules = manifest.modules || {};
+        let downloadFailed = false;
+        let failedModules = [];
+
+        for (const name of Object.keys(manifestModules)) {
+            const entry = manifestModules[name];
+            if (!shouldLoadModuleForPage(entry, pageType)) continue;
+
+            if (!entry.url) {
+                console.warn('草榴Manager: 模塊', name, '缺少 URL');
+                continue;
             }
 
-            saveRemoteModuleCache(newCache);
+            try {
+                const code = await fetchCrossOriginText(entry.url);
+                newModules[name] = {
+                    url: entry.url,
+                    code,
+                    lastUpdated: Date.now()
+                };
+                console.log('草榴Manager: 已下載模塊', name);
+            } catch (e) {
+                console.error('草榴Manager: 下載模塊失敗', name, e);
+                downloadFailed = true;
+                failedModules.push(name);
+            }
         }
+
+        // 6. 如果有模块下载失败，使用旧缓存
+        if (downloadFailed) {
+            console.warn('草榴Manager: 部分模塊下載失敗 (' + failedModules.join(', ') + ')，使用緩存模塊');
+            
+            if (hasCachedModules) {
+                const modulesToExecute = [];
+                Object.keys(cachedModules).forEach((name) => {
+                    const cached = cachedModules[name];
+                    if (cached && cached.code) {
+                        modulesToExecute.push({ name, code: cached.code });
+                    }
+                });
+                
+                modulesToExecute.forEach((mod) => {
+                    try {
+                        const fn = new Function('window', '"use strict";\n' + mod.code + '\n//# sourceURL=CLM-remote-module-' + mod.name + '.js');
+                        fn(pageWindow);
+                        console.log('草榴Manager: 已執行緩存模塊', mod.name);
+                    } catch (e) {
+                        console.error('草榴Manager: 執行緩存模塊出錯', mod.name, e);
+                    }
+                });
+                
+                result.success = true;
+                result.updated = false;
+                result.error = '部分模块下载失败，使用缓存';
+                return result;
+            }
+        }
+
+        // 7. 所有模块下载成功，保存新缓存并执行
+        const newCache = {
+            manifestVersion: remoteVersion,
+            modules: newModules,
+            lastUpdated: Date.now()
+        };
+        
+        saveRemoteModuleCache(newCache);
+        console.log('草榴Manager: 已更新模塊緩存到版本', remoteVersion);
+
+        const modulesToExecute = [];
+        Object.keys(newModules).forEach((name) => {
+            const mod = newModules[name];
+            if (mod && mod.code) {
+                modulesToExecute.push({ name, code: mod.code });
+            }
+        });
 
         modulesToExecute.forEach((mod) => {
             try {
                 const fn = new Function('window', '"use strict";\n' + mod.code + '\n//# sourceURL=CLM-remote-module-' + mod.name + '.js');
                 fn(pageWindow);
-                console.log('草榴Manager: 已執行遠程模塊', mod.name);
+                console.log('草榴Manager: 已執行新模塊', mod.name);
             } catch (e) {
-                console.error('草榴Manager: 執行遠程模塊出錯', mod.name, e);
+                console.error('草榴Manager: 執行新模塊出錯', mod.name, e);
             }
         });
+
+        result.success = true;
+        result.updated = true;
+        return result;
     }
 
     function extractFilenameFromContentDisposition(headerValue) {
@@ -7238,6 +7377,55 @@
     }
 
     /**
+     * 检查是否需要自动更新模块
+     */
+    function shouldAutoCheckUpdate() {
+        try {
+            const enabled = localStorage.getItem(AUTO_UPDATE_CHECK_KEY);
+            if (enabled !== 'true') return false;
+            
+            const lastCheck = parseInt(localStorage.getItem(LAST_UPDATE_CHECK_KEY) || '0', 10);
+            const now = Date.now();
+            return (now - lastCheck) >= AUTO_UPDATE_INTERVAL;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    /**
+     * 记录最后检查更新时间
+     */
+    function updateLastCheckTime() {
+        try {
+            localStorage.setItem(LAST_UPDATE_CHECK_KEY, String(Date.now()));
+        } catch (e) {
+            console.warn('草榴Manager: 无法记录更新检查时间', e);
+        }
+    }
+
+    /**
+     * 获取自动更新设置
+     */
+    function getAutoUpdateEnabled() {
+        try {
+            return localStorage.getItem(AUTO_UPDATE_CHECK_KEY) === 'true';
+        } catch (e) {
+            return false;
+        }
+    }
+
+    /**
+     * 设置自动更新
+     */
+    function setAutoUpdateEnabled(enabled) {
+        try {
+            localStorage.setItem(AUTO_UPDATE_CHECK_KEY, enabled ? 'true' : 'false');
+        } catch (e) {
+            console.warn('草榴Manager: 无法保存自动更新设置', e);
+        }
+    }
+
+    /**
      * 向頁面注入右下角的設置按鈕與面板
      */
     function createSettingsUI() {
@@ -7706,6 +7894,102 @@
         logUnsubscribe = subscribeQbLogs(renderLogs);
 
         body.appendChild(logRow);
+
+        // 模块更新管理
+        const moduleUpdateRow = document.createElement('div');
+        moduleUpdateRow.className = 'clm-form-row';
+        const moduleUpdateLabel = document.createElement('label');
+        moduleUpdateLabel.textContent = '远程模块管理';
+        moduleUpdateRow.appendChild(moduleUpdateLabel);
+
+        // 当前缓存版本信息
+        const cache = getRemoteModuleCache();
+        const versionInfo = document.createElement('div');
+        versionInfo.style.fontSize = '11px';
+        versionInfo.style.color = '#666';
+        versionInfo.style.marginBottom = '8px';
+        versionInfo.textContent = '当前缓存版本：' + (cache.manifestVersion || '未缓存') + 
+            (cache.lastUpdated ? ' (更新于 ' + new Date(cache.lastUpdated).toLocaleString() + ')' : '');
+        moduleUpdateRow.appendChild(versionInfo);
+
+        // 自动更新选项
+        const autoUpdateCheckbox = document.createElement('input');
+        autoUpdateCheckbox.type = 'checkbox';
+        autoUpdateCheckbox.checked = getAutoUpdateEnabled();
+        autoUpdateCheckbox.id = 'clm-auto-update-checkbox';
+        const autoUpdateLabel = document.createElement('label');
+        autoUpdateLabel.htmlFor = 'clm-auto-update-checkbox';
+        autoUpdateLabel.style.display = 'inline-block';
+        autoUpdateLabel.style.marginBottom = '8px';
+        autoUpdateLabel.appendChild(autoUpdateCheckbox);
+        autoUpdateLabel.appendChild(document.createTextNode(' 启用自动更新（每半小时检查一次）'));
+        moduleUpdateRow.appendChild(autoUpdateLabel);
+        
+        autoUpdateCheckbox.addEventListener('change', () => {
+            setAutoUpdateEnabled(autoUpdateCheckbox.checked);
+            if (autoUpdateCheckbox.checked) {
+                updateLastCheckTime(); // 启用时重置检查时间
+                showToast('自动更新已启用', 'success');
+            } else {
+                showToast('自动更新已禁用', 'info');
+            }
+        });
+
+        // 检测更新按钮和状态
+        const updateTestRow = document.createElement('div');
+        updateTestRow.className = 'clm-test-row';
+        const checkUpdateBtn = document.createElement('button');
+        checkUpdateBtn.type = 'button';
+        checkUpdateBtn.className = 'clm-small-btn clm-primary-btn';
+        checkUpdateBtn.textContent = '检测并更新模块';
+        const updateStatus = document.createElement('span');
+        updateStatus.className = 'clm-test-status';
+        updateStatus.textContent = '';
+        
+        checkUpdateBtn.addEventListener('click', async () => {
+            updateStatus.textContent = '';
+            updateStatus.classList.remove('clm-ok', 'clm-failed');
+            checkUpdateBtn.disabled = true;
+            checkUpdateBtn.textContent = '检测中...';
+            
+            try {
+                // 强制检查更新
+                const result = await initRemoteModules(pageType, true);
+                updateLastCheckTime();
+                
+                if (result.updated) {
+                    updateStatus.textContent = '模块已更新，请刷新页面生效';
+                    updateStatus.classList.add('clm-ok');
+                    showToast('模块更新成功，请刷新页面', 'success');
+                    
+                    // 更新版本信息显示
+                    const newCache = getRemoteModuleCache();
+                    versionInfo.textContent = '当前缓存版本：' + (newCache.manifestVersion || '未缓存') + 
+                        (newCache.lastUpdated ? ' (更新于 ' + new Date(newCache.lastUpdated).toLocaleString() + ')' : '');
+                } else if (result.success && !result.updated) {
+                    updateStatus.textContent = '已是最新版本';
+                    updateStatus.classList.add('clm-ok');
+                    showToast('已是最新版本', 'info');
+                } else {
+                    updateStatus.textContent = '更新失败：' + (result.error || '未知错误');
+                    updateStatus.classList.add('clm-failed');
+                    showToast('更新失败', 'error');
+                }
+            } catch (err) {
+                updateStatus.textContent = '更新失败：' + (err?.message || err);
+                updateStatus.classList.add('clm-failed');
+                showToast('更新失败：' + (err?.message || err), 'error');
+            } finally {
+                checkUpdateBtn.disabled = false;
+                checkUpdateBtn.textContent = '检测并更新模块';
+            }
+        });
+        
+        updateTestRow.appendChild(checkUpdateBtn);
+        updateTestRow.appendChild(updateStatus);
+        moduleUpdateRow.appendChild(updateTestRow);
+        
+        body.appendChild(moduleUpdateRow);
 
         // 設置轉移功能
         const transferRow = document.createElement('div');
@@ -8265,13 +8549,21 @@
 
     /**
      * ========================================
-     *  加载远程模块（测试阶段）
+     *  加载远程模块
      * ========================================
      */
     (async function loadRemoteModules() {
         try {
             console.log('%c草榴Manager: 开始加载远程模块...', 'color: #3b82f6; font-weight: bold;');
-            await initRemoteModules(pageType);
+            
+            // 检查是否需要自动更新
+            const shouldAutoUpdate = shouldAutoCheckUpdate();
+            if (shouldAutoUpdate) {
+                console.log('草榴Manager: 自动检查更新已启用，正在检查更新...');
+                updateLastCheckTime();
+            }
+            
+            await initRemoteModules(pageType, shouldAutoUpdate);
             console.log('%c草榴Manager: 远程模块加载完成', 'color: #22c55e; font-weight: bold;');
             
             // 初始化已加载的模块
