@@ -1052,6 +1052,316 @@
         }
     }
 
+    /**
+     * ========================================
+     *  Phase 5: 帖子数据和 UI 更新函数
+     * ========================================
+     */
+
+    /**
+     * 帖子数据缓存
+     */
+    const threadDataCache = new Map();
+
+    /**
+     * 获取帖子数据
+     */
+    async function fetchThreadData(threadUrl) {
+        if (!threadUrl) return null;
+        const normalized = getAbsoluteUrl(threadUrl);
+        if (!normalized) return null;
+        if (threadDataCache.has(normalized)) {
+            return threadDataCache.get(normalized);
+        }
+        const fetchPromise = (async () => {
+            try {
+                const resp = await fetch(normalized, { credentials: 'include' });
+                if (!resp.ok) {
+                    throw new Error(`HTTP ${resp.status}`);
+                }
+                const html = await resp.text();
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(html, 'text/html');
+                
+                // 兼容手机端和电脑端的内容选择器
+                let threadContent = doc.querySelector('.tpc_content');
+                if (!threadContent) {
+                    // 手机端使用 .tpc_cont 或 #main
+                    threadContent = doc.querySelector('.tpc_cont') || doc.querySelector('#main') || doc.body;
+                }
+                
+                const gallery = collectGalleryImages(threadContent, normalized);
+                // 先恢复广告（执行 spinit），这样 tips 中的表格会被生成
+                const adsWithFallback = await collectThreadAdsWithScriptFallback(doc, normalized, html);
+                // 然后再提取 tips（此时 tips 已经包含完整的表格内容）
+                const { topic, comments, ads: contextAds } = collectThreadContext(doc);
+                const ads = adsWithFallback.length > 0 ? adsWithFallback : contextAds;
+                const download = extractThreadDownloadInfo(doc, normalized);
+                const qualityTag = resolveQualityTagFromDocument(doc);
+                return { gallery, topic, comments, download, qualityTag, ads };
+            } catch (err) {
+                console.error('clm 論壇畫廊載入失敗', normalized, err);
+                return { gallery: [], topic: null, comments: [], ads: [] };
+            }
+        })();
+        threadDataCache.set(normalized, fetchPromise);
+        return fetchPromise;
+    }
+
+    /**
+     * 更新品质徽章元素
+     */
+    function updateQualityBadgeElement(badgeEl, tag) {
+        if (!badgeEl) return;
+        if (tag) {
+            badgeEl.textContent = tag.toUpperCase();
+            badgeEl.style.display = 'inline-flex';
+        } else {
+            badgeEl.textContent = '';
+            badgeEl.style.display = 'none';
+        }
+    }
+
+    /**
+     * ========================================
+     *  Phase 6: UI 交互和画廊函数
+     * ========================================
+     */
+
+    /**
+     * 画廊加载令牌（用于取消过期的加载请求）
+     */
+    let galleryLoadToken = 0;
+
+    /**
+     * 打开帖子画廊
+     */
+    async function openGalleryForThread(threadUrl, options = {}) {
+        if (!threadUrl) return null;
+        const { instant = false, qualityTag: requestedQualityTag = null } = options;
+        
+        // 从 window 获取必要的函数和对象
+        const focusGallerySource = window.focusGallerySource;
+        const currentListHoverCtx = window.currentListHoverCtx;
+        const galleryOverlay = window.galleryOverlay;
+        const clearGallerySourceHighlight = window.clearGallerySourceHighlight;
+        
+        if (focusGallerySource) {
+            focusGallerySource(threadUrl, currentListHoverCtx);
+        }
+        
+        const loadToken = ++galleryLoadToken;
+        if (instant && galleryOverlay) {
+            galleryOverlay.showLoading();
+        }
+        
+        const data = await fetchThreadData(threadUrl);
+        if (loadToken !== galleryLoadToken) {
+            return null;
+        }
+        
+        if (!data || !data.gallery.length) {
+            if (clearGallerySourceHighlight) {
+                clearGallerySourceHighlight();
+            }
+            if (instant && galleryOverlay && galleryOverlay.isOpen()) {
+                galleryOverlay.close();
+            }
+            alert('未找到該帖子的畫廊內容');
+            return null;
+        }
+        
+        const hoverQualityTag = requestedQualityTag ?? currentListHoverCtx?.qualityTag ?? null;
+        if (galleryOverlay) {
+            galleryOverlay.open(data.gallery, {
+                startIndex: 0,
+                topic: data.topic || null,
+                comments: data.comments || [],
+                download: data.download || null,
+                threadUrl,
+                qualityTag: data.qualityTag || hoverQualityTag || null,
+                ads: data.ads || []
+            });
+        }
+        
+        markThreadGalleryVisited(threadUrl);
+        return data;
+    }
+
+    /**
+     * 设置帖子下载按钮
+     */
+    function setupThreadDownloadButton(btn, options = {}) {
+        const defaultLabel = options.label || '下載';
+        const downloadedLabel = options.downloadedLabel || '已下載';
+        btn.textContent = defaultLabel;
+        const threadKey = normalizeThreadKey(options.threadUrl);
+        if (!threadKey) {
+            btn.disabled = true;
+            btn.title = '無法解析帖子地址';
+            return;
+        }
+        const container = options.container || null;
+        const containerClass = options.containerClass || '';
+        const defaultTitle = '下載到 qBittorrent';
+        const downloadedTitle = '已下載，可再次發送到 qBittorrent';
+        if (options.threadTitle) {
+            btn.dataset.clmThreadTitle = options.threadTitle;
+        } else {
+            delete btn.dataset.clmThreadTitle;
+        }
+
+        const updateState = () => {
+            const downloaded = hasDownloadedThread(threadKey);
+            btn.classList.toggle('clm-downloaded', downloaded);
+            btn.textContent = downloaded ? downloadedLabel : defaultLabel;
+            btn.title = downloaded ? downloadedTitle : defaultTitle;
+            if (container && containerClass) {
+                container.classList.toggle(containerClass, downloaded);
+            }
+            if (btn.dataset.clmBusy !== '1') {
+                btn.disabled = false;
+            }
+        };
+
+        btn.dataset.clmThreadKey = threadKey;
+        btn.__clmRefreshDownloadState = updateState;
+        updateState();
+        subscribeDownloadStatus(threadKey, () => updateState());
+
+        btn.addEventListener('click', (ev) => {
+            ev.preventDefault();
+            ev.stopPropagation();
+            if (btn.dataset.clmBusy === '1') return;
+            handleThreadDownloadButtonClick(btn);
+        });
+    }
+
+    /**
+     * 处理下载按钮点击
+     */
+    async function handleThreadDownloadButtonClick(btn) {
+        const threadKey = btn.dataset.clmThreadKey;
+        if (!threadKey) return;
+        
+        // 从 window 获取必要的对象和函数
+        const inlineDownloadWindow = window.inlineDownloadWindow;
+        const loadSettings = window.loadSettings;
+        const openPresetPickerDialog = window.openPresetPickerDialog;
+        const resolveThreadDownloadTarget = window.resolveThreadDownloadTarget;
+        const sendToQbittorrent = window.sendToQbittorrent;
+        
+        if (!inlineDownloadWindow) {
+            console.error('草榴Manager: inlineDownloadWindow 不可用');
+            return;
+        }
+        
+        btn.dataset.clmBusy = '1';
+        btn.disabled = true;
+        inlineDownloadWindow.open({
+            subtitle: btn.dataset.clmThreadTitle || '',
+            status: '正在載入帖子內容…'
+        });
+        
+        const restore = () => {
+            btn.dataset.clmBusy = '0';
+            if (typeof btn.__clmRefreshDownloadState === 'function') {
+                btn.__clmRefreshDownloadState();
+            } else {
+                btn.disabled = false;
+            }
+        };
+        
+        try {
+            btn.textContent = '載入帖子…';
+            inlineDownloadWindow.setStatus('正在解析帖子與下載資訊…');
+            const threadData = await fetchThreadData(threadKey);
+            if (!threadData || !threadData.download || !threadData.download.pageUrl) {
+                inlineDownloadWindow.setStatus('該帖子沒有可解析的下載連結。', 'error');
+                alert('該帖子沒有可解析的下載連結。');
+                return;
+            }
+            inlineDownloadWindow.setPageUrl(threadData.download.pageUrl);
+            inlineDownloadWindow.setLink(threadData.download.pageUrl);
+            inlineDownloadWindow.setStatus('正在載入下載頁面，請稍候…');
+            btn.textContent = '載入中…';
+            
+            // 等待下载窗口完全加载
+            try {
+                await inlineDownloadWindow.waitForLoad();
+                if (!inlineDownloadWindow.isOpen()) {
+                    return;
+                }
+                inlineDownloadWindow.setStatus('下載頁面已載入，準備模擬點擊 DOWNLOAD…');
+                await new Promise(resolve => setTimeout(resolve, 500));
+                if (!inlineDownloadWindow.isOpen()) {
+                    return;
+                }
+                const clicked = inlineDownloadWindow.simulateDownloadClick();
+                if (clicked) {
+                    inlineDownloadWindow.setStatus('已模擬點擊 DOWNLOAD，等待頁面跳轉…');
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    if (!inlineDownloadWindow.isOpen()) {
+                        return;
+                    }
+                } else {
+                    inlineDownloadWindow.setStatus('未找到 DOWNLOAD 按鈕，嘗試直接解析下載連結…');
+                }
+            } catch (err) {
+                console.error('草榴Manager: 等待下載頁面載入失敗', err);
+            }
+            
+            if (!inlineDownloadWindow.isOpen()) {
+                return;
+            }
+            
+            btn.textContent = '選擇儲存位置…';
+            let settings;
+            try {
+                settings = loadSettings ? loadSettings() : null;
+                if (!settings) {
+                    throw new Error('loadSettings 不可用');
+                }
+            } catch (err) {
+                console.error('草榴Manager: 設置讀取失敗', err);
+                inlineDownloadWindow.setStatus('無法讀取設置，請稍後再試。', 'error');
+                alert('無法讀取設置，請稍後再試。');
+                return;
+            }
+            if (!settings.qb.enabled) {
+                inlineDownloadWindow.setStatus('請先在設置中啟用 qBittorrent 集成。', 'error');
+                alert('請先在草榴Manager 設置中啟用 qBittorrent 集成。');
+                return;
+            }
+            inlineDownloadWindow.setStatus('請選擇 qBittorrent 儲存預設…');
+            const preset = openPresetPickerDialog ? await openPresetPickerDialog(settings) : null;
+            if (!preset) {
+                inlineDownloadWindow.setStatus('已取消發送至 qBittorrent。');
+                return;
+            }
+            if (!inlineDownloadWindow.isOpen()) {
+                return;
+            }
+            btn.textContent = '解析下載連結…';
+            inlineDownloadWindow.setStatus('正在獲取種子…');
+            const resolved = resolveThreadDownloadTarget ? await resolveThreadDownloadTarget(threadData.download) : null;
+            inlineDownloadWindow.setStatus('正在發送到 qBittorrent…');
+            const ok = sendToQbittorrent ? await sendToQbittorrent(resolved, preset.id) : false;
+            if (ok) {
+                inlineDownloadWindow.setStatus('已自動點擊 DOWNLOAD 並發送至 qBittorrent。', 'success');
+                markThreadDownloaded(threadKey);
+            } else {
+                inlineDownloadWindow.setStatus('發送到 qBittorrent 失敗。', 'error');
+            }
+        } catch (err) {
+            console.error('草榴Manager: 列表下載按鈕執行失敗', err);
+            inlineDownloadWindow.setStatus('下載流程失敗：' + (err?.message || err), 'error');
+            alert('下載發送失敗：' + (err?.message || err));
+        } finally {
+            restore();
+        }
+    }
+
     // ========================================
     // 模块初始化
     // ========================================
@@ -1098,6 +1408,15 @@
         CLM.hydrateThreadAdsFromData = hydrateThreadAdsFromData;
         CLM.collectThreadAdsWithScriptFallback = collectThreadAdsWithScriptFallback;
         
+        // 暴露帖子数据和 UI 更新函数（Phase 5）
+        CLM.fetchThreadData = fetchThreadData;
+        CLM.updateQualityBadgeElement = updateQualityBadgeElement;
+        
+        // 暴露 UI 交互和画廊函数（Phase 6）
+        CLM.openGalleryForThread = openGalleryForThread;
+        CLM.setupThreadDownloadButton = setupThreadDownloadButton;
+        CLM.handleThreadDownloadButtonClick = handleThreadDownloadButtonClick;
+        
         console.log('✓ 核心工具函数已加载（来自远程模块）');
         console.log('- isMobilePage:', typeof CLM.isMobilePage);
         console.log('- detectPageType:', typeof CLM.detectPageType);
@@ -1132,7 +1451,16 @@
         console.log('- hydrateThreadAdsFromData:', typeof CLM.hydrateThreadAdsFromData);
         console.log('- collectThreadAdsWithScriptFallback:', typeof CLM.collectThreadAdsWithScriptFallback);
         
-        console.log('%c草榴Manager: core 模块初始化完成 - 已覆盖 26 个主脚本函数', 'color: #22c55e; font-weight: bold;');
+        console.log('✓ 帖子数据和 UI 更新函数已加载（Phase 5）');
+        console.log('- fetchThreadData:', typeof CLM.fetchThreadData);
+        console.log('- updateQualityBadgeElement:', typeof CLM.updateQualityBadgeElement);
+        
+        console.log('✓ UI 交互和画廊函数已加载（Phase 6）');
+        console.log('- openGalleryForThread:', typeof CLM.openGalleryForThread);
+        console.log('- setupThreadDownloadButton:', typeof CLM.setupThreadDownloadButton);
+        console.log('- handleThreadDownloadButtonClick:', typeof CLM.handleThreadDownloadButtonClick);
+        
+        console.log('%c草榴Manager: core 模块初始化完成 - 已覆盖 31 个主脚本函数', 'color: #22c55e; font-weight: bold;');
     }
 
     // 暴露初始化函数
