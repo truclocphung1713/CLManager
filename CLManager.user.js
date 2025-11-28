@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         草榴Manager
 // @namespace    http://tampermonkey.net/
-// @version      1.10.1
+// @version      1.10.2
 // @description  草榴搜索/板块悬停放大封面、标题预览图、品质徽章与 qBittorrent 一键发送和下载按钮。
 // @author       truclocphung1713
 // @match        https://t66y.com/search.php*
@@ -110,83 +110,26 @@
         document.head.appendChild(style);
     }
 
+    /**
+     * 跨域文本请求（已迁移到 core.js）
+     */
     function fetchCrossOriginText(url) {
-        if (!url) {
-            return Promise.reject(new Error('無效的請求地址'));
+        if (typeof CLM.fetchCrossOriginText === 'function') {
+            return CLM.fetchCrossOriginText(url);
         }
-        if (typeof GM_xmlhttpRequest === 'function') {
-            return new Promise((resolve, reject) => {
-                GM_xmlhttpRequest({
-                    method: 'GET',
-                    url,
-                    headers: {
-                        'Referer': 'https://www.rmdown.com/'
-                    },
-                    onload: (resp) => {
-                        if (resp.status >= 200 && resp.status < 400) {
-                            resolve(resp.responseText);
-                        } else {
-                            reject(new Error('HTTP ' + resp.status));
-                        }
-                    },
-                    onerror: () => reject(new Error('網絡錯誤')),
-                    ontimeout: () => reject(new Error('請求超時'))
-                });
-            });
-        }
-        return fetch(url, { credentials: 'include' }).then(resp => {
-            if (!resp.ok) {
-                throw new Error('HTTP ' + resp.status);
-            }
-            return resp.text();
-        });
+        console.warn('草榴Manager: fetchCrossOriginText 未从远程模块加载');
+        return Promise.reject(new Error('函数未加载'));
     }
 
+    /**
+     * 跨域二进制请求（已迁移到 core.js）
+     */
     function fetchCrossOriginBinary(url, options = {}) {
-        if (!url) {
-            return Promise.reject(new Error('無效的請求地址'));
+        if (typeof CLM.fetchCrossOriginBinary === 'function') {
+            return CLM.fetchCrossOriginBinary(url, options);
         }
-        const headers = {
-            'Referer': options.referer || 'https://www.rmdown.com/',
-            ...(options.headers || {})
-        };
-        const method = options.method || 'GET';
-        if (typeof GM_xmlhttpRequest === 'function') {
-            return new Promise((resolve, reject) => {
-                GM_xmlhttpRequest({
-                    method,
-                    url,
-                    headers,
-                    responseType: 'arraybuffer',
-                    onload: (resp) => {
-                        if (resp.status >= 200 && resp.status < 400) {
-                            resolve({
-                                buffer: resp.response,
-                                headers: resp.responseHeaders || ''
-                            });
-                        } else {
-                            reject(new Error('HTTP ' + resp.status));
-                        }
-                    },
-                    onerror: () => reject(new Error('網絡錯誤')),
-                    ontimeout: () => reject(new Error('請求超時'))
-                });
-            });
-        }
-        return fetch(url, {
-            method,
-            headers,
-            credentials: 'include'
-        }).then(async (resp) => {
-            if (!resp.ok) {
-                throw new Error('HTTP ' + resp.status);
-            }
-            const buffer = await resp.arrayBuffer();
-            return {
-                buffer,
-                headers: resp.headers
-            };
-        });
+        console.warn('草榴Manager: fetchCrossOriginBinary 未从远程模块加载');
+        return Promise.reject(new Error('函数未加载'));
     }
 
     // 远程模块加载配置：manifest 地址与本地缓存 key
@@ -1078,7 +1021,7 @@
         return [];
     }
 
-    const adScriptCache = new Map();
+    // adScriptCache 已迁移到 core.js
 
     function decodeJsStringLiteral(input) {
         if (!input) return '';
@@ -1207,47 +1150,15 @@
         return resolveExpression(assignMatch[1]);
     }
 
+    /**
+     * 获取广告脚本源码（已迁移到 core.js）
+     */
     async function fetchAdScriptSource(scriptUrl) {
-        if (!scriptUrl) return '';
-        if (adScriptCache.has(scriptUrl)) {
-            return adScriptCache.get(scriptUrl);
+        if (typeof CLM.fetchAdScriptSource === 'function') {
+            return CLM.fetchAdScriptSource(scriptUrl);
         }
-        const requester = (async () => {
-            // 直接使用 GM_xmlhttpRequest 避免 CORS 问题
-            if (typeof GM_xmlhttpRequest === 'function') {
-                return new Promise((resolve, reject) => {
-                    GM_xmlhttpRequest({
-                        method: 'GET',
-                        url: scriptUrl,
-                        headers: {
-                            'Referer': location.origin
-                        },
-                        onload: (resp) => {
-                            if (resp.status >= 200 && resp.status < 400) {
-                                resolve(resp.responseText);
-                            } else {
-                                reject(new Error('HTTP ' + resp.status));
-                            }
-                        },
-                        onerror: () => reject(new Error('網絡錯誤')),
-                        ontimeout: () => reject(new Error('請求超時'))
-                    });
-                });
-            }
-            // 如果没有 GM_xmlhttpRequest，尝试使用 fetch（可能会遇到 CORS 问题）
-            try {
-                const resp = await fetch(scriptUrl, { credentials: 'include' });
-                if (!resp.ok) {
-                    throw new Error('HTTP ' + resp.status);
-                }
-                return await resp.text();
-            } catch (err) {
-                throw err;
-            }
-        })();
-        requester.catch(() => adScriptCache.delete(scriptUrl));
-        adScriptCache.set(scriptUrl, requester);
-        return requester;
+        console.warn('草榴Manager: fetchAdScriptSource 未从远程模块加载');
+        return '';
     }
 
     function createFtadGridElement(doc, adEntries) {

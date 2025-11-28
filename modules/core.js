@@ -831,6 +831,148 @@
         return ftadElements.map(el => el.outerHTML);
     }
 
+    /**
+     * ========================================
+     *  Phase 4: 网络请求函数
+     * ========================================
+     */
+
+    /**
+     * 跨域文本请求
+     */
+    function fetchCrossOriginText(url) {
+        if (!url) {
+            return Promise.reject(new Error('無效的請求地址'));
+        }
+        if (typeof GM_xmlhttpRequest === 'function') {
+            return new Promise((resolve, reject) => {
+                GM_xmlhttpRequest({
+                    method: 'GET',
+                    url,
+                    headers: {
+                        'Referer': 'https://www.rmdown.com/'
+                    },
+                    onload: (resp) => {
+                        if (resp.status >= 200 && resp.status < 400) {
+                            resolve(resp.responseText);
+                        } else {
+                            reject(new Error('HTTP ' + resp.status));
+                        }
+                    },
+                    onerror: () => reject(new Error('網絡錯誤')),
+                    ontimeout: () => reject(new Error('請求超時'))
+                });
+            });
+        }
+        return fetch(url, { credentials: 'include' }).then(resp => {
+            if (!resp.ok) {
+                throw new Error('HTTP ' + resp.status);
+            }
+            return resp.text();
+        });
+    }
+
+    /**
+     * 跨域二进制请求
+     */
+    function fetchCrossOriginBinary(url, options = {}) {
+        if (!url) {
+            return Promise.reject(new Error('無效的請求地址'));
+        }
+        const headers = {
+            'Referer': options.referer || 'https://www.rmdown.com/',
+            ...(options.headers || {})
+        };
+        const method = options.method || 'GET';
+        if (typeof GM_xmlhttpRequest === 'function') {
+            return new Promise((resolve, reject) => {
+                GM_xmlhttpRequest({
+                    method,
+                    url,
+                    headers,
+                    responseType: 'arraybuffer',
+                    onload: (resp) => {
+                        if (resp.status >= 200 && resp.status < 400) {
+                            resolve({
+                                buffer: resp.response,
+                                headers: resp.responseHeaders || ''
+                            });
+                        } else {
+                            reject(new Error('HTTP ' + resp.status));
+                        }
+                    },
+                    onerror: () => reject(new Error('網絡錯誤')),
+                    ontimeout: () => reject(new Error('請求超時'))
+                });
+            });
+        }
+        return fetch(url, {
+            method,
+            headers,
+            credentials: 'include'
+        }).then(async (resp) => {
+            if (!resp.ok) {
+                throw new Error('HTTP ' + resp.status);
+            }
+            const buffer = await resp.arrayBuffer();
+            return {
+                buffer,
+                headers: resp.headers
+            };
+        });
+    }
+
+    /**
+     * 广告脚本缓存
+     */
+    const adScriptCache = new Map();
+
+    /**
+     * 获取广告脚本源码
+     */
+    async function fetchAdScriptSource(scriptUrl) {
+        if (!scriptUrl) return '';
+        if (adScriptCache.has(scriptUrl)) {
+            return adScriptCache.get(scriptUrl);
+        }
+        const requester = (async () => {
+            // 直接使用 GM_xmlhttpRequest 避免 CORS 问题
+            if (typeof GM_xmlhttpRequest === 'function') {
+                return new Promise((resolve, reject) => {
+                    GM_xmlhttpRequest({
+                        method: 'GET',
+                        url: scriptUrl,
+                        headers: {
+                            'Referer': location.origin
+                        },
+                        onload: (resp) => {
+                            if (resp.status >= 200 && resp.status < 400) {
+                                resolve(resp.responseText);
+                            } else {
+                                reject(new Error('HTTP ' + resp.status));
+                            }
+                        },
+                        onerror: () => reject(new Error('網絡錯誤')),
+                        ontimeout: () => reject(new Error('請求超時'))
+                    });
+                });
+            }
+            // 如果没有 GM_xmlhttpRequest，尝试使用 fetch（可能会遇到 CORS 问题）
+            try {
+                const resp = await fetch(scriptUrl, { credentials: 'include' });
+                if (!resp.ok) {
+                    throw new Error('HTTP ' + resp.status);
+                }
+                return await resp.text();
+            } catch (err) {
+                throw err;
+            }
+        })();
+        requester.catch(() => adScriptCache.delete(scriptUrl));
+        adScriptCache.set(scriptUrl, requester);
+        return requester;
+    }
+
     // ========================================
     // 模块初始化
     // ========================================
@@ -871,6 +1013,11 @@
         CLM.resolveQualityTagFromListItem = resolveQualityTagFromListItem;
         CLM.collectThreadAdBlocks = collectThreadAdBlocks;
         
+        // 暴露网络请求函数（Phase 4）
+        CLM.fetchCrossOriginText = fetchCrossOriginText;
+        CLM.fetchCrossOriginBinary = fetchCrossOriginBinary;
+        CLM.fetchAdScriptSource = fetchAdScriptSource;
+        
         console.log('✓ 核心工具函数已加载（来自远程模块）');
         console.log('- isMobilePage:', typeof CLM.isMobilePage);
         console.log('- detectPageType:', typeof CLM.detectPageType);
@@ -899,7 +1046,12 @@
         console.log('- resolveQualityTagFromListItem:', typeof CLM.resolveQualityTagFromListItem);
         console.log('- collectThreadAdBlocks:', typeof CLM.collectThreadAdBlocks);
         
-        console.log('%c草榴Manager: core 模块初始化完成 - 已覆盖 22 个主脚本函数', 'color: #22c55e; font-weight: bold;');
+        console.log('✓ 网络请求函数已加载（Phase 4）');
+        console.log('- fetchCrossOriginText:', typeof CLM.fetchCrossOriginText);
+        console.log('- fetchCrossOriginBinary:', typeof CLM.fetchCrossOriginBinary);
+        console.log('- fetchAdScriptSource:', typeof CLM.fetchAdScriptSource);
+        
+        console.log('%c草榴Manager: core 模块初始化完成 - 已覆盖 25 个主脚本函数', 'color: #22c55e; font-weight: bold;');
     }
 
     // 暴露初始化函数
