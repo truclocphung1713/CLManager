@@ -351,14 +351,15 @@
     // ========================================
     
     async function handleThreadDownloadButtonClick(btn) {
-        const threadKey = btn.dataset.clmThreadKey;
-        if (!threadKey) return;
+        // 优先使用 clmThreadUrl（完整URL），如果没有则使用 clmThreadKey
+        const threadUrl = btn.dataset.clmThreadUrl || btn.dataset.clmThreadKey;
+        if (!threadUrl) return;
         btn.dataset.clmBusy = '1';
         btn.disabled = true;
         btn.textContent = '载入中...';
         
         try {
-            const threadData = await fetchThreadData(threadKey);
+            const threadData = await fetchThreadData(threadUrl);
             if (!threadData || !threadData.download || !threadData.download.pageUrl) {
                 alert('该帖子没有可解析的下载链接。');
                 return;
@@ -371,7 +372,7 @@
             if (CLM.markThreadDownloaded) {
                 const normalizeThreadKey = CLM.normalizeThreadKey;
                 if (normalizeThreadKey) {
-                    const key = normalizeThreadKey(threadKey);
+                    const key = normalizeThreadKey(threadUrl);
                     if (key) {
                         CLM.markThreadDownloaded(key);
                     }
@@ -568,6 +569,7 @@
         };
 
         btn.dataset.clmThreadKey = threadKey;
+        btn.dataset.clmThreadUrl = options.threadUrl; // 保存完整URL
         btn.__clmRefreshDownloadState = updateState;
         updateState();
         subscribeDownloadStatus(threadKey, () => updateState());
