@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         草榴Manager
 // @namespace    http://tampermonkey.net/
-// @version      1.9.3
+// @version      1.9.5
 // @description  草榴搜索/板块悬停放大封面、标题预览图、品质徽章与 qBittorrent 一键发送和下载按钮。
 // @author       truclocphung1713
 // @match        https://t66y.com/search.php*
@@ -1003,544 +1003,67 @@
         return str.slice(0, maxLength - 3) + '...';
     }
 
+    /**
+     * 收集帖子中的画廊图片（已迁移到 core.js）
+     * 这里保留代理调用，优先使用远程模块
+     */
     function collectGalleryImages(threadContent, baseHref = location.href) {
-        if (!threadContent) return [];
-        const seen = new Set();
-        const gallery = [];
-
-        function pushItem(rawUrl, label) {
-            if (!rawUrl) return;
-            // 排除广告占位符和无效URL
-            if (rawUrl.includes('adblo_ck.jpg') || rawUrl.includes('http://a.d/')) return;
-            const abs = getAbsoluteUrl(rawUrl, baseHref);
-            if (!abs || seen.has(abs)) return;
-            seen.add(abs);
-            gallery.push({
-                src: abs,
-                url: abs,
-                label: label || ''
-            });
+        if (typeof CLM.collectGalleryImages === 'function') {
+            return CLM.collectGalleryImages(threadContent, baseHref);
         }
-
-        // 收集所有带有真实图片数据的img标签
-        // 优先查找在.tpc_content中的图片，排除广告区域
-        const contentArea = threadContent.querySelector('.tpc_content') || threadContent;
-        const allImages = contentArea.querySelectorAll('img[ess-data], img[iyl-data], img[data-src], img[src]');
-        
-        allImages.forEach(img => {
-            // 优先使用ess-data，然后是data-src，然后是iyl-data，最后是src
-            const imgUrl = img.getAttribute('ess-data') ||
-                img.getAttribute('data-src') ||
-                img.getAttribute('iyl-data') ||
-                img.src;
-            
-            if (imgUrl && !imgUrl.includes('adblo_ck.jpg') && !imgUrl.includes('http://a.d/')) {
-                // 过滤掉太小的图片（可能是图标或广告）
-                const width = img.naturalWidth || img.width || 0;
-                const height = img.naturalHeight || img.height || 0;
-                if (width < 100 && height < 100 && img.src && !img.getAttribute('ess-data') && !img.getAttribute('data-src')) {
-                    return; // 跳过小图片
-                }
-                
-                const label = img.getAttribute('title') || 
-                    img.getAttribute('alt') || 
-                    (gallery.length === 0 ? '封面' : `圖片 ${gallery.length + 1}`);
-                pushItem(imgUrl, label);
-            }
-        });
-
-        // 如果没有找到任何图片，尝试查找封面图片（兼容旧逻辑）
-        if (gallery.length === 0) {
-            const coverImg = threadContent.querySelector('img[ess-data], img[iyl-data], img[data-src], img[src*="pb_"], img[src*="cover"]');
-            if (coverImg) {
-                const coverUrl = coverImg.getAttribute('ess-data') ||
-                    coverImg.getAttribute('data-src') ||
-                    coverImg.getAttribute('iyl-data') ||
-                    coverImg.src;
-                if (coverUrl) {
-                    pushItem(coverUrl, coverImg.getAttribute('title') || '封面');
-                }
-            }
-        }
-
-        // 收集.cl-gallery中的链接（兼容旧逻辑）
-        const galleryAnchors = threadContent.querySelectorAll('.cl-gallery a[href]');
-        galleryAnchors.forEach(anchor => {
-            const href = anchor.getAttribute('href');
-            if (!href) return;
-            const label = anchor.querySelector('img')?.getAttribute('title') || anchor.textContent.trim() || '預覽';
-            pushItem(href, label);
-        });
-
-        return gallery;
+        console.warn('草榴Manager: collectGalleryImages 未从远程模块加载');
+        return [];
     }
 
+    /**
+     * 提取清洁的文本内容（已迁移到 core.js）
+     * 这里保留代理调用，优先使用远程模块
+     */
     function extractCleanText(node) {
-        if (!node) return '';
-        const clone = node.cloneNode(true);
-        const removable = clone.querySelectorAll('script, style, iframe, video, audio');
-        removable.forEach(el => el.remove());
-        
-        // 将 <br> 和 <br/> 标签转换为换行符
-        const brElements = clone.querySelectorAll('br');
-        brElements.forEach(br => {
-            const textNode = document.createTextNode('\n');
-            br.parentNode.replaceChild(textNode, br);
-        });
-        
-        const text = clone.textContent
-            .replace(/\u00A0/g, ' ')
-            .replace(/\s+\n/g, '\n')
-            .replace(/\n{2,}/g, '\n')
-            .replace(/[ \t]{2,}/g, ' ')
-            .trim();
-        return text;
-    }
-
-    function extractPostUser(contentEl) {
-        if (!contentEl) return '';
-        
-        // 手机端 htm_mob：.tpc_cont 与 .tpc_detail 在同一块内，优先从同一块里的 .tpc_detail 读取用户名
-        if (contentEl.classList && contentEl.classList.contains('tpc_cont')) {
-            const parent = contentEl.parentElement;
-            if (parent) {
-                const mobileDetail = parent.querySelector('.tpc_detail.f10.fl li');
-                if (mobileDetail) {
-                    const html = mobileDetail.innerHTML || '';
-                    // 提取 <br> 之前的内容（用户名），如：血色不浪漫<br>#1樓 ...
-                    const match = html.match(/^([^<]+?)(?:<br|<BR)/i);
-                    if (match && match[1]) {
-                        const username = match[1].trim();
-                        console.log('草榴Manager: 手机端提取到用户名:', username);
-                        if (username && !username.includes('#') && !username.includes('樓')) {
-                            return username;
-                        }
-                    }
-                    // 如果没有 <br>，回退到第一行文本
-                    const text = mobileDetail.textContent || mobileDetail.innerText || '';
-                    const lines = text.split('\n').map(l => l.trim()).filter(l => l);
-                    if (lines.length > 0 && !lines[0].includes('#') && !lines[0].includes('樓')) {
-                        console.log('草榴Manager: 手机端从文本提取用户名:', lines[0]);
-                        return lines[0];
-                    }
-                }
-            }
+        if (typeof CLM.extractCleanText === 'function') {
+            return CLM.extractCleanText(node);
         }
-        
-        // 电脑端 / 其他布局：尝试从 .tpc_detail.f10.fl 所在的 .t.t2/.t2/.t 容器中提取用户名
-        const postContainer = contentEl.closest('.t.t2, .t2, .t');
-        if (postContainer) {
-            const tpcDetail = postContainer.querySelector('.tpc_detail.f10.fl li');
-            if (tpcDetail) {
-                // 获取 innerHTML 并解析
-                const html = tpcDetail.innerHTML || '';
-                // 提取 <br> 之前的内容（用户名）
-                // 匹配格式：血色不浪漫<br>#1樓
-                const match = html.match(/^([^<]+?)(?:<br|<BR)/i);
-                if (match && match[1]) {
-                    const username = match[1].trim();
-                    console.log('草榴Manager: 提取到用户名:', username);
-                    if (username && !username.includes('#') && !username.includes('樓')) {
-                        return username;
-                    }
-                }
-                // 如果没有 <br>，尝试提取第一行
-                const text = tpcDetail.textContent || tpcDetail.innerText || '';
-                const lines = text.split('\n').map(l => l.trim()).filter(l => l);
-                if (lines.length > 0 && !lines[0].includes('#') && !lines[0].includes('樓')) {
-                    console.log('草榴Manager: 从文本提取用户名:', lines[0]);
-                    return lines[0];
-                }
-            }
-        }
-        
-        // 方法1：向上查找包含 tpc_content 的最外层 th（评论内容所在的 th）
-        // 然后找到这个 th 所在行的第一个 th（用户名所在的 th）
-        let current = contentEl;
-        let outerTh = null;
-        
-        // 向上查找，找到包含 tpc_content 的最外层 th
-        // 这个 th 应该包含一个 table 元素，并且这个 table 应该包含当前的 contentEl
-        while (current && current !== document.body) {
-            if (current.tagName === 'TH') {
-                const table = current.querySelector('table');
-                if (table && table.contains(contentEl)) {
-                    outerTh = current;
-                    break;
-                }
-            }
-            current = current.parentElement;
-        }
-        
-        if (outerTh) {
-            // 找到这个 th 所在的 tr
-            const row = outerTh.closest('tr');
-            if (row) {
-                // 查找同一行的第一个 th（包含用户名）
-                const firstTh = row.querySelector('th:first-child');
-                if (firstTh && firstTh !== outerTh) {
-                    // 在第一个 th 中查找 b 标签（用户名）
-                    const bTag = firstTh.querySelector('b');
-                    if (bTag) {
-                        const text = bTag.textContent.trim();
-                        if (text) {
-                            return text;
-                        }
-                    }
-                }
-            }
-        }
-        
-        // 方法2：直接查找包含 tpc_content 的 div.t.t2 或 .t2，然后找第一行的第一个 th
-        const tDiv = contentEl.closest('.t.t2, .t2');
-        if (tDiv) {
-            // 查找 tDiv 内的第一个 table（最外层的 table）
-            const table = tDiv.querySelector('> table, table');
-            if (table) {
-                // 查找 table 的第一行（tbody 内的第一行，或者直接的第一行）
-                const firstRow = table.querySelector('tbody > tr.tr1, tbody > tr:first-child, tr.tr1, tr:first-child');
-                if (firstRow) {
-                    // 查找第一行的第一个 th（包含用户名）
-                    const firstTh = firstRow.querySelector('th:first-child');
-                    if (firstTh) {
-                        // 在第一个 th 中查找 b 标签（用户名）
-                        const bTag = firstTh.querySelector('b');
-                        if (bTag) {
-                            const text = bTag.textContent.trim();
-                            if (text) {
-                                return text;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        // 方法3：查找包含 tpc_content 的表格，向上找到包含它的最外层 table
-        // 然后查找这个 table 的第一行第一个 th
-        let table = contentEl.closest('table');
-        if (table) {
-            // 继续向上查找，找到最外层的 table（包含评论的 table）
-            while (table && table.parentElement) {
-                const parentTable = table.parentElement.closest('table');
-                if (parentTable) {
-                    table = parentTable;
-                } else {
-                    break;
-                }
-            }
-            
-            // 查找这个 table 的第一行第一个 th
-            const firstRow = table.querySelector('tbody > tr:first-child, tr:first-child');
-            if (firstRow) {
-                const firstTh = firstRow.querySelector('th:first-child');
-                if (firstTh) {
-                    const bTag = firstTh.querySelector('b');
-                    if (bTag) {
-                        const text = bTag.textContent.trim();
-                        if (text) {
-                            return text;
-                        }
-                    }
-                }
-            }
-        }
-        
-        // 最后备用方案：查找其他可能的位置
-        const td = contentEl.closest('td');
-        const row = td?.parentElement;
-        const candidateContainers = new Set();
-
-        if (row) {
-            const firstCell = row.querySelector('td:first-child, th:first-child');
-            if (firstCell && firstCell !== td) {
-                candidateContainers.add(firstCell);
-            }
-            if (row.previousElementSibling) {
-                candidateContainers.add(row.previousElementSibling);
-            }
-            candidateContainers.add(row);
-        }
-
-        candidateContainers.add(td?.previousElementSibling || null);
-        candidateContainers.add(contentEl.closest('.tpc'));
-        candidateContainers.add(contentEl.closest('table'));
-
-        const selectors = [
-            '.readName a',
-            '.readName',
-            '.tpc_info a',
-            '.tpc_info',
-            '.tipad a',
-            '.tipad b',
-            '.tal a',
-            '.tal b',
-            '.authi a',
-            '.authi',
-            'b'
-        ];
-
-        for (const container of candidateContainers) {
-            if (!container) continue;
-            for (const sel of selectors) {
-                const target = container.querySelector(sel);
-                if (target) {
-                    const text = target.textContent.trim();
-                    if (text) {
-                        return text;
-                    }
-                }
-            }
-            if (container.dataset?.author) {
-                const author = container.dataset.author.trim();
-                if (author) return author;
-            }
-        }
+        console.warn('草榴Manager: extractCleanText 未从远程模块加载');
         return '';
     }
 
-    function parseTitleTags(titleText) {
-        if (!titleText) return { quality: null, size: null, code: null, title: '' };
-        
-        // 移除 HTML 标签和多余空格
-        const cleanTitle = titleText.replace(/<[^>]+>/g, '').trim();
-        
-        // 匹配格式：允许前面有前缀，如 "新作 [HD/5.75G] BOKD-305 标题文本"
-        // 使用非贪婪匹配，确保能匹配到第一个 [ ] 对
-        const match = cleanTitle.match(/\[([^\]]+)\]\s*(.+)$/);
-        if (!match) {
-            // 如果没有匹配到 [ ] 格式，尝试直接匹配番号格式
-            // 例如：BOKD-303 标题文本
-            const codeMatch = cleanTitle.match(/^([A-Z0-9]+[-_][0-9]+)\s+(.+)$/i);
-            if (codeMatch) {
-                return {
-                    quality: null,
-                    size: null,
-                    code: codeMatch[1].toUpperCase(),
-                    title: codeMatch[2].trim()
-                };
-            }
-            return { quality: null, size: null, code: null, title: cleanTitle };
+    /**
+     * 从内容元素中提取帖子用户名（已迁移到 core.js）
+     * 这里保留代理调用，优先使用远程模块
+     */
+    function extractPostUser(contentEl) {
+        if (typeof CLM.extractPostUser === 'function') {
+            return CLM.extractPostUser(contentEl);
         }
-        
-        const bracketContent = match[1]; // HD/5.75G
-        const titlePart = match[2]; // BOKD-305 AVデビュー ボクこう見えてオチンチンついてます。 神戸まこ。
-        
-        let quality = null;
-        let size = null;
-        let code = null;
-        let title = '';
-        
-        // 解析括号内的内容：HD/5.75G
-        const bracketParts = bracketContent.split('/');
-        if (bracketParts.length >= 2) {
-            // 第一个部分：清晰度 (SD/HD/4K/VR)
-            const qualityPart = bracketParts[0].trim().toUpperCase();
-            if (['SD', 'HD', '4K', 'VR'].includes(qualityPart)) {
-                quality = qualityPart;
-            }
-            
-            // 第二个部分：文件大小 (如 5.75G, 6.23G)
-            const sizePart = bracketParts[1].trim();
-            if (sizePart.match(/^[\d.]+[GMK]?B?$/i)) {
-                size = sizePart.toUpperCase();
-            }
-        } else if (bracketContent.trim()) {
-            // 如果只有一个部分，尝试判断是清晰度还是大小
-            const singlePart = bracketContent.trim().toUpperCase();
-            if (['SD', 'HD', '4K', 'VR'].includes(singlePart)) {
-                quality = singlePart;
-            } else if (singlePart.match(/^[\d.]+[GMK]?B?$/i)) {
-                size = singlePart;
-            }
-        }
-        
-        // 解析标题部分：提取番号和片名
-        // 匹配番号格式：BOKD-305 或类似格式 (字母数字-数字，支持多种分隔符)
-        const codeMatch = titlePart.match(/^([A-Z0-9]+[-_][0-9]+)\s+(.+)$/i);
-        if (codeMatch) {
-            code = codeMatch[1].toUpperCase(); // BOKD-305
-            title = codeMatch[2].trim(); // AVデビュー ボクこう見えてオチンチンついてます。 神戸まこ。
-        } else {
-            // 如果没有番号，整个作为标题
-            title = titlePart.trim();
-        }
-        
-        return { quality, size, code, title };
+        console.warn('草榴Manager: extractPostUser 未从远程模块加载');
+        return '';
     }
 
+    /**
+     * 解析标题标签（已迁移到 core.js）
+     * 这里保留代理调用，优先使用远程模块
+     */
+    function parseTitleTags(titleText) {
+        if (typeof CLM.parseTitleTags === 'function') {
+            return CLM.parseTitleTags(titleText);
+        }
+        console.warn('草榴Manager: parseTitleTags 未从远程模块加载');
+        return { quality: null, size: null, code: null, title: '' };
+    }
+
+    /**
+     * 收集帖子上下文（已迁移到 core.js）
+     * 这里保留代理调用，优先使用远程模块
+     */
     function collectThreadContext(doc) {
-        // 兼容电脑端 .tpc_content 和手机端 .tpc_cont
-        let contentBlocks = Array.from(doc.querySelectorAll('.tpc_content'));
-        if (!contentBlocks.length) {
-            // 尝试手机端选择器
-            contentBlocks = Array.from(doc.querySelectorAll('.tpc_cont'));
+        if (typeof CLM.collectThreadContext === 'function') {
+            return CLM.collectThreadContext(doc);
         }
-        if (!contentBlocks.length) {
-            return {
-                topic: null,
-                comments: [],
-                ads: []
-            };
-        }
-
-        // 收集所有 ftad-ct 元素
-        const allFtadElements = Array.from(doc.querySelectorAll('.ftad-ct'));
-        const ads = allFtadElements.map(el => el.outerHTML);
-        
-        // 调试：输出收集到的广告数量
-        if (ads.length > 0) {
-            console.log('clm 收集到广告数量:', ads.length, ads);
-        }
-
-        // 获取标题（从 <td class="h"> 中获取）
-        let titleInfo = null;
-        let rawTitleText = null;
-        // 查找 <td class="h"> 元素
-        const hTd = doc.querySelector('td.h');
-        if (hTd) {
-            // 查找 <b>本頁主題:</b> 或 <b>本页主题:</b>
-            const themeLabel = hTd.querySelector('b');
-            if (themeLabel && (themeLabel.textContent.includes('本頁主題') || themeLabel.textContent.includes('本页主题'))) {
-                // 获取 <b> 标签后面的所有内容
-                let titleText = '';
-                // 方法1：尝试从整个 td 的 innerHTML 中提取（保留格式信息）
-                const fullHtml = hTd.innerHTML || '';
-                const htmlMatch = fullHtml.match(/本[頁页]主題[：:]\s*<\/b>\s*(.+)/);
-                if (htmlMatch) {
-                    // 提取 HTML 内容，然后转换为文本（保留格式如 [HD/5.87G]）
-                    const tempDiv = document.createElement('div');
-                    tempDiv.innerHTML = htmlMatch[1];
-                    titleText = tempDiv.textContent || tempDiv.innerText || '';
-                }
-                // 方法2：如果方法1没获取到，从 <b> 标签的 nextSibling 开始，收集所有后续节点的文本
-                if (!titleText.trim()) {
-                    let node = themeLabel.nextSibling;
-                    while (node) {
-                        if (node.nodeType === Node.TEXT_NODE) {
-                            titleText += node.textContent;
-                        } else if (node.nodeType === Node.ELEMENT_NODE) {
-                            titleText += node.textContent;
-                        }
-                        node = node.nextSibling;
-                    }
-                }
-                // 方法3：如果方法2没获取到，尝试从整个 td 中提取（使用正则）
-                if (!titleText.trim()) {
-                    const fullText = hTd.textContent || hTd.innerText || '';
-                    const match = fullText.match(/本[頁页]主題[：:]\s*(.+)/);
-                    if (match) {
-                        titleText = match[1].trim();
-                    }
-                }
-                // 方法4：如果还是没获取到，尝试获取整个 td 的文本，然后移除"本頁主題:"部分
-                if (!titleText.trim()) {
-                    const fullText = hTd.textContent || hTd.innerText || '';
-                    titleText = fullText.replace(/.*?本[頁页]主題[：:]\s*/, '').trim();
-                }
-                if (titleText.trim()) {
-                    rawTitleText = titleText.trim();
-                    titleInfo = parseTitleTags(titleText);
-                    // 如果解析后没有标题，使用原始标题
-                    if (titleInfo && !titleInfo.title) {
-                        titleInfo.title = rawTitleText;
-                    }
-                }
-            }
-        }
-        // 如果从 td.h 没获取到，尝试从 f16 或 f18 获取（作为后备方案）
-        if (!titleInfo && !rawTitleText) {
-            const firstContentBlock = contentBlocks[0];
-            if (firstContentBlock) {
-                // 尝试多种方式查找 f16 或 f18 元素
-                let titleElement = null;
-                const postContainer = firstContentBlock.closest('.t.t2, .t2, .t');
-                if (postContainer) {
-                    titleElement = postContainer.querySelector('h4.f16, .f16, h4[class*="f16"], .f18');
-                }
-                // 如果没找到，尝试在整个文档中查找（作为后备方案）
-                if (!titleElement) {
-                    titleElement = doc.querySelector('h4.f16, .f16, h4[class*="f16"], .f18');
-                }
-                if (titleElement) {
-                    let titleText = titleElement.textContent || titleElement.innerText || '';
-                    // 移除可能存在的“新作”标签
-                    titleText = titleText.replace(/^新作\s*/, '');
-                    if (titleText.trim()) {
-                        rawTitleText = titleText.trim();
-                        titleInfo = parseTitleTags(titleText);
-                        // 如果解析后没有标题，使用原始标题
-                        if (titleInfo && !titleInfo.title) {
-                            titleInfo.title = rawTitleText;
-                        }
-                    }
-                }
-            }
-        }
-
-        const posts = contentBlocks.map((el, idx) => {
-            const user = extractPostUser(el) || (idx === 0 ? '樓主' : `回覆 ${idx}`);
-            const content = extractCleanText(el);
-            
-            // 查找该帖子相关的 ftad-ct 元素（在同一个 .t.t2 容器内或附近）
-            const postContainer = el.closest('.t.t2, .t2, .t');
-            let postAds = [];
-            if (postContainer) {
-                // 查找同一容器内的 ftad-ct 元素
-                const containerFtads = postContainer.querySelectorAll('.ftad-ct');
-                postAds = Array.from(containerFtads).map(ftad => ftad.outerHTML);
-            }
-            
-            // 查找该帖子对应的 tr.tr1.do_not_catch 中的 tips 元素
-            let postTips = [];
-            if (postContainer) {
-                // 方法1：查找同一容器内的 tr.tr1.do_not_catch 元素
-                let tr1DoNotCatch = postContainer.querySelector('tr.tr1.do_not_catch');
-                
-                // 方法2：如果没找到，尝试查找包含当前 contentEl 的 table，然后找其 tr.tr1.do_not_catch
-                if (!tr1DoNotCatch) {
-                    const contentTable = el.closest('table');
-                    if (contentTable) {
-                        // 向上查找最外层的 table（包含整个帖子的 table）
-                        let outerTable = contentTable;
-                        while (outerTable && outerTable.parentElement) {
-                            const parentTable = outerTable.parentElement.closest('table');
-                            if (parentTable) {
-                                outerTable = parentTable;
-                            } else {
-                                break;
-                            }
-                        }
-                        if (outerTable) {
-                            tr1DoNotCatch = outerTable.querySelector('tr.tr1.do_not_catch');
-                        }
-                    }
-                }
-                
-                if (tr1DoNotCatch) {
-                    // 只查找 .tips 元素，排除 .tiptop 等其他包含 tip 的元素
-                    const tipsElements = tr1DoNotCatch.querySelectorAll('.tips');
-                    postTips = Array.from(tipsElements).map(tip => tip.outerHTML);
-                }
-            }
-            
-            return {
-                user,
-                content: content.length > 600 ? `${content.slice(0, 600)}…` : content,
-                ads: postAds,
-                tips: postTips,
-                titleInfo: idx === 0 ? titleInfo : null,
-                rawTitle: idx === 0 ? rawTitleText : null
-            };
-        });
-
-        const [topic, ...rest] = posts;
-        const comments = rest.slice(0, 30);
-
+        console.warn('草榴Manager: collectThreadContext 未从远程模块加载');
         return {
-            topic,
-            comments,
-            ads
+            topic: null,
+            comments: [],
+            ads: []
         };
     }
 
