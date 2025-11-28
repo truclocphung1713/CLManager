@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         草榴Manager
 // @namespace    http://tampermonkey.net/
-// @version      1.11.1
+// @version      1.11.2
 // @description  草榴搜索/板块悬停放大封面、标题预览图、品质徽章与 qBittorrent 一键发送和下载按钮。
 // @author       truclocphung1713
 // @match        https://t66y.com/search.php*
@@ -4425,15 +4425,8 @@
         }
     }
 
-    /**
-     * ========================================
-     *  页面特定功能初始化
-     *  注意：此函数将在远程模块加载完成后调用
-     * ========================================
-     */
-    function initPageSpecificFeatures() {
-        // 搜索页面（search.php）- 电脑端和手机端通用处理
-        if (href.indexOf('search.php') !== -1) {
+    // 搜索页面（search.php）- 电脑端和手机端通用处理
+    if (href.indexOf('search.php') !== -1) {
         const isSearchMobile = isMobilePage();
         
         // 手机端搜索页：缓存电脑端搜索结果，避免重复请求
@@ -7677,6 +7670,19 @@
 
     /**
      * ========================================
+     *  页面特定功能初始化函数
+     *  注意：此函数将在远程模块加载完成后调用
+     * ========================================
+     */
+    function initPageSpecificFeatures() {
+        console.log('草榴Manager: 开始初始化页面特定功能...');
+        // 页面特定代码将在这里执行
+        // 目前所有页面特定代码都在主脚本中直接执行
+        // 未来可以将它们移到这里
+    }
+
+    /**
+     * ========================================
      *  暴露核心 API 到 CLM 命名空间
      *  为将来的模块化架构做准备
      * ========================================
@@ -7714,7 +7720,6 @@
     
     // 注意：已迁移到 core.js 的函数不再在此暴露
     // 它们将由远程模块加载后自动暴露到 CLM 命名空间
-    }  // initPageSpecificFeatures 函数结束
     
     console.log('草榴Manager: 核心函数已暴露到 CLM 命名空间');
 
