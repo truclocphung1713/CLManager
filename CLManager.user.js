@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         草榴Manager
 // @namespace    http://tampermonkey.net/
-// @version      1.8.1003
+// @version      1.9.0
 // @description  草榴搜索/板块悬停放大封面、标题预览图、品质徽章与 qBittorrent 一键发送和下载按钮。
 // @author       truclocphung1713
 // @match        https://t66y.com/search.php*
@@ -8227,6 +8227,10 @@
     CLM.showToast = showToast;
     CLM.injectStyle = injectStyle;
     
+    // 内部工具函数（供远程模块使用）
+    pageWindow._CLM_showToast = showToast;
+    pageWindow._CLM_ensureToastContainer = ensureToastContainer;
+    
     // 核心逻辑函数
     CLM.fetchThreadData = fetchThreadData;
     CLM.openGalleryForThread = openGalleryForThread;
@@ -8269,6 +8273,33 @@
             console.log('%c草榴Manager: 开始加载远程模块...', 'color: #3b82f6; font-weight: bold;');
             await initRemoteModules(pageType);
             console.log('%c草榴Manager: 远程模块加载完成', 'color: #22c55e; font-weight: bold;');
+            
+            // 初始化已加载的模块
+            console.log('%c草榴Manager: 开始初始化远程模块...', 'color: #3b82f6; font-weight: bold;');
+            
+            // 初始化 core 模块
+            if (typeof CLM.initCoreModule === 'function') {
+                CLM.initCoreModule({});
+            } else {
+                console.warn('草榴Manager: core 模块初始化函数不存在');
+            }
+            
+            // 初始化 desktop 或 mobile 模块
+            if (pageType.startsWith('desktop-')) {
+                if (typeof CLM.initDesktopModule === 'function') {
+                    CLM.initDesktopModule({});
+                } else {
+                    console.warn('草榴Manager: desktop 模块初始化函数不存在');
+                }
+            } else if (pageType.startsWith('mobile-')) {
+                if (typeof CLM.initMobileModule === 'function') {
+                    CLM.initMobileModule({});
+                } else {
+                    console.warn('草榴Manager: mobile 模块初始化函数不存在');
+                }
+            }
+            
+            console.log('%c草榴Manager: 远程模块初始化完成', 'color: #22c55e; font-weight: bold;');
         } catch (err) {
             console.error('草榴Manager: 远程模块加载失败', err);
             // 失败不影响主脚本功能，因为所有功能都已经在主脚本中实现
