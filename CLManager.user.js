@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         草榴Manager
 // @namespace    http://tampermonkey.net/
-// @version      1.10.0
+// @version      1.10.1
 // @description  草榴搜索/板块悬停放大封面、标题预览图、品质徽章与 qBittorrent 一键发送和下载按钮。
 // @author       truclocphung1713
 // @match        https://t66y.com/search.php*
@@ -7979,25 +7979,16 @@
     CLM.handleThreadDownloadButtonClick = handleThreadDownloadButtonClick;
     CLM.setupThreadDownloadButton = setupThreadDownloadButton;
     
-    // 清晰度相关函数
-    CLM.detectQualityTagFromTitle = detectQualityTagFromTitle;
-    CLM.resolveQualityTagFromListItem = resolveQualityTagFromListItem;
+    // 清晰度相关函数（未迁移）
     CLM.updateQualityBadgeElement = updateQualityBadgeElement;
-    
-    // 访问标记函数
-    CLM.bindGalleryVisitedIndicator = bindGalleryVisitedIndicator;
     
     // qBittorrent 相关函数
     CLM.sendToQbittorrent = sendToQbittorrent;
     CLM.loadSettings = loadSettings;
     CLM.saveSettings = saveSettings;
     
-    // 数据存储函数
-    CLM.hasGalleryVisitedThread = hasGalleryVisitedThread;
-    CLM.markThreadGalleryVisited = markThreadGalleryVisited;
-    CLM.hasDownloadedThread = hasDownloadedThread;
-    CLM.markThreadDownloaded = markThreadDownloaded;
-    CLM.subscribeDownloadStatus = subscribeDownloadStatus;
+    // 注意：已迁移到 core.js 的函数不再在此暴露
+    // 它们将由远程模块加载后自动暴露到 CLM 命名空间
     
     console.log('草榴Manager: 核心函数已暴露到 CLM 命名空间');
 
