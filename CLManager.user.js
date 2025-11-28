@@ -4425,19 +4425,8 @@
         }
     }
 
-    // ========================================
-    // 等待远程模块加载完成后再执行页面特定代码
-    // ========================================
-    (async function waitForRemoteModulesAndExecutePageCode() {
-        // 等待远程模块加载完成
-        while (!window.CLM_PAGE_CODE_READY) {
-            await new Promise(resolve => setTimeout(resolve, 50));
-        }
-        
-        console.log('草榴Manager: 远程模块已就绪，开始执行页面特定代码');
-        
-        // 搜索页面（search.php）- 电脑端和手机端通用处理
-        if (href.indexOf('search.php') !== -1) {
+    // 搜索页面（search.php）- 电脑端和手机端通用处理
+    if (href.indexOf('search.php') !== -1) {
         const isSearchMobile = isMobilePage();
         
         // 手机端搜索页：缓存电脑端搜索结果，避免重复请求
@@ -7676,8 +7665,6 @@
         return false;
     }
 
-    })();  // waitForRemoteModulesAndExecutePageCode 结束
-    
     // 對外暴露到 window，方便後續與頁面其他腳本集成
     pageWindow.草榴ManagerSendToQb = sendToQbittorrent;
 
@@ -7690,21 +7677,24 @@
     function initPageSpecificFeatures() {
         console.log('草榴Manager: 开始初始化页面特定功能...');
         
-        // 等待 DOM 加载完成后执行页面特定代码
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', executePageSpecificCode);
-        } else {
-            executePageSpecificCode();
-        }
-    }
-    
-    // 页面特定代码执行函数
-    function executePageSpecificCode() {
-        // 所有页面特定代码将在这里执行
-        // 此时远程模块已经加载完成
-        
-        // 标记：页面特定代码从这里开始执行
-        window.CLM_PAGE_CODE_READY = true;
+        // ⚠️ 已知问题：当前页面特定代码在脚本顶层直接执行（约 4429-6820 行）
+        // 这导致在远程模块加载前就调用了远程模块函数，产生大量"未从远程模块加载"警告
+        //
+        // 受影响的代码块：
+        // 1. 搜索页面处理（4429-5201 行）- 调用 detectQualityTagFromTitle, fetchThreadData 等
+        // 2. 电脑端板块页面（5205-5470 行）- 调用 resolveQualityTagFromListItem, updateQualityBadgeElement, setupThreadDownloadButton
+        // 3. 手机端板块页面（5481-5678 行）- 调用相同的远程模块函数
+        // 4. 手机端画廊模式适配（5682-6820 行）- UI 样式注入
+        //
+        // 解决方案（需要在 v1.12.0 中实现）：
+        // - 将所有页面特定代码块包装成函数
+        // - 在此处调用这些函数，确保只在远程模块加载完成后执行
+        // - 删除顶层的直接执行代码
+        //
+        // 当前状态（v1.11.3）：
+        // - 功能正常，但有警告信息（不影响使用）
+        // - 页面代码在顶层执行一次，在此处不重复执行
+        // - 等待 v1.12.0 进行大规模重构
     }
 
     /**
