@@ -689,6 +689,148 @@
         };
     }
 
+    /**
+     * 提取帖子下载信息
+     */
+    function extractThreadDownloadInfo(doc, baseHref = location.href) {
+        if (!doc) return null;
+        const candidate = doc.querySelector('#rmlink[href], a[href*="rmdown.com/link.php"]');
+        if (!candidate) return null;
+        const raw = candidate.getAttribute('href') || candidate.href;
+        const pageUrl = getAbsoluteUrl(raw, baseHref);
+        if (!pageUrl) return null;
+        return {
+            type: 'rmdown',
+            pageUrl
+        };
+    }
+
+    /**
+     * 清晰度标签匹配模式
+     */
+    const QUALITY_TAG_PATTERNS = [
+        { tag: '8K', regex: /\b8k\b/i },
+        { tag: '2160P', regex: /\b(2160p|4k|uhd)\b/i },
+        { tag: '1440P', regex: /\b(1440p|2k)\b/i },
+        { tag: '1080P', regex: /\b1080p\b/i },
+        { tag: '720P', regex: /\b720p\b/i },
+        { tag: 'BluRay', regex: /\b(bluray|blu-ray|bd)\b/i },
+        { tag: 'HDR', regex: /\bHDR\b/i },
+        { tag: 'VR', regex: /\bVR\b/i },
+        { tag: 'HD', regex: /\bHD\b/i },
+        { tag: 'SD', regex: /\bSD\b/i }
+    ];
+
+    /**
+     * 从标题文本检测清晰度标签
+     */
+    function detectQualityTagFromTitle(titleText) {
+        if (!titleText) return null;
+        for (const { tag, regex } of QUALITY_TAG_PATTERNS) {
+            if (regex.test(titleText)) {
+                return tag;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 从文档中解析清晰度标签
+     */
+    function resolveQualityTagFromDocument(doc) {
+        if (!doc) return null;
+        const pieces = [];
+        const selectors = [
+            '.tpc_title h1',
+            '.tpc_title .h',
+            '.t table .tr1 h4',
+            '.t table .tr2 h4',
+            '.t table .tr3 h4',
+            '.t table .tr4 h4',
+            '.t table .tr5 h4',
+            '.tpc_content h1',
+            '.tpc_content .tpc_title',
+            '.tpc_content strong',
+            '.tpc_content b'
+        ];
+        selectors.forEach((sel) => {
+            const el = doc.querySelector(sel);
+            if (el?.textContent) {
+                pieces.push(el.textContent);
+            }
+        });
+        const keywords = doc.querySelector('meta[name="keywords"]')?.getAttribute('content');
+        if (keywords) {
+            pieces.push(keywords);
+        }
+        const description = doc.querySelector('meta[name="description"]')?.getAttribute('content');
+        if (description) {
+            pieces.push(description);
+        }
+        if (doc.title) {
+            pieces.push(doc.title);
+        } else {
+            const titleEl = doc.querySelector('title');
+            if (titleEl?.textContent) {
+                pieces.push(titleEl.textContent);
+            }
+        }
+        return detectQualityTagFromTitle(pieces.join(' '));
+    }
+
+    /**
+     * 从列表项解析清晰度标签
+     */
+    function resolveQualityTagFromListItem(wfItem, threadAnchor = null) {
+        if (!wfItem) return null;
+        const selectors = [
+            '.title a',
+            '.title',
+            '.subject a',
+            '.subject',
+            '.t_subject',
+            '.tsubject',
+            '.wf_text tl',
+            '.wf_text .tl',
+            '.wf_text a',
+            '.wf_text'
+        ];
+        const pieces = [];
+        selectors.forEach((sel) => {
+            const el = wfItem.querySelector(sel);
+            if (!el) return;
+            if (el.textContent) {
+                pieces.push(el.textContent);
+            }
+            if (el.getAttribute) {
+                const attrTitle = el.getAttribute('title');
+                if (attrTitle) {
+                    pieces.push(attrTitle);
+                }
+            }
+        });
+        if (threadAnchor) {
+            if (threadAnchor.textContent) {
+                pieces.push(threadAnchor.textContent);
+            }
+            const anchorTitle = threadAnchor.getAttribute('title');
+            if (anchorTitle) {
+                pieces.push(anchorTitle);
+            }
+        }
+        const combined = pieces.join(' ').trim();
+        return detectQualityTagFromTitle(combined);
+    }
+
+    /**
+     * 收集帖子广告块
+     */
+    function collectThreadAdBlocks(doc) {
+        if (!doc) return [];
+        const ftadElements = Array.from(doc.querySelectorAll('.ftad-ct'));
+        return ftadElements.map(el => el.outerHTML);
+    }
+
     // ========================================
     // 模块初始化
     // ========================================
@@ -723,6 +865,11 @@
         CLM.extractPostUser = extractPostUser;
         CLM.parseTitleTags = parseTitleTags;
         CLM.collectThreadContext = collectThreadContext;
+        CLM.extractThreadDownloadInfo = extractThreadDownloadInfo;
+        CLM.detectQualityTagFromTitle = detectQualityTagFromTitle;
+        CLM.resolveQualityTagFromDocument = resolveQualityTagFromDocument;
+        CLM.resolveQualityTagFromListItem = resolveQualityTagFromListItem;
+        CLM.collectThreadAdBlocks = collectThreadAdBlocks;
         
         console.log('✓ 核心工具函数已加载（来自远程模块）');
         console.log('- isMobilePage:', typeof CLM.isMobilePage);
@@ -746,8 +893,13 @@
         console.log('- extractPostUser:', typeof CLM.extractPostUser);
         console.log('- parseTitleTags:', typeof CLM.parseTitleTags);
         console.log('- collectThreadContext:', typeof CLM.collectThreadContext);
+        console.log('- extractThreadDownloadInfo:', typeof CLM.extractThreadDownloadInfo);
+        console.log('- detectQualityTagFromTitle:', typeof CLM.detectQualityTagFromTitle);
+        console.log('- resolveQualityTagFromDocument:', typeof CLM.resolveQualityTagFromDocument);
+        console.log('- resolveQualityTagFromListItem:', typeof CLM.resolveQualityTagFromListItem);
+        console.log('- collectThreadAdBlocks:', typeof CLM.collectThreadAdBlocks);
         
-        console.log('%c草榴Manager: core 模块初始化完成 - 已覆盖 17 个主脚本函数', 'color: #22c55e; font-weight: bold;');
+        console.log('%c草榴Manager: core 模块初始化完成 - 已覆盖 22 个主脚本函数', 'color: #22c55e; font-weight: bold;');
     }
 
     // 暴露初始化函数

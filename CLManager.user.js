@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         草榴Manager
 // @namespace    http://tampermonkey.net/
-// @version      1.9.5
+// @version      1.10.0
 // @description  草榴搜索/板块悬停放大封面、标题预览图、品质徽章与 qBittorrent 一键发送和下载按钮。
 // @author       truclocphung1713
 // @match        https://t66y.com/search.php*
@@ -1067,11 +1067,15 @@
         };
     }
 
+    /**
+     * 收集帖子广告块（已迁移到 core.js）
+     */
     function collectThreadAdBlocks(doc) {
-        if (!doc) return [];
-        // 收集所有 ftad-ct 元素
-        const ftadElements = Array.from(doc.querySelectorAll('.ftad-ct'));
-        return ftadElements.map(el => el.outerHTML);
+        if (typeof CLM.collectThreadAdBlocks === 'function') {
+            return CLM.collectThreadAdBlocks(doc);
+        }
+        console.warn('草榴Manager: collectThreadAdBlocks 未从远程模块加载');
+        return [];
     }
 
     const adScriptCache = new Map();
@@ -1425,17 +1429,15 @@
         }
     }
 
+    /**
+     * 提取帖子下载信息（已迁移到 core.js）
+     */
     function extractThreadDownloadInfo(doc, baseHref = location.href) {
-        if (!doc) return null;
-        const candidate = doc.querySelector('#rmlink[href], a[href*="rmdown.com/link.php"]');
-        if (!candidate) return null;
-        const raw = candidate.getAttribute('href') || candidate.href;
-        const pageUrl = getAbsoluteUrl(raw, baseHref);
-        if (!pageUrl) return null;
-        return {
-            type: 'rmdown',
-            pageUrl
-        };
+        if (typeof CLM.extractThreadDownloadInfo === 'function') {
+            return CLM.extractThreadDownloadInfo(doc, baseHref);
+        }
+        console.warn('草榴Manager: extractThreadDownloadInfo 未从远程模块加载');
+        return null;
     }
 
     async function resolveThreadDownloadTarget(downloadInfo) {
@@ -4666,108 +4668,37 @@
         }
     `);
 
-    const QUALITY_TAG_PATTERNS = [
-        { tag: '2160P', regex: /\b(2160p|4k|uhd)\b/i },
-        { tag: '1440P', regex: /\b(1440p|2k)\b/i },
-        { tag: '1080P', regex: /\b1080p\b/i },
-        { tag: '720P', regex: /\b720p\b/i },
-        { tag: 'BluRay', regex: /\b(bluray|blu-ray|bd)\b/i },
-        { tag: 'HDR', regex: /\bHDR\b/i },
-        { tag: 'VR', regex: /\bVR\b/i },
-        { tag: 'HD', regex: /\bHD\b/i },
-        { tag: 'SD', regex: /\bSD\b/i }
-    ];
-
+    /**
+     * 从标题检测清晰度标签（已迁移到 core.js）
+     */
     function detectQualityTagFromTitle(titleText) {
-        if (!titleText) return null;
-        for (const { tag, regex } of QUALITY_TAG_PATTERNS) {
-            if (regex.test(titleText)) {
-                return tag;
-            }
+        if (typeof CLM.detectQualityTagFromTitle === 'function') {
+            return CLM.detectQualityTagFromTitle(titleText);
         }
+        console.warn('草榴Manager: detectQualityTagFromTitle 未从远程模块加载');
         return null;
     }
 
+    /**
+     * 从文档解析清晰度标签（已迁移到 core.js）
+     */
     function resolveQualityTagFromDocument(doc) {
-        if (!doc) return null;
-        const pieces = [];
-        const selectors = [
-            '.tpc_title h1',
-            '.tpc_title .h',
-            '.t table .tr1 h4',
-            '.t table .tr2 h4',
-            '.t table .tr3 h4',
-            '.t table .tr4 h4',
-            '.t table .tr5 h4',
-            '.tpc_content h1',
-            '.tpc_content .tpc_title',
-            '.tpc_content strong',
-            '.tpc_content b'
-        ];
-        selectors.forEach((sel) => {
-            const el = doc.querySelector(sel);
-            if (el?.textContent) {
-                pieces.push(el.textContent);
-            }
-        });
-        const keywords = doc.querySelector('meta[name="keywords"]')?.getAttribute('content');
-        if (keywords) {
-            pieces.push(keywords);
+        if (typeof CLM.resolveQualityTagFromDocument === 'function') {
+            return CLM.resolveQualityTagFromDocument(doc);
         }
-        const description = doc.querySelector('meta[name="description"]')?.getAttribute('content');
-        if (description) {
-            pieces.push(description);
-        }
-        if (doc.title) {
-            pieces.push(doc.title);
-        } else {
-            const titleEl = doc.querySelector('title');
-            if (titleEl?.textContent) {
-                pieces.push(titleEl.textContent);
-            }
-        }
-        return detectQualityTagFromTitle(pieces.join(' '));
+        console.warn('草榴Manager: resolveQualityTagFromDocument 未从远程模块加载');
+        return null;
     }
 
+    /**
+     * 从列表项解析清晰度标签（已迁移到 core.js）
+     */
     function resolveQualityTagFromListItem(wfItem, threadAnchor = null) {
-        if (!wfItem) return null;
-        const selectors = [
-            '.title a',
-            '.title',
-            '.subject a',
-            '.subject',
-            '.t_subject',
-            '.tsubject',
-            '.wf_text tl',
-            '.wf_text .tl',
-            '.wf_text a',
-            '.wf_text'
-        ];
-        const pieces = [];
-        selectors.forEach((sel) => {
-            const el = wfItem.querySelector(sel);
-            if (!el) return;
-            if (el.textContent) {
-                pieces.push(el.textContent);
-            }
-            if (el.getAttribute) {
-                const attrTitle = el.getAttribute('title');
-                if (attrTitle) {
-                    pieces.push(attrTitle);
-                }
-            }
-        });
-        if (threadAnchor) {
-            if (threadAnchor.textContent) {
-                pieces.push(threadAnchor.textContent);
-            }
-            const anchorTitle = threadAnchor.getAttribute('title');
-            if (anchorTitle) {
-                pieces.push(anchorTitle);
-            }
+        if (typeof CLM.resolveQualityTagFromListItem === 'function') {
+            return CLM.resolveQualityTagFromListItem(wfItem, threadAnchor);
         }
-        const combined = pieces.join(' ').trim();
-        return detectQualityTagFromTitle(combined);
+        console.warn('草榴Manager: resolveQualityTagFromListItem 未从远程模块加载');
+        return null;
     }
 
     function updateQualityBadgeElement(badgeEl, tag) {
