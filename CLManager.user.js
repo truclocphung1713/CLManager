@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         草榴Manager
 // @namespace    http://tampermonkey.net/
-// @version      1.9.7
+// @version      1.9.10
 // @description  草榴搜索/板块悬停放大封面、标题预览图、品质徽章与 qBittorrent 一键发送和下载按钮。
 // @author       truclocphung1713
 // @match        https://t66y.com/search.php*
@@ -28,8 +28,8 @@
 (function () {
     'use strict';
 
-    // DEBUG模式：输出详细日志
-    const DEBUG = true;
+    // DEBUG模式：输出详细日志（默认关闭，如需排查问题可改为 true）
+    const DEBUG = false;
     const debugLog = (...args) => {
         if (DEBUG) {
             console.log('[草榴Manager DEBUG]', ...args);
@@ -42,7 +42,7 @@
     let downloadRecordsCache = null;
     const downloadStatusListeners = new Map();
     
-    debugLog('脚本启动，版本: 1.9.7');
+    debugLog('脚本启动，版本: 1.9.10');
     debugLog('当前URL:', window.location.href);
     debugLog('User Agent:', navigator.userAgent);
 
@@ -53,48 +53,40 @@
         const href = window.location.href;
         debugLog('isMobilePage检测开始');
         debugLog('  - href:', href);
-        debugLog('  - window.innerWidth:', window.innerWidth);
-        debugLog('  - window.innerHeight:', window.innerHeight);
         
-        // 优先检查 mobile.php?ismobile 参数
-        if (href.indexOf('mobile.php?ismobile=yes') !== -1 || href.indexOf('mobile.php?ismobile=1') !== -1) {
-            debugLog('  - 检测到手机端 (mobile.php?ismobile=yes)');
-            return true;
-        }
-        
-        // 检查 URL 路径
+        // 1) URL 中直接使用 /htm_mob/ 路径：明确是手机版内容页
         if (href.indexOf('/htm_mob/') !== -1) {
             debugLog('  - 检测到手机端 (/htm_mob/)');
             return true;
         }
-        
-        // 检查 User-Agent
-        const ua = navigator.userAgent.toLowerCase();
-        const isMobileUA = /mobile|android|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(ua);
-        debugLog('  - User-Agent:', ua);
-        debugLog('  - isMobileUA:', isMobileUA);
-        if (isMobileUA) {
-            debugLog('  - 检测到手机端 (User-Agent)');
+
+        // 2) DOCTYPE 为 WAPFORUM XHTML Mobile：手机版板块/帖子
+        try {
+            const dt = document.doctype;
+            if (dt && /WAPFORUM\s*\/\/DTD\s+XHTML\s+Mobile/i.test(dt.publicId || '')) {
+                debugLog('  - 检测到手机端 (DOCTYPE XHTML Mobile)');
+                return true;
+            }
+        } catch (e) {
+            debugLog('  - 读取 DOCTYPE 失败', e);
+        }
+
+        // 3) 引用了手机版的样式或脚本：mob_style.css / mob_post.js
+        const mobileAssets = document.querySelector('link[href*="mob_style.css"], script[src*="mob_post.js"]');
+        if (mobileAssets) {
+            debugLog('  - 检测到手机端 (mob_style.css / mob_post.js)');
             return true;
         }
-        
-        // 检查视口宽度（开发者模式模拟手机）
-        // 如果宽度小于等于768px，认为是手机端
-        const viewportWidth = window.innerWidth || document.documentElement.clientWidth || document.body.clientWidth || 0;
-        if (viewportWidth > 0 && viewportWidth <= 768) {
-            debugLog('  - 检测到手机端 (视口宽度 <= 768px)');
+
+        // 4) 手机版都有 viewport meta，而电脑版板块没有
+        const viewportMeta = document.querySelector('meta[name="viewport"]');
+        if (viewportMeta) {
+            debugLog('  - 检测到手机端 (meta viewport)');
             return true;
         }
-        
-        debugLog('  - 检测为桌面端');
-        // 检查是否有手机端特有的DOM结构
-        const mobileIndicator = document.querySelector('.mobile-only, #mobile-content, .m-header');
-        if (mobileIndicator) {
-            debugLog('  - 检测到手机端 (DOM结构)');
-            return true;
-        }
-        
-        debugLog('  - 最终判定为桌面端');
+
+        // 上述特征都不存在，则认为是电脑版模板
+        debugLog('  - 最终判定为桌面端模板');
         return false;
     }
 
@@ -1857,16 +1849,19 @@
                 flex-direction: column;
                 gap: 12px;
                 z-index: 100000;
-                padding: 32px clamp(16px, 4vw, 48px);
+                /* 顶部保留间距，左右无 padding，黑色背景真正全屏 */
+                padding: 32px 0;
             }
             .clm-gallery-overlay.clm-active {
                 display: flex;
             }
             .clm-gallery-layout {
                 display: grid;
-                grid-template-columns: minmax(350px, 30vw) 1fr minmax(350px, 30vw);
-                gap: 20px;
-                width: min(98vw, 2400px);
+                /* 左右侧栏更窄，中间图片区域更大 */
+                grid-template-columns: minmax(260px, 22vw) 1fr minmax(260px, 22vw);
+                gap: 16px;
+                width: 100vw;
+                max-width: 2400px;
                 height: calc(100vh - 160px);
                 max-height: calc(100vh - 160px);
                 align-items: stretch;
@@ -2485,22 +2480,20 @@
                 }
             }
             
-            /* 手机端：全屏显示 */
-            @media (max-width: 768px) {
-                .clm-gallery-download-preview {
-                    inset: 0 !important;
-                    border-radius: 0 !important;
-                    top: 0 !important;
-                    left: 0 !important;
-                    right: 0 !important;
-                    bottom: 0 !important;
-                    width: 100vw !important;
-                    height: 100vh !important;
-                    max-width: 100vw !important;
-                    max-height: 100vh !important;
-                    margin: 0 !important;
-                    padding: 0 !important;
-                }
+            /* 手机端画廊模式：全屏显示 */
+            body.clm-mobile-gallery .clm-gallery-download-preview {
+                inset: 0 !important;
+                border-radius: 0 !important;
+                top: 0 !important;
+                left: 0 !important;
+                right: 0 !important;
+                bottom: 0 !important;
+                width: 100vw !important;
+                height: 100vh !important;
+                max-width: 100vw !important;
+                max-height: 100vh !important;
+                margin: 0 !important;
+                padding: 0 !important;
             }
             .clm-gallery-download-preview.clm-active {
                 display: flex;
@@ -2570,11 +2563,9 @@
                 transition: opacity 0.2s ease, visibility 0.2s ease;
             }
             
-            /* 手机端：mask无padding，让preview全屏 */
-            @media (max-width: 768px) {
-                .clm-download-window-mask {
-                    padding: 0 !important;
-                }
+            /* 手机端画廊模式：mask无padding，让preview全屏 */
+            body.clm-mobile-gallery .clm-download-window-mask {
+                padding: 0 !important;
             }
             .clm-download-window-mask.clm-active {
                 display: flex;
@@ -2681,46 +2672,42 @@
             .clm-preset-picker-cancel:hover {
                 background: #f0f0f0;
             }
+            /* 保持桌面端画廊始终全屏，不再缩放 overlay，只根据宽度微调布局 */
             @media (max-width: 1800px) {
                 .clm-gallery-overlay {
-                    transform: scale(0.9);
-                    transform-origin: center center;
+                    transform: none;
                 }
             }
             @media (max-width: 1600px) {
                 .clm-gallery-overlay {
-                    transform: scale(0.85);
-                    transform-origin: center center;
+                    transform: none;
                 }
                 .clm-gallery-layout {
-                    grid-template-columns: minmax(320px, 16.67vw) 1fr minmax(320px, 16.67vw);
-                    width: min(98vw, 2200px);
+                    grid-template-columns: minmax(260px, 22vw) 1fr minmax(260px, 22vw);
+                    width: 100vw;
                 }
             }
             @media (max-width: 1400px) {
                 .clm-gallery-overlay {
-                    transform: scale(0.8);
-                    transform-origin: center center;
+                    transform: none;
                 }
                 .clm-gallery-layout {
-                    grid-template-columns: minmax(300px, 16.67vw) 1fr minmax(300px, 16.67vw);
-                    width: min(98vw, 2000px);
+                    grid-template-columns: minmax(240px, 24vw) 1fr minmax(240px, 24vw);
+                    width: 100vw;
                 }
             }
             @media (max-width: 1200px) {
                 .clm-gallery-overlay {
-                    transform: scale(0.75);
-                    transform-origin: center center;
+                    transform: none;
                 }
                 .clm-gallery-layout {
-                    grid-template-columns: minmax(280px, 16.67vw) 1fr minmax(280px, 16.67vw);
-                    width: min(98vw, 1800px);
+                    grid-template-columns: minmax(220px, 26vw) 1fr minmax(220px, 26vw);
+                    width: 100vw;
                 }
             }
             @media (max-width: 1024px) {
                 .clm-gallery-overlay {
-                    transform: scale(0.7);
-                    transform-origin: center center;
+                    transform: none;
                 }
                 .clm-gallery-layout {
                     grid-template-columns: 1fr;
@@ -2827,10 +2814,14 @@
                 }
             });
             
-            // 为主题抽屉添加滑动手势支持
+            // 为主题抽屉添加滑动手势支持（鼠标 + 触摸）
             let topicMouseStartY = 0;
             let topicIsMouseDragging = false;
+            let topicTouchStartY = 0;
+            let topicIsTouchDragging = false;
+            let topicTouchFromBody = false;
             
+            // 桌面端：鼠标拖动
             topicPanel.addEventListener('mousedown', (e) => {
                 debugLog('---------- topicPanel mousedown ----------');
                 topicMouseStartY = e.clientY;
@@ -2873,6 +2864,64 @@
                 
                 topicMouseStartY = 0;
                 topicIsMouseDragging = false;
+            });
+
+            // 手机端：触摸滑动（上滑展开，下滑收起）
+            topicPanel.addEventListener('touchstart', (e) => {
+                if (e.touches.length !== 1) return;
+                const target = e.target;
+                // 在可滚动内容区域内开始触摸时，不启用抽屉手势，避免与内容滚动冲突
+                if (target.closest('.clm-gallery-panel-body')) {
+                    topicTouchFromBody = true;
+                    topicTouchStartY = 0;
+                    topicIsTouchDragging = false;
+                    return;
+                }
+                topicTouchFromBody = false;
+                topicTouchStartY = e.touches[0].clientY;
+                topicIsTouchDragging = false;
+            }, { passive: true });
+
+            topicPanel.addEventListener('touchmove', (e) => {
+                if (topicTouchFromBody || topicTouchStartY === 0) return;
+                const currentY = e.touches[0].clientY;
+                const moveDistance = Math.abs(currentY - topicTouchStartY);
+                if (moveDistance > 10) {
+                    topicIsTouchDragging = true;
+                    // 阻止背景页面跟随滚动
+                    e.preventDefault();
+                }
+            }, { passive: false });
+
+            topicPanel.addEventListener('touchend', (e) => {
+                if (topicTouchFromBody || topicTouchStartY === 0) {
+                    topicTouchStartY = 0;
+                    topicIsTouchDragging = false;
+                    return;
+                }
+
+                if (topicIsTouchDragging && toggleTopicPanelState) {
+                    const endY = e.changedTouches[0].clientY;
+                    const deltaY = endY - topicTouchStartY;
+                    const absDeltaY = Math.abs(deltaY);
+                    const isExpanded = topicPanel.classList.contains('clm-topic-expanded');
+
+                    debugLog('---------- topicPanel touchend ----------');
+                    debugLog('  - deltaY:', deltaY, 'absDeltaY:', absDeltaY, 'isExpanded:', isExpanded);
+
+                    if (absDeltaY > 60) {
+                        if (deltaY < 0 && !isExpanded) {
+                            debugLog('  - 触摸上滑，展开抽屉');
+                            toggleTopicPanelState();
+                        } else if (deltaY > 0 && isExpanded) {
+                            debugLog('  - 触摸下滑，收起抽屉');
+                            toggleTopicPanelState();
+                        }
+                    }
+                }
+
+                topicTouchStartY = 0;
+                topicIsTouchDragging = false;
             });
         }
 
@@ -3470,8 +3519,12 @@
                             scaleWrapper.style.transform = `scale(${scale})`;
                             scaleWrapper.style.width = `${100 / scale}%`;
                             // 调整容器高度以适应缩放后的内容
-                            const scaledHeight = scaleWrapper.scrollHeight * scale;
-                            tipsContainer.style.height = `${scaledHeight}px`;
+                            requestAnimationFrame(() => {
+                                const rect = scaleWrapper.getBoundingClientRect();
+                                tipsContainer.style.height = `${rect.height}px`;
+                            });
+                        } else {
+                            tipsContainer.style.height = '';
                         }
                     }, 50);
                 }
@@ -3677,8 +3730,12 @@
                         scaleWrapper.style.transform = `scale(${scale})`;
                         scaleWrapper.style.width = `${100 / scale}%`;
                         // 调整容器高度以适应缩放后的内容
-                        const scaledHeight = scaleWrapper.scrollHeight * scale;
-                        tipsContainer.style.height = `${scaledHeight}px`;
+                        requestAnimationFrame(() => {
+                            const rect = scaleWrapper.getBoundingClientRect();
+                            tipsContainer.style.height = `${rect.height}px`;
+                        });
+                    } else {
+                        tipsContainer.style.height = '';
                     }
                 }, 50);
             }
@@ -3960,8 +4017,10 @@
 
         function openLoadingState(message = '正在載入畫廊…') {
             overlay.classList.add('clm-active');
-            // 手机端添加特殊class以应用抖音风格样式
-            if (isMobilePage()) {
+            // 手机端添加特殊class以应用抖音风格样式：
+            // 只要是手机版页面，或视口宽度较窄（<=768px），都按手机画廊布局处理
+            const isMobileLayout = isMobilePage() || window.innerWidth <= 768;
+            if (isMobileLayout) {
                 document.body.classList.add('clm-mobile-gallery');
             }
             items = [];
@@ -4006,8 +4065,9 @@
             
             // 手机端添加特殊class以应用抖音风格样式
             const isMobile = isMobilePage();
-            debugLog('isMobilePage()返回:', isMobile);
-            if (isMobile) {
+            const isMobileLayout = isMobile || window.innerWidth <= 768;
+            debugLog('isMobilePage()返回:', isMobile, '窗口宽度:', window.innerWidth);
+            if (isMobileLayout) {
                 debugLog('添加clm-mobile-gallery类到body');
                 document.body.classList.add('clm-mobile-gallery');
                 debugLog('body.classList:', Array.from(document.body.classList));
@@ -5599,8 +5659,8 @@
         
         // 将搜索结果转换为类似板块页的卡片布局
         injectStyle(`
-            /* 隐藏原有的表格布局 */
-            div.t table {
+            /* 只隐藏已转换为卡片布局的结果表格 */
+            div.t table[data-clm-converted="1"] {
                 display: none !important;
             }
             
@@ -6239,14 +6299,15 @@
                                 // 构建图片URL - 格式: https://a.gac2.xyz/年月/图片ID.jpg
                                 const imgUrl = `https://a.gac2.xyz/${dValue}.jpg`;
                                 const img = document.createElement('img');
-                                img.src = imgUrl;
                                 img.alt = threadTitle;
                                 img.loading = 'lazy';
-                                
-                                img.onload = () => {
+
+                                const handleLoad = () => {
                                     loadingDiv.remove();
                                     coverDiv.insertBefore(img, coverDiv.firstChild);
                                 };
+
+                                img.onload = handleLoad;
                                 
                                 img.onerror = async () => {
                                     console.warn('草榴Manager: [圖]封面加载失败，回退到获取帖子内容');
@@ -6263,6 +6324,10 @@
                                         loadingDiv.textContent = '无图';
                                     }
                                 };
+                                img.src = imgUrl;
+                                if (img.complete && img.naturalWidth > 0) {
+                                    handleLoad();
+                                }
                                 return;
                             }
                         }
@@ -6352,6 +6417,20 @@
                             // 如果电脑端也没有找到[圖]标签
                             console.warn('草榴Manager: 电脑端搜索页也未找到[圖]标签');
                             loadingDiv.textContent = '无图';
+                            try {
+                                const data = await fetchThreadData(threadUrl);
+                                if (data && data.gallery && data.gallery.length > 0) {
+                                    const firstImage = data.gallery[0];
+                                    const img = document.createElement('img');
+                                    img.src = firstImage.src;
+                                    img.alt = threadTitle;
+                                    img.loading = 'lazy';
+                                    img.onload = () => {
+                                        loadingDiv.remove();
+                                        coverDiv.insertBefore(img, coverDiv.firstChild);
+                                    };
+                                }
+                            } catch (e) {}
                         } catch (err) {
                             console.warn('草榴Manager: 获取电脑端搜索页失败:', err);
                             // 确保切换回手机端
@@ -6363,6 +6442,20 @@
                                 console.error('草榴Manager: 切换回手机端失败:', e);
                             }
                             loadingDiv.textContent = '无图';
+                            try {
+                                const data = await fetchThreadData(threadUrl);
+                                if (data && data.gallery && data.gallery.length > 0) {
+                                    const firstImage = data.gallery[0];
+                                    const img = document.createElement('img');
+                                    img.src = firstImage.src;
+                                    img.alt = threadTitle;
+                                    img.loading = 'lazy';
+                                    img.onload = () => {
+                                        loadingDiv.remove();
+                                        coverDiv.insertBefore(img, coverDiv.firstChild);
+                                    };
+                                }
+                            } catch (e2) {}
                         }
                     } catch (err) {
                         console.warn('草榴Manager: 加载封面失败:', threadUrl, err);
@@ -6429,7 +6522,7 @@
                 font-weight: 600;
                 border-radius: 6px;
                 border: 1px solid rgba(255, 255, 255, 0.6);
-                background: rgba(0, 0, 0, 0.85);
+                background: rgba(0, 0, 0, 0.40);
                 color: #fff;
                 cursor: pointer;
                 display: inline-flex;
@@ -7206,12 +7299,12 @@
             
             /* 评论按钮样式（与下载按钮统一） */
             .clm-mobile-comment-btn {
-                width: 60px !important;
-                height: 60px !important;
-                min-width: 60px !important;
-                max-width: 60px !important;
-                min-height: 60px !important;
-                max-height: 60px !important;
+                width: 72px !important;
+                height: 72px !important;
+                min-width: 72px !important;
+                max-width: 72px !important;
+                min-height: 72px !important;
+                max-height: 72px !important;
                 border-radius: 50% !important;
                 background: rgba(40, 40, 40, 0.8) !important;
                 backdrop-filter: blur(10px) !important;
@@ -7386,12 +7479,12 @@
 
             body.clm-mobile-gallery .clm-gallery-actions .clm-gallery-download-btn {
                 pointer-events: auto !important;
-                width: 60px !important;
-                height: 60px !important;
-                min-width: 60px !important;
-                max-width: 60px !important;
-                min-height: 60px !important;
-                max-height: 60px !important;
+                width: 72px !important;
+                height: 72px !important;
+                min-width: 72px !important;
+                max-width: 72px !important;
+                min-height: 72px !important;
+                max-height: 72px !important;
                 padding: 0 !important;
                 border-radius: 50% !important;
                 background: rgba(40, 40, 40, 0.8) !important;
@@ -7468,22 +7561,24 @@
             }
             
             /* 下载预览面板 */
-            .clm-gallery-download-preview {
-                position: fixed !important;
-                left: 50% !important;
-                top: 50% !important;
-                transform: translate(-50%, -50%) !important;
-                width: 90vw !important;
-                max-width: 500px !important;
-                max-height: 80vh !important;
-                padding: 20px !important;
-                background: rgba(0, 0, 0, 0.95) !important;
-                backdrop-filter: blur(15px) !important;
-                -webkit-backdrop-filter: blur(15px) !important;
-                border-radius: 16px !important;
-                z-index: 100004 !important;
-                overflow-y: auto !important;
-                box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6) !important;
+            @media (min-width: 769px) {
+                body:not(.clm-mobile-gallery) .clm-gallery-download-preview {
+                    position: fixed !important;
+                    left: 50% !important;
+                    top: 50% !important;
+                    transform: translate(-50%, -50%) !important;
+                    width: 90vw !important;
+                    max-width: 500px !important;
+                    max-height: 80vh !important;
+                    padding: 20px !important;
+                    background: rgba(0, 0, 0, 0.95) !important;
+                    backdrop-filter: blur(15px) !important;
+                    -webkit-backdrop-filter: blur(15px) !important;
+                    border-radius: 16px !important;
+                    z-index: 100004 !important;
+                    overflow-y: auto !important;
+                    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6) !important;
+                }
             }
             
             .clm-gallery-download-preview h3 {
