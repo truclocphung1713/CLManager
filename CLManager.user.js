@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         草榴Manager
 // @namespace    http://tampermonkey.net/
-// @version      1.9.30
+// @version      1.9.31
 // @description  草榴搜索/板块悬停放大封面、标题预览图、品质徽章与 qBittorrent 一键发送和下载按钮。
 // @author       truclocphung1713
 // @match        https://t66y.com/search.php*
@@ -44,7 +44,7 @@
     let downloadRecordsCache = null;
     const downloadStatusListeners = new Map();
     
-    debugLog('脚本启动，版本: 1.9.30');
+    debugLog('脚本启动，版本: 1.9.31');
     debugLog('当前URL:', window.location.href);
     debugLog('User Agent:', navigator.userAgent);
 
@@ -507,11 +507,32 @@
     }
 
     function normalizeThreadKey(threadUrl) {
+        if (!threadUrl) return null;
+        if (typeof threadUrl === 'string' && threadUrl.indexOf('tid:') === 0) {
+            return threadUrl;
+        }
         const abs = getAbsoluteUrl(threadUrl);
         if (!abs) return null;
         try {
             const u = new URL(abs);
             u.hash = '';
+            let host = u.hostname || '';
+            host = host.toLowerCase();
+            if (host.indexOf('t66y.com') !== -1) {
+                let tid = null;
+                const m = u.pathname && u.pathname.match(/\/(\d+)\.html$/);
+                if (m && m[1]) {
+                    tid = m[1];
+                } else if (u.search) {
+                    const m2 = u.search.match(/[?&]tid=(\d+)/);
+                    if (m2 && m2[1]) {
+                        tid = m2[1];
+                    }
+                }
+                if (tid) {
+                    return 'tid:' + tid;
+                }
+            }
             return u.href;
         } catch (e) {
             return abs;
@@ -522,13 +543,30 @@
     const MAX_GALLERY_VISITED_ENTRIES = 400;
     let galleryVisitedCache = null;
 
+    function normalizeRecordKeyMap(records) {
+        if (!records || typeof records !== 'object') {
+            return {};
+        }
+        const normalized = {};
+        Object.keys(records).forEach((key) => {
+            const ts = Number(records[key]) || 0;
+            if (!ts) return;
+            const newKey = normalizeThreadKey(key) || key;
+            const prev = Number(normalized[newKey]) || 0;
+            if (ts > prev) {
+                normalized[newKey] = ts;
+            }
+        });
+        return normalized;
+    }
+
     function loadGalleryVisitedRecords() {
         try {
             const raw = localStorage.getItem(GALLERY_VISITED_STORAGE_KEY);
             if (raw) {
                 const parsed = JSON.parse(raw);
                 if (parsed && typeof parsed === 'object') {
-                    return parsed;
+                    return normalizeRecordKeyMap(parsed);
                 }
             }
         } catch (err) {
@@ -649,7 +687,7 @@
             if (raw) {
                 const parsed = JSON.parse(raw);
                 if (parsed && typeof parsed === 'object') {
-                    return parsed;
+                    return normalizeRecordKeyMap(parsed);
                 }
             }
         } catch (err) {
@@ -971,6 +1009,9 @@
                 }
                 return false;
             }
+
+            remoteDownloadRecords = normalizeRecordKeyMap(remoteDownloadRecords);
+            remoteGalleryRecords = normalizeRecordKeyMap(remoteGalleryRecords);
 
             const localDownloadRecords = getDownloadRecords();
             const localGalleryRecords = getGalleryVisitedRecords();
@@ -5750,8 +5791,9 @@
         const defaultLabel = options.label || '下載';
         const downloadedLabel = options.downloadedLabel || '已下載';
         btn.textContent = defaultLabel;
-        const threadKey = normalizeThreadKey(options.threadUrl);
-        if (!threadKey) {
+        const threadUrl = getAbsoluteUrl(options.threadUrl) || options.threadUrl;
+        const threadKey = normalizeThreadKey(threadUrl);
+        if (!threadKey || !threadUrl) {
             btn.disabled = true;
             btn.title = '無法解析帖子地址';
             return;
@@ -5780,6 +5822,7 @@
         };
 
         btn.dataset.clmThreadKey = threadKey;
+        btn.dataset.clmThreadUrl = threadUrl;
         btn.__clmRefreshDownloadState = updateState;
         updateState();
         subscribeDownloadStatus(threadKey, () => updateState());
@@ -5794,7 +5837,8 @@
 
     async function handleThreadDownloadButtonClick(btn) {
         const threadKey = btn.dataset.clmThreadKey;
-        if (!threadKey) return;
+        const threadUrl = btn.dataset.clmThreadUrl || threadKey;
+        if (!threadKey || !threadUrl) return;
         btn.dataset.clmBusy = '1';
         btn.disabled = true;
         inlineDownloadWindow.open({
@@ -5812,7 +5856,7 @@
         try {
             btn.textContent = '載入帖子…';
             inlineDownloadWindow.setStatus('正在解析帖子與下載資訊…');
-            const threadData = await fetchThreadData(threadKey);
+            const threadData = await fetchThreadData(threadUrl);
             if (!threadData || !threadData.download || !threadData.download.pageUrl) {
                 inlineDownloadWindow.setStatus('該帖子沒有可解析的下載連結。', 'error');
                 alert('該帖子沒有可解析的下載連結。');
