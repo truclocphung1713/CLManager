@@ -1,6 +1,6 @@
 # 草榴Manager
 
-![Version](https://img.shields.io/badge/version-1.8-blue) ![License](https://img.shields.io/badge/license-MIT-green)
+![Version](https://img.shields.io/badge/version-1.9.29-blue) ![License](https://img.shields.io/badge/license-MIT-green)
 
 **草榴Manager** 是一个用于优化特定论坛浏览体验的油猴 (Tampermonkey) 脚本。
 
