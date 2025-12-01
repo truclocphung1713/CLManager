@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         草榴Manager
 // @namespace    http://tampermonkey.net/
-// @version      1.9.31
+// @version      1.9.34
 // @description  草榴搜索/板块悬停放大封面、标题预览图、品质徽章与 qBittorrent 一键发送和下载按钮。
 // @author       truclocphung1713
 // @match        https://t66y.com/search.php*
@@ -2906,23 +2906,45 @@
                 cursor: pointer;
                 padding: 4px 10px;
                 border-radius: 6px;
+                z-index: 100020;
             }
             .clm-gallery-meta {
+                position: absolute;
+                left: 50%;
+                bottom: 32px;
+                transform: translateX(-50%);
                 color: #f5f5f5;
                 font-size: 14px;
                 text-align: center;
+                text-shadow: 0 2px 4px rgba(0, 0, 0, 0.7);
+                pointer-events: none;
             }
             .clm-gallery-hint {
+                position: absolute;
+                left: 50%;
+                bottom: 12px;
+                transform: translateX(-50%);
                 font-size: 12px;
-                color: rgba(255, 255, 255, 0.65);
+                color: rgba(255, 255, 255, 0.8);
+                text-align: center;
+                text-shadow: 0 2px 4px rgba(0, 0, 0, 0.7);
+                pointer-events: none;
             }
             .clm-gallery-actions {
-                width: min(98vw, 1600px);
+                position: absolute;
+                right: 16px;
+                bottom: 16px;
                 display: flex;
-                justify-content: center;
+                justify-content: flex-end;
+                align-items: flex-end;
                 gap: 12px;
-                position: relative;
+                width: auto;
+                max-width: 100%;
                 z-index: 100010;
+                pointer-events: none;
+            }
+            .clm-gallery-actions .clm-gallery-download-btn {
+                pointer-events: auto;
             }
             .clm-gallery-download-preview {
                 position: fixed;
@@ -3816,9 +3838,9 @@
 
         overlay.appendChild(closeBtn);
         overlay.appendChild(layout);
-        overlay.appendChild(meta);
-        overlay.appendChild(actions);
-        overlay.appendChild(hint);
+        viewer.appendChild(meta);
+        viewer.appendChild(hint);
+        viewer.appendChild(actions);
 
         document.body.appendChild(overlay);
 
@@ -4573,6 +4595,11 @@
             renderCommentsPanel(comments);
             renderViewerAds(ads);
             currentThreadKey = threadUrl ? normalizeThreadKey(threadUrl) : null;
+            if (threadUrl) {
+                downloadBtn.dataset.clmThreadUrl = threadUrl;
+            } else {
+                delete downloadBtn.dataset.clmThreadUrl;
+            }
             updateGalleryQuality(qualityTag);
             updateDownloadAction(download);
             showImage(currentIndex);
