@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         草榴Manager
 // @namespace    http://tampermonkey.net/
-// @version      1.9.10
+// @version      1.9.25
 // @description  草榴搜索/板块悬停放大封面、标题预览图、品质徽章与 qBittorrent 一键发送和下载按钮。
 // @author       truclocphung1713
 // @match        https://t66y.com/search.php*
@@ -39,10 +39,11 @@
     const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
     const downloadResolveCache = new Map();
     const DOWNLOAD_RECORDS_KEY = '草榴ManagerDownloadedThreads';
+    const WEBDAV_AUTH_STORAGE_KEY = '草榴ManagerWebdavAuth';
     let downloadRecordsCache = null;
     const downloadStatusListeners = new Map();
     
-    debugLog('脚本启动，版本: 1.9.10');
+    debugLog('脚本启动，版本: 1.9.25');
     debugLog('当前URL:', window.location.href);
     debugLog('User Agent:', navigator.userAgent);
 
@@ -630,6 +631,8 @@
         persistGalleryVisitedRecords();
         refreshGalleryVisitedStateForKey(threadKey);
         removedKeys.forEach((key) => refreshGalleryVisitedStateForKey(key));
+        // 瀏覽記錄也參與 WebDAV 同步
+        scheduleWebdavSync();
     }
 
     function getDownloadRecords() {
@@ -679,6 +682,7 @@
         records[key] = Date.now();
         persistDownloadRecords();
         notifyDownloadStatusChange(key);
+        scheduleWebdavSync();
     }
 
     function subscribeDownloadStatus(threadUrl, handler) {
@@ -697,6 +701,375 @@
                 downloadStatusListeners.delete(key);
             }
         };
+    }
+
+    let webdavSyncInProgress = false;
+    let webdavSyncTimerId = null;
+    let lastWebdavAutoSyncFailedAt = 0;
+
+    function getWebdavConfig() {
+        const settings = loadSettings();
+        return settings.webdav || {};
+    }
+
+    function loadWebdavAuth() {
+        try {
+            let raw = '';
+            if (typeof GM_getValue === 'function') {
+                raw = GM_getValue(WEBDAV_AUTH_STORAGE_KEY, '');
+            } else if (pageWindow.localStorage) {
+                raw = pageWindow.localStorage.getItem(WEBDAV_AUTH_STORAGE_KEY) || '';
+            }
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                if (parsed && typeof parsed === 'object') {
+                    return {
+                        username: parsed.username || '',
+                        password: parsed.password || ''
+                    };
+                }
+            }
+        } catch (e) {
+            console.warn('草榴Manager: 無法讀取 WebDAV 憑據', e);
+        }
+        return { username: '', password: '' };
+    }
+
+    function saveWebdavAuth(auth) {
+        const payload = {
+            username: (auth && auth.username) || '',
+            password: (auth && auth.password) || ''
+        };
+        const serialized = JSON.stringify(payload);
+        try {
+            if (typeof GM_setValue === 'function') {
+                GM_setValue(WEBDAV_AUTH_STORAGE_KEY, serialized);
+            }
+        } catch (e) {
+            console.warn('草榴Manager: 無法通過 GM_setValue 保存 WebDAV 憑據', e);
+        }
+        try {
+            if (pageWindow.localStorage) {
+                pageWindow.localStorage.setItem(WEBDAV_AUTH_STORAGE_KEY, serialized);
+            }
+        } catch (e) {
+            console.warn('草榴Manager: 無法通過 localStorage 保存 WebDAV 憑據', e);
+        }
+    }
+
+    function buildWebdavAuthHeaders(config) {
+        const headers = {};
+        let username = '';
+        let password = '';
+
+        try {
+            const auth = loadWebdavAuth();
+            if (auth) {
+                username = auth.username || '';
+                password = auth.password || '';
+            }
+        } catch (e) {
+            console.warn('草榴Manager: 讀取 WebDAV 憑據失敗', e);
+        }
+
+        // 兼容舊版本：如果安全存儲中沒有，回退到設置中的字段
+        if (!username && config && config.username) {
+            username = config.username || '';
+            password = config.password || '';
+        }
+
+        if (username) {
+            const tokenSource = username + ':' + (password || '');
+            try {
+                headers['Authorization'] = 'Basic ' + btoa(unescape(encodeURIComponent(tokenSource)));
+            } catch (e) {
+                headers['Authorization'] = 'Basic ' + btoa(tokenSource);
+            }
+        }
+        return headers;
+    }
+
+    function buildWebdavFileUrl(config) {
+        if (!config || !config.url) return null;
+        let base = (config.url || '').trim();
+        if (!base) return null;
+
+        // 去掉查詢參數和 hash，只判斷路徑部分
+        const withoutQuery = base.split(/[?#]/)[0];
+        if (/\.json$/i.test(withoutQuery)) {
+            // 兼容舊版本：直接使用完整 JSON 文件地址
+            return base;
+        }
+        if (!base.endsWith('/')) {
+            base += '/';
+        }
+        return base + 'clm_sync.json';
+    }
+
+    function scheduleWebdavSync() {
+        const config = getWebdavConfig();
+        const fileUrl = buildWebdavFileUrl(config);
+        if (!config.enabled || !fileUrl) {
+            return;
+        }
+        if (webdavSyncTimerId) {
+            clearTimeout(webdavSyncTimerId);
+        }
+        webdavSyncTimerId = setTimeout(() => {
+            webdavSyncTimerId = null;
+            syncDownloadRecordsWithWebdav({ silent: true })
+                .then((ok) => {
+                    if (ok === false) {
+                        const now = Date.now();
+                        if (!lastWebdavAutoSyncFailedAt || now - lastWebdavAutoSyncFailedAt > 60000) {
+                            lastWebdavAutoSyncFailedAt = now;
+                            showToast('WebDAV 自動同步失敗，請在設置面板中點擊「立即同步 WebDAV」查看詳情。', 'warning');
+                        }
+                    }
+                })
+                .catch((err) => {
+                    const now = Date.now();
+                    if (!lastWebdavAutoSyncFailedAt || now - lastWebdavAutoSyncFailedAt > 60000) {
+                        lastWebdavAutoSyncFailedAt = now;
+                        const msg = (err && err.message) ? err.message : String(err);
+                        showToast('WebDAV 自動同步失敗：' + msg, 'warning');
+                    }
+                });
+        }, 5000);
+    }
+
+    async function syncDownloadRecordsWithWebdav(options = {}) {
+        const statusCallback = typeof options.statusCallback === 'function' ? options.statusCallback : null;
+        const silent = !!options.silent;
+        const config = getWebdavConfig();
+        const fileUrl = buildWebdavFileUrl(config);
+        if (!config.enabled || !fileUrl) {
+            const msg = 'WebDAV 未啟用或未配置目錄地址';
+            if (statusCallback) {
+                statusCallback(msg);
+            }
+            if (!silent) {
+                showToast(msg, 'warning');
+            }
+            return false;
+        }
+        if (webdavSyncInProgress) {
+            const msg = '已有 WebDAV 同步在進行中，請稍候再試';
+            if (statusCallback) {
+                statusCallback(msg);
+            }
+            if (!silent) {
+                showToast(msg, 'info');
+            }
+            return false;
+        }
+        webdavSyncInProgress = true;
+        try {
+            if (statusCallback) {
+                statusCallback('正在從 WebDAV 讀取數據…');
+            }
+
+            let remoteDownloadRecords = {};
+            let remoteGalleryRecords = {};
+            let remoteSettings = null;
+            let remoteUpdatedAt = 0;
+
+            try {
+                const resp = await gmCompatibleFetch(fileUrl, {
+                    method: 'GET',
+                    headers: buildWebdavAuthHeaders(config),
+                    timeout: 20000
+                });
+                if (resp.ok) {
+                    const text = await resp.text();
+                    if (text) {
+                        let parsed = null;
+                        try {
+                            parsed = JSON.parse(text);
+                        } catch (e) {
+                            console.warn('草榴Manager: WebDAV 返回內容不是合法 JSON，原文前 200 字符：', text.slice(0, 200));
+                        }
+                        if (parsed && typeof parsed === 'object') {
+                            if (parsed.version === 1 && (parsed.downloadRecords || parsed.galleryVisitedRecords || parsed.settings)) {
+                                if (parsed.downloadRecords && typeof parsed.downloadRecords === 'object') {
+                                    remoteDownloadRecords = parsed.downloadRecords;
+                                }
+                                if (parsed.galleryVisitedRecords && typeof parsed.galleryVisitedRecords === 'object') {
+                                    remoteGalleryRecords = parsed.galleryVisitedRecords;
+                                }
+                                if (parsed.settings && typeof parsed.settings === 'object') {
+                                    remoteSettings = parsed.settings;
+                                    if (typeof parsed.settings.updatedAt === 'number') {
+                                        remoteUpdatedAt = parsed.settings.updatedAt;
+                                    }
+                                }
+                            } else {
+                                // 舊版本：整個對象就是下載記錄 map
+                                remoteDownloadRecords = parsed;
+                            }
+                        }
+                    }
+                } else if (resp.status === 404) {
+                    // 文件不存在時視為空數據
+                    remoteDownloadRecords = {};
+                    remoteGalleryRecords = {};
+                    remoteSettings = null;
+                } else {
+                    throw new Error('HTTP ' + resp.status);
+                }
+            } catch (err) {
+                const msg = err && err.message ? err.message : String(err);
+                if (!silent) {
+                    showToast('WebDAV 讀取失敗：' + msg, 'error');
+                }
+                if (statusCallback) {
+                    statusCallback('讀取失敗：' + msg);
+                }
+                return false;
+            }
+
+            const localDownloadRecords = getDownloadRecords();
+            const localGalleryRecords = getGalleryVisitedRecords();
+            const localSettings = loadSettings();
+            const localUpdatedAt = typeof localSettings.updatedAt === 'number' ? localSettings.updatedAt : 0;
+
+            // 合併下載記錄（按時間戳取較新者）
+            const mergedDownloadRecords = {};
+            Object.keys(remoteDownloadRecords || {}).forEach((k) => {
+                const v = Number(remoteDownloadRecords[k]) || 0;
+                if (v > 0) {
+                    mergedDownloadRecords[k] = v;
+                }
+            });
+            Object.keys(localDownloadRecords || {}).forEach((k) => {
+                const localTs = Number(localDownloadRecords[k]) || 0;
+                const remoteTs = Number(mergedDownloadRecords[k]) || 0;
+                if (!remoteTs || localTs > remoteTs) {
+                    mergedDownloadRecords[k] = localTs;
+                }
+            });
+            const newDownloadKeysForLocal = [];
+            Object.keys(mergedDownloadRecords).forEach((k) => {
+                if (!localDownloadRecords[k]) {
+                    newDownloadKeysForLocal.push(k);
+                }
+            });
+
+            // 合併畫廊瀏覽記錄
+            const mergedGalleryRecords = {};
+            Object.keys(remoteGalleryRecords || {}).forEach((k) => {
+                const v = Number(remoteGalleryRecords[k]) || 0;
+                if (v > 0) {
+                    mergedGalleryRecords[k] = v;
+                }
+            });
+            Object.keys(localGalleryRecords || {}).forEach((k) => {
+                const localTs = Number(localGalleryRecords[k]) || 0;
+                const remoteTs = Number(mergedGalleryRecords[k]) || 0;
+                if (!remoteTs || localTs > remoteTs) {
+                    mergedGalleryRecords[k] = localTs;
+                }
+            });
+            const newGalleryKeysForLocal = [];
+            Object.keys(mergedGalleryRecords).forEach((k) => {
+                if (!localGalleryRecords[k]) {
+                    newGalleryKeysForLocal.push(k);
+                }
+            });
+            const removedGalleryKeys = pruneGalleryVisitedRecords(mergedGalleryRecords);
+
+            // 應用合併結果到本地
+            downloadRecordsCache = mergedDownloadRecords;
+            persistDownloadRecords();
+            newDownloadKeysForLocal.forEach((k) => notifyDownloadStatusChange(k));
+
+            galleryVisitedCache = mergedGalleryRecords;
+            persistGalleryVisitedRecords();
+            newGalleryKeysForLocal.forEach((k) => refreshGalleryVisitedStateForKey(k));
+            removedGalleryKeys.forEach((k) => refreshGalleryVisitedStateForKey(k));
+
+            // 合併設置（基於 updatedAt 判斷新舊）
+            let mergedSettingsPayload = null;
+            let settingsChangedFromRemote = false;
+
+            if (remoteSettings && remoteUpdatedAt > localUpdatedAt) {
+                // 以遠端設置為準
+                try {
+                    saveSettings(remoteSettings);
+                    settingsChangedFromRemote = true;
+                } catch (e) {
+                    console.warn('草榴Manager: 無法應用 WebDAV 遠端設置', e);
+                }
+                mergedSettingsPayload = remoteSettings;
+            } else {
+                // 以本地設置為準
+                mergedSettingsPayload = localSettings;
+            }
+
+            // 構建要上傳到 WebDAV 的設置快照（移除 WebDAV 憑據）
+            let settingsForUpload = null;
+            if (mergedSettingsPayload && typeof mergedSettingsPayload === 'object') {
+                settingsForUpload = JSON.parse(JSON.stringify(mergedSettingsPayload));
+                if (settingsForUpload.webdav) {
+                    delete settingsForUpload.webdav.username;
+                    delete settingsForUpload.webdav.password;
+                }
+            }
+
+            if (statusCallback) {
+                const totalDownloads = Object.keys(mergedDownloadRecords).length;
+                const totalVisited = Object.keys(mergedGalleryRecords).length;
+                statusCallback('同步成功，本地下載記錄 ' + totalDownloads + ' 條，瀏覽記錄 ' + totalVisited + ' 條');
+            }
+            if (!silent) {
+                showToast('WebDAV 同步已完成', 'success');
+                if (settingsChangedFromRemote) {
+                    showToast('已從 WebDAV 更新設置', 'success');
+                }
+            }
+
+            // 粗略比較，有差異則推送到 WebDAV
+            let needPush = false;
+            if (JSON.stringify(mergedDownloadRecords || {}) !== JSON.stringify(remoteDownloadRecords || {})) {
+                needPush = true;
+            }
+            if (JSON.stringify(mergedGalleryRecords || {}) !== JSON.stringify(remoteGalleryRecords || {})) {
+                needPush = true;
+            }
+            if (JSON.stringify(settingsForUpload || {}) !== JSON.stringify(remoteSettings || {})) {
+                needPush = true;
+            }
+
+            if (needPush) {
+                const payload = {
+                    version: 1,
+                    downloadRecords: mergedDownloadRecords,
+                    galleryVisitedRecords: mergedGalleryRecords,
+                    settings: settingsForUpload || {}
+                };
+                const headers = buildWebdavAuthHeaders(config);
+                headers['Content-Type'] = 'application/json; charset=UTF-8';
+                try {
+                    const resp = await gmCompatibleFetch(fileUrl, {
+                        method: 'PUT',
+                        headers,
+                        body: JSON.stringify(payload),
+                        timeout: 20000
+                    });
+                    if (!resp.ok && !silent) {
+                        showToast('WebDAV 上傳失敗：HTTP ' + resp.status, 'error');
+                    }
+                } catch (err) {
+                    if (!silent) {
+                        const msg = err && err.message ? err.message : String(err);
+                        showToast('WebDAV 上傳失敗：' + msg, 'error');
+                    }
+                }
+            }
+            return true;
+        } finally {
+            webdavSyncInProgress = false;
+        }
     }
 
     function notifyDownloadStatusChange(threadKey) {
@@ -836,6 +1209,11 @@
                 }
                 .clm-toast.clm-success {
                     background: rgba(22, 163, 74, 0.95);
+                    min-width: 280px;
+                    max-width: 440px;
+                    padding: 18px 20px;
+                    font-size: 14px;
+                    font-weight: 600;
                 }
                 .clm-toast.clm-error {
                     background: rgba(220, 38, 38, 0.95);
@@ -1180,8 +1558,8 @@
         const match = cleanTitle.match(/\[([^\]]+)\]\s*(.+)$/);
         if (!match) {
             // 如果没有匹配到 [ ] 格式，尝试直接匹配番号格式
-            // 例如：BOKD-303 标题文本
-            const codeMatch = cleanTitle.match(/^([A-Z0-9]+[-_][0-9]+)\s+(.+)$/i);
+            // 例如：BOKD-303 标题文本，或 OLM-257E 标题文本（末尾帶字母）
+            const codeMatch = cleanTitle.match(/^([A-Z0-9]+[-_][0-9]+[A-Z]*)\s+(.+)$/i);
             if (codeMatch) {
                 return {
                     quality: null,
@@ -1226,8 +1604,8 @@
         }
         
         // 解析标题部分：提取番号和片名
-        // 匹配番号格式：BOKD-305 或类似格式 (字母数字-数字，支持多种分隔符)
-        const codeMatch = titlePart.match(/^([A-Z0-9]+[-_][0-9]+)\s+(.+)$/i);
+        // 匹配番号格式：BOKD-305、OLM-257E 等 (字母数字-数字+可选字母，支持多种分隔符)
+        const codeMatch = titlePart.match(/^([A-Z0-9]+[-_][0-9]+[A-Z]*)\s+(.+)$/i);
         if (codeMatch) {
             code = codeMatch[1].toUpperCase(); // BOKD-305
             title = codeMatch[2].trim(); // AVデビュー ボクこう見えてオチンチンついてます。 神戸まこ。
@@ -3368,6 +3746,7 @@
         let dragStartY = 0;
         let dragStartTranslateX = 0;
         let dragStartTranslateY = 0;
+        const preloadImageCache = new Map();
 
         function formatContentWithTags(text) {
             if (!text) return '';
@@ -3839,6 +4218,17 @@
             }
         }
 
+        function preloadImage(index) {
+            if (!items.length) return;
+            const item = items[index];
+            if (!item) return;
+            const src = item.url;
+            if (!src || preloadImageCache.has(src)) return;
+            const img = new Image();
+            img.src = src;
+            preloadImageCache.set(src, img);
+        }
+
         function refreshOverlayDownloadButton() {
             const hasDownload = currentThreadKey && currentDownloadInfo && currentDownloadInfo.pageUrl;
             const isMobile = isMobilePage();
@@ -3974,6 +4364,13 @@
             
             currentIndex = index;
             updateMeta();
+
+            if (items.length > 1) {
+                const nextIndex = (index + 1) % items.length;
+                if (nextIndex !== index) {
+                    preloadImage(nextIndex);
+                }
+            }
         }
 
         function showNext() {
@@ -4012,6 +4409,7 @@
             updateDownloadAction(null);
             updateGalleryQuality(null);
             clearGallerySourceHighlight();
+            preloadImageCache.clear();
             closeInlineDownloadWindowIfOpen();
         }
 
@@ -4036,6 +4434,7 @@
             currentThreadKey = null;
             updateDownloadAction(null);
             beginImageLoad(message);
+            preloadImageCache.clear();
             closeInlineDownloadWindowIfOpen();
         }
 
@@ -5656,6 +6055,47 @@
         // 手机端搜索页：缓存电脑端搜索结果，避免重复请求
         let desktopSearchCache = null;
         let desktopSearchPromise = null;
+
+        // 封面批次加載配置：每批 10 個，單張超時 60 秒
+        const COVER_BATCH_SIZE = 10;
+        const COVER_LOAD_TIMEOUT_MS = 60000;
+        // searchCoverTasks 現在保存 { task, d, threadUrl }
+        let searchCoverTasks = [];
+
+        async function runCoverBatchesSequential() {
+            if (!searchCoverTasks.length) {
+                return;
+            }
+            const total = searchCoverTasks.length;
+            let index = 0;
+            while (index < total) {
+                const start = index;
+                const end = Math.min(start + COVER_BATCH_SIZE, total);
+                const batchIndex = Math.floor(start / COVER_BATCH_SIZE);
+                const batchItems = searchCoverTasks.slice(start, end);
+                const dList = batchItems.map((item) => item && item.d).filter((d) => !!d);
+                console.log('草榴Manager: 封面批次入隊', {
+                    start,
+                    end,
+                    total,
+                    batchIndex,
+                    batchType: 'sequential',
+                    dList
+                });
+                const promises = batchItems.map((item) => {
+                    if (!item || typeof item.task !== 'function') {
+                        return Promise.resolve();
+                    }
+                    return Promise.resolve(item.task())
+                        .catch((err) => {
+                            console.warn('草榴Manager: 封面加载任务异常', err);
+                        });
+                });
+                // 等待當前批次全部完成（成功、失敗或超時）後再進入下一批
+                await Promise.all(promises);
+                index = end;
+            }
+        }
         
         // 将搜索结果转换为类似板块页的卡片布局
         injectStyle(`
@@ -5678,43 +6118,44 @@
             .clm-search-item {
                 background: #fff;
                 border-radius: 8px;
-                overflow: hidden;
+                overflow: visible;
                 box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
                 transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
                 display: flex;
                 flex-direction: column;
+                position: relative;
             }
             
             .clm-search-item:hover {
                 transform: translateY(-4px);
                 box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+                z-index: 10000;
             }
             
-            /* 封面容器 - 类似image-big */
+            /* 封面容器 - 類似板塊圖文頁的 .image-big */
             .clm-search-cover {
                 width: 100%;
                 height: 280px;
                 background: #f3f4f6;
                 position: relative;
-                overflow: visible;
+                overflow: visible !important;
+                isolation: isolate;
                 --clm-cover-scale: 1;
+                transition: transform 0.2s ease-in-out;
+                transform-origin: center center;
             }
             
             .clm-search-cover img {
                 width: 100%;
                 height: 100%;
                 object-fit: cover;
-                transition: transform 0.2s ease-in-out;
-                transform-origin: center center;
+                display: block;
             }
             
-            /* 电脑端封面放大效果 */
-            .clm-search-cover:not(.clm-mobile-search):hover img {
+            /* 电脑端封面放大效果：整個封面容器放大，包含畫廊/清晰度/下載按鈕 */
+            .clm-search-cover:not(.clm-mobile-search):hover {
                 transform: scale(2);
-                position: relative;
                 z-index: 9999;
-                box-shadow: 0 0 16px rgba(0, 0, 0, 0.7);
-                border: 2px solid #ffffff;
             }
             
             .clm-search-cover-loading {
@@ -5856,7 +6297,7 @@
                     height: 200px;
                 }
                 
-                .clm-search-cover:hover img {
+                .clm-search-cover:hover {
                     transform: none !important;
                 }
                 
@@ -6148,10 +6589,13 @@
 
             table.dataset.clmConverted = '1';
 
+            // 重置本頁面的封面任務隊列
+            searchCoverTasks = [];
+
             const grid = document.createElement('div');
             grid.className = 'clm-search-grid';
 
-            rows.forEach(async (row) => {
+            rows.forEach((row) => {
                 const link = row.querySelector('a[href*="htm_data"], a[href*="htm_mob"], a[href*="read.php?tid="]');
                 if (!link) return;
 
@@ -6276,8 +6720,8 @@
                     threadUrl,
                     container: card,
                     containerClass: 'clm-thread-downloaded',
-                    label: '⬇',
-                    downloadedLabel: '✓',
+                    label: '下載',
+                    downloadedLabel: '已下載',
                     threadTitle
                 });
                 
@@ -6287,54 +6731,82 @@
                 // 添加到网格
                 grid.appendChild(card);
                 
-                // 异步加载封面图 - 优先从[圖]标签获取（仅电脑端有）
-                (async () => {
-                    try {
-                        // 先尝试从[圖]标签获取封面（电脑端）
-                        const preSpan = row.querySelector('span.pre[d], span.sgreen.pre[d]');
-                        if (preSpan) {
-                            const dValue = preSpan.getAttribute('d');
-                            if (dValue) {
-                                console.log('草榴Manager: 从[圖]标签获取封面:', dValue);
-                                // 构建图片URL - 格式: https://a.gac2.xyz/年月/图片ID.jpg
-                                const imgUrl = `https://a.gac2.xyz/${dValue}.jpg`;
-                                const img = document.createElement('img');
-                                img.alt = threadTitle;
-                                img.loading = 'lazy';
+                // 预先讀取 [圖] d 值，用於批次日誌
+                const preSpanForTask = row.querySelector('span.pre[d], span.sgreen.pre[d]');
+                const initialDValue = preSpanForTask ? preSpanForTask.getAttribute('d') : null;
 
-                                const handleLoad = () => {
-                                    loadingDiv.remove();
-                                    coverDiv.insertBefore(img, coverDiv.firstChild);
-                                };
+                // 异步加载封面图 - 优先从[圖]标签获取（仅电脑端有），批次順序加載
+                const coverTask = async () => {
+                    // 如已經有封面圖（例如之前加載成功或從帖子內容兜底），則直接跳過
+                    if (coverDiv.querySelector('img')) {
+                        return;
+                    }
 
-                                img.onload = handleLoad;
-                                
-                                img.onerror = async () => {
-                                    console.warn('草榴Manager: [圖]封面加载失败，回退到获取帖子内容');
-                                    // 如果[圖]加载失败，回退到获取帖子内容
-                                    try {
-                                        const data = await fetchThreadData(threadUrl);
-                                        if (data && data.gallery && data.gallery.length > 0) {
-                                            const firstImage = data.gallery[0];
-                                            img.src = firstImage.src;
-                                        } else {
-                                            loadingDiv.textContent = '无图';
-                                        }
-                                    } catch (err) {
-                                        loadingDiv.textContent = '无图';
-                                    }
-                                };
-                                img.src = imgUrl;
-                                if (img.complete && img.naturalWidth > 0) {
-                                    handleLoad();
-                                }
-                                return;
-                            }
+                    // 內部幫助函數：給定 d 值，按統一策略從 a.gac2 加載封面
+                    const loadCoverByD = (dValueToUse) => {
+                        if (!dValueToUse) return;
+                        const imgUrl = `https://a.gac2.xyz/${dValueToUse}.jpg`;
+                        const img = document.createElement('img');
+                        img.alt = threadTitle;
+                        img.loading = 'lazy';
+                        img.src = imgUrl;
+
+                        // 一開始就將圖片節點插入封面容器，確保每批實際有對應的 <img> 出現在搜索結果中
+                        coverDiv.insertBefore(img, coverDiv.firstChild);
+
+                        let finished = false;
+                        const timeoutId = setTimeout(() => {
+                            if (finished) return;
+                            finished = true;
+                            console.warn('草榴Manager: 封面加載超時，標記為無法獲取', {
+                                threadUrl,
+                                d: dValueToUse,
+                                imgUrl
+                            });
+                            loadingDiv.textContent = '無法獲取封面';
+                        }, COVER_LOAD_TIMEOUT_MS);
+
+                        const handleLoad = () => {
+                            if (finished) return;
+                            finished = true;
+                            clearTimeout(timeoutId);
+                            loadingDiv.remove();
+                        };
+
+                        img.onload = handleLoad;
+
+                        img.onerror = (ev) => {
+                            if (finished) return;
+                            finished = true;
+                            clearTimeout(timeoutId);
+                            console.warn('草榴Manager: [圖]封面加载失败', {
+                                imgUrl,
+                                threadUrl,
+                                d: dValueToUse,
+                                event: ev
+                            });
+                            loadingDiv.textContent = '無法獲取封面';
+                        };
+
+                        if (img.complete && img.naturalWidth > 0) {
+                            handleLoad();
                         }
-                        
+                    };
+
+                    try {
+                        const dValue = initialDValue;
+
+                        // 有 d 值時：直接通過統一的 a.gac2 加載管線加載封面
+                        if (dValue) {
+                            loadCoverByD(dValue);
+                            return;
+                        }
+
                         // 如果没有[圖]标签（手机端），通过切换页面获取电脑端搜索页
-                        console.log('草榴Manager: 未找到[圖]标签，尝试从缓存或电脑端获取');
-                        
+                        debugLog('草榴Manager: 未找到[圖]标签，尝试从缓存或电脑端获取', {
+                            threadUrl
+                        });
+
                         try {
                             // 使用缓存或共享的Promise，避免重复请求
                             if (!desktopSearchPromise) {
@@ -6344,25 +6816,25 @@
                                     await fetch('https://t66y.com/mobile.php?ismobile=no', {
                                         credentials: 'include'
                                     });
-                                    
-                                    // 等待300ms让cookie生效
-                                    await new Promise(resolve => setTimeout(resolve, 300));
-                                    
+
+                                    // 等待一段時間讓 cookie 生效，並避免觸發論壇 2 秒刷新限制
+                                    await new Promise(resolve => setTimeout(resolve, 2500));
+
                                     // 2. 构造电脑端搜索URL
                                     const desktopSearchUrl = window.location.href.replace(/\?.*$/, '') + window.location.search;
                                     console.log('草榴Manager: 获取电脑端搜索页:', desktopSearchUrl);
-                                    
+
                                     // 3. 获取电脑端搜索页HTML
                                     const response = await fetch(desktopSearchUrl, {
                                         credentials: 'include'
                                     });
                                     const html = await response.text();
-                                    
+
                                     // 4. 立即切换回手机端
                                     await fetch('https://t66y.com/mobile.php?ismobile=yes', {
                                         credentials: 'include'
                                     });
-                                    
+
                                     // 5. 解析HTML并缓存
                                     const parser = new DOMParser();
                                     const doc = parser.parseFromString(html, 'text/html');
@@ -6370,14 +6842,14 @@
                                     return doc;
                                 })();
                             }
-                            
+
                             // 等待获取完成
                             const doc = await desktopSearchPromise;
-                            
+
                             // 6. 提取帖子ID用于匹配
                             const threadIdMatch = threadUrl.match(/\/(\d+)\.html$/);
                             const threadId = threadIdMatch ? threadIdMatch[1] : null;
-                            
+
                             // 7. 在电脑端搜索页中查找对应的帖子行
                             const desktopRows = Array.from(doc.querySelectorAll('tr.tr3'));
                             const matchingRow = desktopRows.find(r => {
@@ -6388,49 +6860,28 @@
                                 }
                                 return false;
                             });
-                            
+
                             if (matchingRow) {
                                 const preSpan = matchingRow.querySelector('span.pre[d], span.sgreen.pre[d]');
                                 if (preSpan) {
-                                    const dValue = preSpan.getAttribute('d');
-                                    if (dValue) {
-                                        const imgUrl = `https://a.gac2.xyz/${dValue}.jpg`;
-                                        const img = document.createElement('img');
-                                        img.src = imgUrl;
-                                        img.alt = threadTitle;
-                                        img.loading = 'lazy';
-                                        
-                                        img.onload = () => {
-                                            loadingDiv.remove();
-                                            coverDiv.insertBefore(img, coverDiv.firstChild);
-                                        };
-                                        
-                                        img.onerror = () => {
-                                            console.warn('草榴Manager: 电脑端[圖]加载失败，显示无图');
-                                            loadingDiv.textContent = '无图';
-                                        };
+                                    const desktopDValue = preSpan.getAttribute('d');
+                                    if (desktopDValue) {
+                                        const imgUrl = `https://a.gac2.xyz/${desktopDValue}.jpg`;
+                                        console.log('草榴Manager: 從電腦端搜索頁獲取 [圖] 封面', {
+                                            d: desktopDValue,
+                                            imgUrl,
+                                            threadUrl
+                                        });
+                                        // 使用與電腦端相同的 a.gac2 加載策略
+                                        loadCoverByD(desktopDValue);
                                         return;
                                     }
                                 }
                             }
-                            
-                            // 如果电脑端也没有找到[圖]标签
+
+                            // 如果电脑端也没有找到[圖]标签，直接標記為無圖（不再從帖子內容兜底）
                             console.warn('草榴Manager: 电脑端搜索页也未找到[圖]标签');
                             loadingDiv.textContent = '无图';
-                            try {
-                                const data = await fetchThreadData(threadUrl);
-                                if (data && data.gallery && data.gallery.length > 0) {
-                                    const firstImage = data.gallery[0];
-                                    const img = document.createElement('img');
-                                    img.src = firstImage.src;
-                                    img.alt = threadTitle;
-                                    img.loading = 'lazy';
-                                    img.onload = () => {
-                                        loadingDiv.remove();
-                                        coverDiv.insertBefore(img, coverDiv.firstChild);
-                                    };
-                                }
-                            } catch (e) {}
                         } catch (err) {
                             console.warn('草榴Manager: 获取电脑端搜索页失败:', err);
                             // 确保切换回手机端
@@ -6441,30 +6892,26 @@
                             } catch (e) {
                                 console.error('草榴Manager: 切换回手机端失败:', e);
                             }
+                            // 無法獲取電腦端搜索頁時，同樣僅標記為無圖
                             loadingDiv.textContent = '无图';
-                            try {
-                                const data = await fetchThreadData(threadUrl);
-                                if (data && data.gallery && data.gallery.length > 0) {
-                                    const firstImage = data.gallery[0];
-                                    const img = document.createElement('img');
-                                    img.src = firstImage.src;
-                                    img.alt = threadTitle;
-                                    img.loading = 'lazy';
-                                    img.onload = () => {
-                                        loadingDiv.remove();
-                                        coverDiv.insertBefore(img, coverDiv.firstChild);
-                                    };
-                                }
-                            } catch (e2) {}
                         }
                     } catch (err) {
                         console.warn('草榴Manager: 加载封面失败:', threadUrl, err);
                         loadingDiv.textContent = '失败';
                     }
-                })();
+                };
+
+                searchCoverTasks.push({
+                    task: coverTask,
+                    d: initialDValue,
+                    threadUrl
+                });
             });
 
             table.parentNode.insertBefore(grid, table);
+
+            // 初始化封面加載批次：先加載前 20 張，並預加載後 20 張
+            runCoverBatchesSequential();
         }
         
         // 初始转换
@@ -7763,6 +8210,12 @@
                     tags: ''
                 }
             ]
+        },
+        webdav: {
+            enabled: false,
+            url: '',
+            username: '',
+            password: ''
         }
     };
 
@@ -7779,6 +8232,9 @@
                             settings.qb.savePresets = parsed.qb.savePresets.map((preset) => Object.assign({}, preset));
                         }
                     }
+                    if (parsed.webdav) {
+                        Object.assign(settings.webdav, parsed.webdav);
+                    }
                 }
             }
         } catch (e) {
@@ -7791,6 +8247,13 @@
 
     function saveSettings(settings) {
         try {
+            if (settings && typeof settings === 'object') {
+                settings.updatedAt = Date.now();
+                if (settings.webdav) {
+                    delete settings.webdav.username;
+                    delete settings.webdav.password;
+                }
+            }
             localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
         } catch (e) {
             console.error('草榴Manager: 設置保存失敗', e);
@@ -8048,6 +8511,23 @@
         const settings = loadSettings();
         let logUnsubscribe = null;
         let connectivityStatusEl = null;
+        let webdavStatusEl = null;
+        const webdavAuth = loadWebdavAuth();
+        const webdavAuthDraft = {
+            username: (webdavAuth && webdavAuth.username) || settings.webdav.username || '',
+            password: (webdavAuth && webdavAuth.password) || settings.webdav.password || ''
+        };
+        settings.webdav.username = webdavAuthDraft.username;
+        settings.webdav.password = webdavAuthDraft.password;
+
+        function buildSettingsTransferSnapshot() {
+            const cloned = JSON.parse(JSON.stringify(settings));
+            if (cloned.webdav) {
+                delete cloned.webdav.username;
+                delete cloned.webdav.password;
+            }
+            return cloned;
+        }
         function clearConnectivityStatus() {
             if (!connectivityStatusEl) return;
             connectivityStatusEl.textContent = '';
@@ -8229,6 +8709,179 @@
         presetsRow.appendChild(addPresetBtn);
         body.appendChild(presetsRow);
 
+        const webdavEnableRow = document.createElement('div');
+        webdavEnableRow.className = 'clm-form-row';
+        const webdavEnableLabel = document.createElement('label');
+        const webdavEnableCheckbox = document.createElement('input');
+        webdavEnableCheckbox.type = 'checkbox';
+        webdavEnableCheckbox.checked = !!settings.webdav.enabled;
+        webdavEnableCheckbox.addEventListener('change', () => {
+            settings.webdav.enabled = !!webdavEnableCheckbox.checked;
+        });
+        webdavEnableLabel.appendChild(webdavEnableCheckbox);
+        webdavEnableLabel.appendChild(document.createTextNode('啟用 WebDAV 同步（已下載/瀏覽記錄與設置）'));
+        webdavEnableRow.appendChild(webdavEnableLabel);
+        body.appendChild(webdavEnableRow);
+
+        body.appendChild(createInputRow('WebDAV 目錄地址（例如：https://example.com/webdav/）', settings.webdav.url, (val) => {
+            settings.webdav.url = val.trim();
+        }));
+
+        body.appendChild(createInputRow('WebDAV 用戶名', settings.webdav.username, (val) => {
+            const v = val.trim();
+            settings.webdav.username = v;
+            webdavAuthDraft.username = v;
+        }));
+
+        const webdavPwdRow = document.createElement('div');
+        webdavPwdRow.className = 'clm-form-row';
+        const webdavPwdLabel = document.createElement('label');
+        webdavPwdLabel.textContent = 'WebDAV 密碼';
+        const webdavPwdInput = document.createElement('input');
+        webdavPwdInput.type = 'password';
+        webdavPwdInput.value = webdavAuthDraft.password || '';
+        webdavPwdInput.addEventListener('input', () => {
+            settings.webdav.password = webdavPwdInput.value;
+            webdavAuthDraft.password = webdavPwdInput.value;
+        });
+        webdavPwdRow.appendChild(webdavPwdLabel);
+        webdavPwdRow.appendChild(webdavPwdInput);
+        body.appendChild(webdavPwdRow);
+
+        const webdavSyncRow = document.createElement('div');
+        webdavSyncRow.className = 'clm-form-row clm-test-row';
+        const webdavSyncBtn = document.createElement('button');
+        webdavSyncBtn.type = 'button';
+        webdavSyncBtn.className = 'clm-small-btn';
+        webdavSyncBtn.textContent = '立即同步 WebDAV';
+        const webdavStatus = document.createElement('span');
+        webdavStatus.className = 'clm-test-status';
+        webdavStatusEl = webdavStatus;
+        webdavSyncBtn.addEventListener('click', async () => {
+            webdavStatus.textContent = '';
+            webdavSyncBtn.disabled = true;
+            webdavSyncBtn.textContent = '同步中…';
+            try {
+                saveWebdavAuth(webdavAuthDraft);
+                const ok = await syncDownloadRecordsWithWebdav({
+                    silent: false,
+                    statusCallback: (msg) => {
+                        if (webdavStatusEl) {
+                            webdavStatusEl.textContent = msg;
+                        }
+                    }
+                });
+                if (!ok && webdavStatusEl && !webdavStatusEl.textContent) {
+                    webdavStatusEl.textContent = '同步未完成，請檢查日誌或提示。';
+                }
+            } finally {
+                webdavSyncBtn.disabled = false;
+                webdavSyncBtn.textContent = '立即同步 WebDAV';
+            }
+        });
+        webdavSyncRow.appendChild(webdavSyncBtn);
+        webdavSyncRow.appendChild(webdavStatus);
+        body.appendChild(webdavSyncRow);
+
+        function openQbLogDialog() {
+            const logMask = document.createElement('div');
+            logMask.className = 'clm-settings-panel-mask';
+
+            const logPanel = document.createElement('div');
+            logPanel.className = 'clm-settings-panel';
+
+            const logHeader = document.createElement('div');
+            logHeader.className = 'clm-settings-header';
+            logHeader.innerHTML = '<span>qBittorrent 調試日誌</span>';
+
+            const logClose = document.createElement('span');
+            logClose.className = 'clm-settings-close';
+            logClose.textContent = '✕';
+            logHeader.appendChild(logClose);
+
+            const logBody = document.createElement('div');
+            logBody.className = 'clm-settings-body';
+
+            const logToolbar = document.createElement('div');
+            logToolbar.className = 'clm-log-toolbar';
+            const logHint = document.createElement('span');
+            logHint.textContent = '僅保留最近 80 條記錄';
+            const clearLogBtn = document.createElement('button');
+            clearLogBtn.type = 'button';
+            clearLogBtn.className = 'clm-small-btn';
+            clearLogBtn.textContent = '清空日誌';
+            clearLogBtn.addEventListener('click', () => {
+                clearQbLogs();
+                showToast('日志已清空', 'success');
+            });
+            logToolbar.appendChild(logHint);
+            logToolbar.appendChild(clearLogBtn);
+            logBody.appendChild(logToolbar);
+
+            const logBox = document.createElement('div');
+            logBox.className = 'clm-log-box';
+            logBody.appendChild(logBox);
+
+            function renderLogs(entries) {
+                const logs = (entries || getQbLogs()).slice().reverse();
+                logBox.innerHTML = '';
+                if (!logs.length) {
+                    const empty = document.createElement('div');
+                    empty.className = 'clm-log-empty';
+                    empty.textContent = '暫無日誌';
+                    logBox.appendChild(empty);
+                    return;
+                }
+                logs.forEach((log) => {
+                    const item = document.createElement('div');
+                    item.className = `clm-log-entry clm-log-${log.level || 'info'}`;
+
+                    const timeEl = document.createElement('span');
+                    timeEl.className = 'clm-log-time';
+                    timeEl.textContent = formatLogTime(log.time);
+
+                    const msgEl = document.createElement('span');
+                    msgEl.className = 'clm-log-message';
+                    msgEl.textContent = log.message;
+
+                    item.appendChild(timeEl);
+                    item.appendChild(msgEl);
+                    logBox.appendChild(item);
+                });
+            }
+            renderLogs();
+
+            if (logUnsubscribe) {
+                logUnsubscribe();
+                logUnsubscribe = null;
+            }
+            logUnsubscribe = subscribeQbLogs(renderLogs);
+
+            function closeLogDialog() {
+                if (logUnsubscribe) {
+                    logUnsubscribe();
+                    logUnsubscribe = null;
+                }
+                if (logMask.parentNode) {
+                    logMask.parentNode.removeChild(logMask);
+                }
+            }
+
+            logClose.addEventListener('click', () => {
+                closeLogDialog();
+            });
+            logMask.addEventListener('click', (e) => {
+                if (e.target === logMask) {
+                    closeLogDialog();
+                }
+            });
+
+            logPanel.appendChild(logHeader);
+            logPanel.appendChild(logBody);
+            logMask.appendChild(logPanel);
+            document.body.appendChild(logMask);
+        }
+
         const logRow = document.createElement('div');
         logRow.className = 'clm-form-row';
         const logLabel = document.createElement('label');
@@ -8239,51 +8892,16 @@
         logToolbar.className = 'clm-log-toolbar';
         const logHint = document.createElement('span');
         logHint.textContent = '僅保留最近 80 條記錄';
-        const clearLogBtn = document.createElement('button');
-        clearLogBtn.type = 'button';
-        clearLogBtn.className = 'clm-small-btn';
-        clearLogBtn.textContent = '清空日誌';
-        clearLogBtn.addEventListener('click', () => {
-            clearQbLogs();
-            showToast('日志已清空', 'success');
+        const openLogBtn = document.createElement('button');
+        openLogBtn.type = 'button';
+        openLogBtn.className = 'clm-small-btn';
+        openLogBtn.textContent = '打開日誌彈窗';
+        openLogBtn.addEventListener('click', () => {
+            openQbLogDialog();
         });
         logToolbar.appendChild(logHint);
-        logToolbar.appendChild(clearLogBtn);
+        logToolbar.appendChild(openLogBtn);
         logRow.appendChild(logToolbar);
-
-        const logBox = document.createElement('div');
-        logBox.className = 'clm-log-box';
-        logRow.appendChild(logBox);
-
-        function renderLogs(entries) {
-            const logs = (entries || getQbLogs()).slice().reverse();
-            logBox.innerHTML = '';
-            if (!logs.length) {
-                const empty = document.createElement('div');
-                empty.className = 'clm-log-empty';
-                empty.textContent = '暫無日誌';
-                logBox.appendChild(empty);
-                return;
-            }
-            logs.forEach((log) => {
-                const item = document.createElement('div');
-                item.className = `clm-log-entry clm-log-${log.level || 'info'}`;
-
-                const timeEl = document.createElement('span');
-                timeEl.className = 'clm-log-time';
-                timeEl.textContent = formatLogTime(log.time);
-
-                const msgEl = document.createElement('span');
-                msgEl.className = 'clm-log-message';
-                msgEl.textContent = log.message;
-
-                item.appendChild(timeEl);
-                item.appendChild(msgEl);
-                logBox.appendChild(item);
-            });
-        }
-        renderLogs();
-        logUnsubscribe = subscribeQbLogs(renderLogs);
 
         body.appendChild(logRow);
 
@@ -8303,7 +8921,7 @@
 
         const transferTextarea = document.createElement('textarea');
         transferTextarea.className = 'clm-transfer-textarea';
-        transferTextarea.value = JSON.stringify(settings, null, 2);
+        transferTextarea.value = JSON.stringify(buildSettingsTransferSnapshot(), null, 2);
         transferRow.appendChild(transferTextarea);
 
         const transferButtons = document.createElement('div');
@@ -8314,7 +8932,7 @@
         exportBtn.className = 'clm-small-btn';
         exportBtn.textContent = '導出當前設置';
         exportBtn.addEventListener('click', () => {
-            transferTextarea.value = JSON.stringify(settings, null, 2);
+            transferTextarea.value = JSON.stringify(buildSettingsTransferSnapshot(), null, 2);
             transferTextarea.select();
             document.execCommand('copy');
             showToast('設置已複製到剪貼板', 'success');
@@ -8356,6 +8974,9 @@
         saveBtn.addEventListener('click', () => {
             settings.qb.enabled = enableCheckbox.checked;
             saveSettings(settings);
+            if (settings.webdav && settings.webdav.enabled) {
+                scheduleWebdavSync();
+            }
             closePanel();
         });
 
@@ -8417,6 +9038,7 @@
 
             const panel = document.createElement('div');
             panel.className = 'clm-preset-picker';
+            let finished = false;
 
             const title = document.createElement('div');
             title.className = 'clm-preset-picker-title';
@@ -8437,8 +9059,7 @@
                 option.appendChild(nameEl);
                 option.appendChild(pathEl);
                 option.addEventListener('click', () => {
-                    cleanup();
-                    resolve(preset);
+                    finish(preset);
                 });
                 list.appendChild(option);
             });
@@ -8450,8 +9071,7 @@
             cancelBtn.className = 'clm-preset-picker-cancel';
             cancelBtn.textContent = '取消';
             cancelBtn.addEventListener('click', () => {
-                cleanup();
-                resolve(null);
+                finish(null);
             });
             panel.appendChild(cancelBtn);
 
@@ -8461,8 +9081,7 @@
             // 点击 mask 区域（但不是 panel）时关闭
             mask.addEventListener('click', (ev) => {
                 if (ev.target === mask) {
-                    cleanup();
-                    resolve(null);
+                    finish(null);
                 }
             });
             
@@ -8471,11 +9090,28 @@
                 ev.stopPropagation();
             });
 
+            function handleKeydown(ev) {
+                if (ev.key === 'Escape') {
+                    ev.preventDefault();
+                    finish(null);
+                }
+            }
+
             function cleanup() {
                 if (mask.parentNode) {
                     mask.parentNode.removeChild(mask);
                 }
+                document.removeEventListener('keydown', handleKeydown);
             }
+
+            function finish(result) {
+                if (finished) return;
+                finished = true;
+                cleanup();
+                resolve(result);
+            }
+
+            document.addEventListener('keydown', handleKeydown);
         });
     }
 
@@ -8553,7 +9189,7 @@
         const settings = loadSettings();
         const sourceDescriptor = typeof torrentSource === 'string'
             ? torrentSource
-            : (torrentSource?.url || torrentSource?.filename || '');
+            : (torrentSource?.filename || torrentSource?.url || '');
         const resourceLabel = summarizeResource(sourceDescriptor);
         appendQbLog('收到下載請求：' + resourceLabel, 'info');
         if (!settings.qb.enabled) {
@@ -8694,7 +9330,7 @@
                 
                 // 成功
                 appendQbLog('qBittorrent 回覆成功：' + (bodyText || 'Ok'), 'success');
-                showToast('已提交至 qBittorrent，請在客戶端確認。', 'success');
+                showToast(`【${resourceLabel}】已提交至 qBittorrent，請在客戶端確認。`, 'success');
                 
                 // 在成功响应后 0.5 秒触发跳转到广告页面
                 setTimeout(() => {
@@ -8789,6 +9425,9 @@
         }
         return false;
     }
+
+    // 開始一次靜默 WebDAV 同步（如已配置）
+    syncDownloadRecordsWithWebdav({ silent: true });
 
     // 對外暴露到 window，方便後續與頁面其他腳本集成
     pageWindow.草榴ManagerSendToQb = sendToQbittorrent;
