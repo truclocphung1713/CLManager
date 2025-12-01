@@ -1,2032 +1,137 @@
-// ==UserScript==
-// @name         草榴Manager
-// @namespace    http://tampermonkey.net/
-// @version      1.9.34
-// @description  草榴搜索/板块悬停放大封面、标题预览图、品质徽章与 qBittorrent 一键发送和下载按钮。
-// @author       truclocphung1713
-// @match        https://t66y.com/search.php*
-// @match        https://t66y.com/thread0806.php*
-// @match        https://t66y.com/htm_data/*
-// @match        https://t66y.com/htm_mob/*
-// @match        http://t66y.com/search.php*
-// @match        http://t66y.com/thread0806.php*
-// @match        http://t66y.com/htm_data/*
-// @match        http://t66y.com/htm_mob/*
-// @icon         none
-// @run-at       document-end
-// @grant        GM_xmlhttpRequest
-// @grant        GM_getValue
-// @grant        GM_setValue
-// @grant        GM_deleteValue
-// @grant        unsafeWindow
-// @connect      www.rmdown.com
-// @connect      *
-// @updateURL    https://raw.githubusercontent.com/truclocphung1713/CLManager/refs/heads/main/CLManager.user.js
-// @downloadURL  https://raw.githubusercontent.com/truclocphung1713/CLManager/refs/heads/main/CLManager.user.js
-// ==/UserScript==
+    // ==UserScript==
+    // @name         草榴Manager
+    // @namespace    http://tampermonkey.net/
+    // @version      1.9.38
+    // @description  草榴搜索/板块悬停放大封面、标题预览图、品质徽章与 qBittorrent 一键发送和下载按钮。
+    // @author       truclocphung1713
+    // @match        https://t66y.com/search.php*
+    // @match        https://t66y.com/thread0806.php*
+    // @match        https://t66y.com/htm_data/*
+    // @match        https://t66y.com/htm_mob/*
+    // @match        http://t66y.com/search.php*
+    // @match        http://t66y.com/thread0806.php*
+    // @match        http://t66y.com/htm_data/*
+    // @match        http://t66y.com/htm_mob/*
+    // @icon         none
+    // @run-at       document-end
+    // @grant        GM_xmlhttpRequest
+    // @grant        GM_getValue
+    // @grant        GM_setValue
+    // @grant        GM_deleteValue
+    // @grant        unsafeWindow
+    // @connect      www.rmdown.com
+    // @connect      *
+    // @updateURL    https://raw.githubusercontent.com/truclocphung1713/CLManager/refs/heads/main/CLManager.user.js
+    // @downloadURL  https://raw.githubusercontent.com/truclocphung1713/CLManager/refs/heads/main/CLManager.user.js
+    // ==/UserScript==
 
-(function () {
-    'use strict';
+    (function () {
+        'use strict';
 
-    // DEBUG模式：输出详细日志（默认关闭，如需排查问题可改为 true）
-    const DEBUG = false;
-    const debugLog = (...args) => {
-        if (DEBUG) {
-            console.log('[草榴Manager DEBUG]', ...args);
-        }
-    };
+        // DEBUG模式：输出详细日志（默认关闭，如需排查问题可改为 true）
+        const DEBUG = false;
+        const debugLog = (...args) => {
+            if (DEBUG) {
+                console.log('[草榴Manager DEBUG]', ...args);
+            }
+        };
 
-    const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
-    const downloadResolveCache = new Map();
-    const DOWNLOAD_RECORDS_KEY = '草榴ManagerDownloadedThreads';
-    const WEBDAV_AUTH_STORAGE_KEY = '草榴ManagerWebdavAuth';
-    const WEBDAV_AUTH_SECRET_KEY = 'clm-webdav-key-v1';
-    let downloadRecordsCache = null;
-    const downloadStatusListeners = new Map();
-    
-    debugLog('脚本启动，版本: 1.9.31');
-    debugLog('当前URL:', window.location.href);
-    debugLog('User Agent:', navigator.userAgent);
-
-    /**
-     * 检测是否是手机端页面
-     */
-    function isMobilePage() {
-        const href = window.location.href;
-        debugLog('isMobilePage检测开始');
-        debugLog('  - href:', href);
+        const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+        const downloadResolveCache = new Map();
+        const DOWNLOAD_RECORDS_KEY = '草榴ManagerDownloadedThreads';
+        const WEBDAV_AUTH_STORAGE_KEY = '草榴ManagerWebdavAuth';
+        const WEBDAV_AUTH_SECRET_KEY = 'clm-webdav-key-v1';
+        let downloadRecordsCache = null;
+        const downloadStatusListeners = new Map();
         
-        // 1) URL 中直接使用 /htm_mob/ 路径：明确是手机版内容页
-        if (href.indexOf('/htm_mob/') !== -1) {
-            debugLog('  - 检测到手机端 (/htm_mob/)');
-            return true;
-        }
+        debugLog('脚本启动，版本: 1.9.38');
+        debugLog('当前URL:', window.location.href);
+        debugLog('User Agent:', navigator.userAgent);
 
-        // 2) DOCTYPE 为 WAPFORUM XHTML Mobile：手机版板块/帖子
-        try {
-            const dt = document.doctype;
-            if (dt && /WAPFORUM\s*\/\/DTD\s+XHTML\s+Mobile/i.test(dt.publicId || '')) {
-                debugLog('  - 检测到手机端 (DOCTYPE XHTML Mobile)');
+        /**
+         * 检测是否是手机端页面
+         */
+        function isMobilePage() {
+            const href = window.location.href;
+            debugLog('isMobilePage检测开始');
+            debugLog('  - href:', href);
+            
+            // 1) URL 中直接使用 /htm_mob/ 路径：明确是手机版内容页
+            if (href.indexOf('/htm_mob/') !== -1) {
+                debugLog('  - 检测到手机端 (/htm_mob/)');
                 return true;
             }
-        } catch (e) {
-            debugLog('  - 读取 DOCTYPE 失败', e);
-        }
 
-        // 3) 引用了手机版的样式或脚本：mob_style.css / mob_post.js
-        const mobileAssets = document.querySelector('link[href*="mob_style.css"], script[src*="mob_post.js"]');
-        if (mobileAssets) {
-            debugLog('  - 检测到手机端 (mob_style.css / mob_post.js)');
-            return true;
-        }
-
-        // 4) 手机版都有 viewport meta，而电脑版板块没有
-        const viewportMeta = document.querySelector('meta[name="viewport"]');
-        if (viewportMeta) {
-            debugLog('  - 检测到手机端 (meta viewport)');
-            return true;
-        }
-
-        // 上述特征都不存在，则认为是电脑版模板
-        debugLog('  - 最终判定为桌面端模板');
-        return false;
-    }
-
-    /**
-     * 检测页面类型
-     */
-    function detectPageType() {
-        const href = window.location.href;
-        const isMobile = isMobilePage();
-        
-        if (href.indexOf('/htm_mob/') !== -1 || href.indexOf('/htm_data/') !== -1) {
-            return isMobile ? 'mobile-thread' : 'desktop-thread';
-        }
-        if (href.indexOf('search.php') !== -1) {
-            return isMobile ? 'mobile-search' : 'desktop-search';
-        }
-        if (href.indexOf('thread0806.php') !== -1) {
-            return isMobile ? 'mobile-forum' : 'desktop-forum';
-        }
-        return 'unknown';
-    }
-
-    /**
-     * 向页面注入 CSS
-     */
-    function injectStyle(css) {
-        const style = document.createElement('style');
-        style.type = 'text/css';
-        style.textContent = css;
-        document.head.appendChild(style);
-    }
-
-    function fetchCrossOriginText(url) {
-        if (!url) {
-            return Promise.reject(new Error('無效的請求地址'));
-        }
-        if (typeof GM_xmlhttpRequest === 'function') {
-            return new Promise((resolve, reject) => {
-                GM_xmlhttpRequest({
-                    method: 'GET',
-                    url,
-                    headers: {
-                        'Referer': 'https://www.rmdown.com/'
-                    },
-                    onload: (resp) => {
-                        if (resp.status >= 200 && resp.status < 400) {
-                            resolve(resp.responseText);
-                        } else {
-                            reject(new Error('HTTP ' + resp.status));
-                        }
-                    },
-                    onerror: () => reject(new Error('網絡錯誤')),
-                    ontimeout: () => reject(new Error('請求超時'))
-                });
-            });
-        }
-        return fetch(url, { credentials: 'include' }).then(resp => {
-            if (!resp.ok) {
-                throw new Error('HTTP ' + resp.status);
-            }
-            return resp.text();
-        });
-    }
-
-    function fetchCrossOriginBinary(url, options = {}) {
-        if (!url) {
-            return Promise.reject(new Error('無效的請求地址'));
-        }
-        const headers = {
-            'Referer': options.referer || 'https://www.rmdown.com/',
-            ...(options.headers || {})
-        };
-        const method = options.method || 'GET';
-        if (typeof GM_xmlhttpRequest === 'function') {
-            return new Promise((resolve, reject) => {
-                GM_xmlhttpRequest({
-                    method,
-                    url,
-                    headers,
-                    responseType: 'arraybuffer',
-                    onload: (resp) => {
-                        if (resp.status >= 200 && resp.status < 400) {
-                            resolve({
-                                buffer: resp.response,
-                                headers: resp.responseHeaders || ''
-                            });
-                        } else {
-                            reject(new Error('HTTP ' + resp.status));
-                        }
-                    },
-                    onerror: () => reject(new Error('網絡錯誤')),
-                    ontimeout: () => reject(new Error('請求超時'))
-                });
-            });
-        }
-        return fetch(url, {
-            method,
-            headers,
-            credentials: 'include'
-        }).then(async (resp) => {
-            if (!resp.ok) {
-                throw new Error('HTTP ' + resp.status);
-            }
-            const buffer = await resp.arrayBuffer();
-            return {
-                buffer,
-                headers: resp.headers
-            };
-        });
-    }
-
-    // 远程模块加载配置：manifest 地址与本地缓存 key
-    const REMOTE_MANIFEST_URL = 'https://raw.githubusercontent.com/truclocphung1713/CLManager/main/manifest.json';
-    const REMOTE_MODULE_CACHE_KEY = 'CLM_RemoteModuleCache_v1';
-
-    function getRemoteModuleCache() {
-        const empty = { manifestVersion: '', modules: {} };
-        let raw = '';
-        try {
-            if (typeof GM_getValue === 'function') {
-                raw = GM_getValue(REMOTE_MODULE_CACHE_KEY, '');
-            } else if (pageWindow.localStorage) {
-                raw = pageWindow.localStorage.getItem(REMOTE_MODULE_CACHE_KEY) || '';
-            }
-        } catch (e) {
-            console.warn('草榴Manager: 讀取遠程模塊緩存失敗', e);
-            return empty;
-        }
-        if (!raw) return empty;
-        try {
-            const parsed = JSON.parse(raw);
-            if (parsed && typeof parsed === 'object') {
-                return parsed;
-            }
-        } catch (e) {
-            console.warn('草榴Manager: 解析遠程模塊緩存失敗', e);
-        }
-        return empty;
-    }
-
-    function saveRemoteModuleCache(cache) {
-        let text;
-        try {
-            text = JSON.stringify(cache || {});
-        } catch (e) {
-            console.warn('草榴Manager: 無法序列化遠程模塊緩存', e);
-            return;
-        }
-        try {
-            if (typeof GM_setValue === 'function') {
-                GM_setValue(REMOTE_MODULE_CACHE_KEY, text);
-            } else if (pageWindow.localStorage) {
-                pageWindow.localStorage.setItem(REMOTE_MODULE_CACHE_KEY, text);
-            }
-        } catch (e) {
-            console.warn('草榴Manager: 寫入遠程模塊緩存失敗', e);
-        }
-    }
-
-    function shouldLoadModuleForPage(manifestEntry, pageType) {
-        if (!manifestEntry) return false;
-        const targets = manifestEntry.targets;
-        if (!targets || !Array.isArray(targets) || !targets.length) {
-            return true;
-        }
-        return targets.indexOf(pageType) !== -1;
-    }
-
-    async function initRemoteModules(pageType) {
-        const cache = getRemoteModuleCache();
-        let manifest = null;
-        try {
-            const text = await fetchCrossOriginText(REMOTE_MANIFEST_URL);
-            manifest = JSON.parse(text);
-        } catch (e) {
-            console.warn('草榴Manager: 無法從 GitHub 獲取 manifest，將回退到本地緩存模塊', e);
-        }
-
-        const modulesToExecute = [];
-
-        if (!manifest || !manifest.modules || typeof manifest.modules !== 'object') {
-            // 没有 manifest 时，只能执行已有緩存中的全部模塊
-            const cachedModules = cache.modules || {};
-            Object.keys(cachedModules).forEach((name) => {
-                const cached = cachedModules[name];
-                if (cached && cached.code) {
-                    modulesToExecute.push({ name, code: cached.code });
-                }
-            });
-        } else {
-            const newCache = {
-                manifestVersion: manifest.version || '',
-                modules: cache.modules || {}
-            };
-            const manifestModules = manifest.modules || {};
-
-            for (const name of Object.keys(manifestModules)) {
-                const entry = manifestModules[name];
-                if (!shouldLoadModuleForPage(entry, pageType)) continue;
-
-                const cached = (cache.modules && cache.modules[name]) || null;
-                let code = cached && cached.code;
-                const needsUpdate = !cached || cached.version !== entry.version || cached.url !== entry.url;
-
-                if (needsUpdate && entry.url) {
-                    try {
-                        code = await fetchCrossOriginText(entry.url);
-                        newCache.modules[name] = {
-                            version: entry.version || '',
-                            url: entry.url,
-                            code,
-                            lastUpdated: Date.now()
-                        };
-                        console.log('草榴Manager: 已更新遠程模塊', name, 'version=', entry.version);
-                    } catch (e) {
-                        console.error('草榴Manager: 加載遠程模塊失敗，嘗試使用緩存', name, e);
-                        if (cached && cached.code) {
-                            code = cached.code;
-                            newCache.modules[name] = cached;
-                        }
-                    }
-                }
-
-                if (code) {
-                    modulesToExecute.push({ name, code });
-                }
-            }
-
-            saveRemoteModuleCache(newCache);
-        }
-
-        modulesToExecute.forEach((mod) => {
+            // 2) DOCTYPE 为 WAPFORUM XHTML Mobile：手机版板块/帖子
             try {
-                const fn = new Function('window', '"use strict";\n' + mod.code + '\n//# sourceURL=CLM-remote-module-' + mod.name + '.js');
-                fn(pageWindow);
-                console.log('草榴Manager: 已執行遠程模塊', mod.name);
+                const dt = document.doctype;
+                if (dt && /WAPFORUM\s*\/\/DTD\s+XHTML\s+Mobile/i.test(dt.publicId || '')) {
+                    debugLog('  - 检测到手机端 (DOCTYPE XHTML Mobile)');
+                    return true;
+                }
             } catch (e) {
-                console.error('草榴Manager: 執行遠程模塊出錯', mod.name, e);
+                debugLog('  - 读取 DOCTYPE 失败', e);
             }
-        });
-    }
 
-    function extractFilenameFromContentDisposition(headerValue) {
-        if (!headerValue) return '';
-        let matched = headerValue.match(/filename\*=(?:UTF-8'')?([^;]+)/i);
-        if (matched && matched[1]) {
-            try {
-                return decodeURIComponent(matched[1].trim().replace(/["']/g, ''));
-            } catch (err) {
-                return matched[1].trim().replace(/["']/g, '');
+            // 3) 引用了手机版的样式或脚本：mob_style.css / mob_post.js
+            const mobileAssets = document.querySelector('link[href*="mob_style.css"], script[src*="mob_post.js"]');
+            if (mobileAssets) {
+                debugLog('  - 检测到手机端 (mob_style.css / mob_post.js)');
+                return true;
             }
-        }
-        matched = headerValue.match(/filename="([^"]+)"/i);
-        if (matched && matched[1]) {
-            return matched[1].trim();
-        }
-        matched = headerValue.match(/filename=([^;]+)/i);
-        if (matched && matched[1]) {
-            return matched[1].trim().replace(/["']/g, '');
-        }
-        return '';
-    }
 
-    function extractFilenameFromHeaders(headers) {
-        if (!headers) return '';
-        if (typeof headers === 'string') {
-            const lines = headers.split(/\r?\n/);
-            for (const line of lines) {
-                if (!line) continue;
-                if (line.toLowerCase().startsWith('content-disposition')) {
-                    const value = line.split(':').slice(1).join(':').trim();
-                    return extractFilenameFromContentDisposition(value);
-                }
+            // 4) 手机版都有 viewport meta，而电脑版板块没有
+            const viewportMeta = document.querySelector('meta[name="viewport"]');
+            if (viewportMeta) {
+                debugLog('  - 检测到手机端 (meta viewport)');
+                return true;
             }
-            return '';
-        }
-        if (typeof headers.get === 'function') {
-            const value = headers.get('content-disposition');
-            return extractFilenameFromContentDisposition(value || '');
-        }
-        return '';
-    }
 
-    function ensureArrayBuffer(data) {
-        if (!data) return null;
-        if (data instanceof ArrayBuffer) {
-            return data;
-        }
-        if (ArrayBuffer.isView(data)) {
-            return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
-        }
-        return null;
-    }
-
-    function gmCompatibleFetch(url, options = {}) {
-        const method = options.method || 'GET';
-        const headers = options.headers ? { ...options.headers } : {};
-        let body = options.body;
-        if (body instanceof URLSearchParams) {
-            if (!headers['Content-Type'] && !headers['content-type']) {
-                headers['Content-Type'] = 'application/x-www-form-urlencoded; charset=UTF-8';
-            }
-            body = body.toString();
-        }
-        if (typeof GM_xmlhttpRequest !== 'function') {
-            return fetch(url, {
-                ...options,
-                method,
-                headers,
-                body
-            });
-        }
-        return new Promise((resolve, reject) => {
-            GM_xmlhttpRequest({
-                method,
-                url,
-                headers,
-                data: body,
-                timeout: options.timeout || 20000,
-                anonymous: options.credentials === 'omit',
-                responseType: options.responseType || 'text',
-                onload: (resp) => {
-                    const responseText = resp.responseText ?? '';
-                    resolve({
-                        ok: resp.status >= 200 && resp.status < 300,
-                        status: resp.status,
-                        statusText: resp.statusText || '',
-                        headers: resp.responseHeaders || '',
-                        text: () => Promise.resolve(responseText),
-                        json: () => Promise.resolve(responseText ? JSON.parse(responseText) : null)
-                    });
-                },
-                onerror: (resp) => {
-                    reject(new Error(resp?.statusText || '網絡錯誤'));
-                },
-                ontimeout: () => reject(new Error('請求超時'))
-            });
-        });
-    }
-
-    const href = location.href;
-
-    const threadDataCache = new Map();
-    let currentListHoverCtx = null;
-    let gallerySourceHighlight = null;
-
-    function setCurrentListHover(ctx) {
-        currentListHoverCtx = ctx;
-    }
-
-    function clearGallerySourceHighlight() {
-        if (gallerySourceHighlight?.element && gallerySourceHighlight.className) {
-            try {
-                gallerySourceHighlight.element.classList.remove(gallerySourceHighlight.className);
-            } catch (err) {
-                // 元素可能已被移除，忽略錯誤
-            }
-        }
-        gallerySourceHighlight = null;
-    }
-
-    function applyGallerySourceHighlight(ctx) {
-        if (!ctx || !ctx.threadUrl) {
-            clearGallerySourceHighlight();
-            return;
-        }
-        let target = null;
-        let className = '';
-        if (ctx.source === 'board' && ctx.cover instanceof HTMLElement) {
-            target = ctx.cover;
-            className = 'clm-gallery-focus-cover';
-        } else if (ctx.source === 'search' && ctx.titleEl instanceof HTMLElement) {
-            target = ctx.titleEl;
-            className = 'clm-gallery-focus-title';
-        }
-        if (!target || !className) {
-            clearGallerySourceHighlight();
-            return;
-        }
-        clearGallerySourceHighlight();
-        target.classList.add(className);
-        gallerySourceHighlight = { element: target, className, threadUrl: ctx.threadUrl };
-    }
-
-    function focusGallerySource(threadUrl, ctxOverride = null) {
-        if (!threadUrl) {
-            clearGallerySourceHighlight();
-            return;
-        }
-        const normalizedTarget = normalizeThreadKey(threadUrl);
-        if (!normalizedTarget) {
-            clearGallerySourceHighlight();
-            return;
-        }
-        let candidate = ctxOverride;
-        if (!candidate || normalizeThreadKey(candidate.threadUrl) !== normalizedTarget) {
-            if (currentListHoverCtx && normalizeThreadKey(currentListHoverCtx.threadUrl) === normalizedTarget) {
-                candidate = currentListHoverCtx;
-            }
-        }
-        if (candidate) {
-            applyGallerySourceHighlight(candidate);
-        } else {
-            clearGallerySourceHighlight();
-        }
-    }
-
-    function getAbsoluteUrl(url, base = location.href) {
-        if (!url) return null;
-        try {
-            return new URL(url, base).href;
-        } catch (e) {
-            console.warn('clm 無法解析 URL', url, e);
-            return null;
-        }
-    }
-
-    function normalizeThreadKey(threadUrl) {
-        if (!threadUrl) return null;
-        if (typeof threadUrl === 'string' && threadUrl.indexOf('tid:') === 0) {
-            return threadUrl;
-        }
-        const abs = getAbsoluteUrl(threadUrl);
-        if (!abs) return null;
-        try {
-            const u = new URL(abs);
-            u.hash = '';
-            let host = u.hostname || '';
-            host = host.toLowerCase();
-            if (host.indexOf('t66y.com') !== -1) {
-                let tid = null;
-                const m = u.pathname && u.pathname.match(/\/(\d+)\.html$/);
-                if (m && m[1]) {
-                    tid = m[1];
-                } else if (u.search) {
-                    const m2 = u.search.match(/[?&]tid=(\d+)/);
-                    if (m2 && m2[1]) {
-                        tid = m2[1];
-                    }
-                }
-                if (tid) {
-                    return 'tid:' + tid;
-                }
-            }
-            return u.href;
-        } catch (e) {
-            return abs;
-        }
-    }
-
-    const GALLERY_VISITED_STORAGE_KEY = '草榴ManagerGalleryVisited';
-    const MAX_GALLERY_VISITED_ENTRIES = 400;
-    let galleryVisitedCache = null;
-
-    function normalizeRecordKeyMap(records) {
-        if (!records || typeof records !== 'object') {
-            return {};
-        }
-        const normalized = {};
-        Object.keys(records).forEach((key) => {
-            const ts = Number(records[key]) || 0;
-            if (!ts) return;
-            const newKey = normalizeThreadKey(key) || key;
-            const prev = Number(normalized[newKey]) || 0;
-            if (ts > prev) {
-                normalized[newKey] = ts;
-            }
-        });
-        return normalized;
-    }
-
-    function loadGalleryVisitedRecords() {
-        try {
-            const raw = localStorage.getItem(GALLERY_VISITED_STORAGE_KEY);
-            if (raw) {
-                const parsed = JSON.parse(raw);
-                if (parsed && typeof parsed === 'object') {
-                    return normalizeRecordKeyMap(parsed);
-                }
-            }
-        } catch (err) {
-            console.warn('草榴Manager: 無法讀取畫廊歷史記錄', err);
-        }
-        return {};
-    }
-
-    function getGalleryVisitedRecords() {
-        if (!galleryVisitedCache) {
-            galleryVisitedCache = loadGalleryVisitedRecords();
-        }
-        return galleryVisitedCache;
-    }
-
-    function persistGalleryVisitedRecords() {
-        if (!galleryVisitedCache) {
-            galleryVisitedCache = {};
-        }
-        try {
-            localStorage.setItem(GALLERY_VISITED_STORAGE_KEY, JSON.stringify(galleryVisitedCache));
-        } catch (err) {
-            console.warn('草榴Manager: 無法保存畫廊歷史記錄', err);
-        }
-    }
-
-    function pruneGalleryVisitedRecords(records) {
-        const keys = Object.keys(records);
-        if (keys.length <= MAX_GALLERY_VISITED_ENTRIES) {
-            return [];
-        }
-        const sorted = keys.sort((a, b) => (records[b] || 0) - (records[a] || 0));
-        const removed = [];
-        for (let i = MAX_GALLERY_VISITED_ENTRIES; i < sorted.length; i++) {
-            const key = sorted[i];
-            removed.push(key);
-            delete records[key];
-        }
-        return removed;
-    }
-
-    function resolveThreadKey(keyOrUrl) {
-        if (!keyOrUrl) return null;
-        if (
-            keyOrUrl.startsWith('http://') ||
-            keyOrUrl.startsWith('https://') ||
-            keyOrUrl.startsWith('//') ||
-            keyOrUrl.startsWith('/')
-        ) {
-            return normalizeThreadKey(keyOrUrl);
-        }
-        return keyOrUrl;
-    }
-
-    function hasGalleryVisitedThread(keyOrUrl) {
-        const threadKey = resolveThreadKey(keyOrUrl);
-        if (!threadKey) return false;
-        const records = getGalleryVisitedRecords();
-        return !!records[threadKey];
-    }
-
-    function applyVisitedStateToElement(el, visited) {
-        if (!el || !el.dataset) return;
-        const variant = el.dataset.clmGalleryVisitedVariant;
-        if (!variant) return;
-        if (variant === 'cover') {
-            el.classList.toggle('clm-gallery-visited-cover', !!visited);
-        } else if (variant === 'title') {
-            el.classList.toggle('clm-gallery-visited-title', !!visited);
-        }
-    }
-
-    function refreshGalleryVisitedStateForKey(threadKey) {
-        if (!threadKey) return;
-        const visited = hasGalleryVisitedThread(threadKey);
-        document.querySelectorAll('[data-clm-gallery-visited-variant]').forEach((el) => {
-            if (el.dataset.clmThreadKey === threadKey) {
-                applyVisitedStateToElement(el, visited);
-            }
-        });
-    }
-
-    function bindGalleryVisitedIndicator(element, threadUrl, variant) {
-        if (!element || !threadUrl) return null;
-        const threadKey = normalizeThreadKey(threadUrl);
-        if (!threadKey) return null;
-        element.dataset.clmThreadKey = threadKey;
-        if (variant) {
-            element.dataset.clmGalleryVisitedVariant = variant;
-        }
-        applyVisitedStateToElement(element, hasGalleryVisitedThread(threadKey));
-        return threadKey;
-    }
-
-    function markThreadGalleryVisited(threadUrl) {
-        const threadKey = normalizeThreadKey(threadUrl);
-        if (!threadKey) return;
-        const records = getGalleryVisitedRecords();
-        records[threadKey] = Date.now();
-        const removedKeys = pruneGalleryVisitedRecords(records);
-        persistGalleryVisitedRecords();
-        refreshGalleryVisitedStateForKey(threadKey);
-        removedKeys.forEach((key) => refreshGalleryVisitedStateForKey(key));
-        // 瀏覽記錄也參與 WebDAV 同步
-        scheduleWebdavSync();
-    }
-
-    function getDownloadRecords() {
-        if (!downloadRecordsCache) {
-            downloadRecordsCache = loadDownloadRecordsFromStorage();
-        }
-        return downloadRecordsCache;
-    }
-
-    function loadDownloadRecordsFromStorage() {
-        try {
-            const raw = localStorage.getItem(DOWNLOAD_RECORDS_KEY);
-            if (raw) {
-                const parsed = JSON.parse(raw);
-                if (parsed && typeof parsed === 'object') {
-                    return normalizeRecordKeyMap(parsed);
-                }
-            }
-        } catch (err) {
-            console.warn('草榴Manager: 無法讀取下載記錄', err);
-        }
-        return {};
-    }
-
-    function persistDownloadRecords() {
-        if (!downloadRecordsCache) {
-            downloadRecordsCache = {};
-        }
-        try {
-            localStorage.setItem(DOWNLOAD_RECORDS_KEY, JSON.stringify(downloadRecordsCache));
-        } catch (err) {
-            console.warn('草榴Manager: 無法保存下載記錄', err);
-        }
-    }
-
-    function hasDownloadedThread(threadUrl) {
-        const key = normalizeThreadKey(threadUrl);
-        if (!key) return false;
-        const records = getDownloadRecords();
-        return !!records[key];
-    }
-
-    function markThreadDownloaded(threadUrl) {
-        const key = normalizeThreadKey(threadUrl);
-        if (!key) return;
-        const records = getDownloadRecords();
-        records[key] = Date.now();
-        persistDownloadRecords();
-        notifyDownloadStatusChange(key);
-        scheduleWebdavSync();
-    }
-
-    function subscribeDownloadStatus(threadUrl, handler) {
-        const key = normalizeThreadKey(threadUrl);
-        if (!key || typeof handler !== 'function') {
-            return () => {};
-        }
-        if (!downloadStatusListeners.has(key)) {
-            downloadStatusListeners.set(key, new Set());
-        }
-        const listeners = downloadStatusListeners.get(key);
-        listeners.add(handler);
-        return () => {
-            listeners.delete(handler);
-            if (!listeners.size) {
-                downloadStatusListeners.delete(key);
-            }
-        };
-    }
-
-    let webdavSyncInProgress = false;
-    let webdavSyncTimerId = null;
-    let lastWebdavAutoSyncFailedAt = 0;
-
-    function getWebdavConfig() {
-        const settings = loadSettings();
-        return settings.webdav || {};
-    }
-
-    function encryptWebdavField(plain) {
-        if (!plain) return '';
-        const key = WEBDAV_AUTH_SECRET_KEY;
-        let out = '';
-        for (let i = 0; i < plain.length; i++) {
-            const c = plain.charCodeAt(i) ^ key.charCodeAt(i % key.length);
-            out += String.fromCharCode(c);
-        }
-        try {
-            return btoa(unescape(encodeURIComponent(out)));
-        } catch (e) {
-            return btoa(out);
-        }
-    }
-
-    function decryptWebdavField(cipher) {
-        if (!cipher) return '';
-        let decoded = '';
-        try {
-            decoded = decodeURIComponent(escape(atob(cipher)));
-        } catch (e) {
-            try {
-                decoded = atob(cipher);
-            } catch (e2) {
-                return '';
-            }
-        }
-        const key = WEBDAV_AUTH_SECRET_KEY;
-        let out = '';
-        for (let i = 0; i < decoded.length; i++) {
-            const c = decoded.charCodeAt(i) ^ key.charCodeAt(i % key.length);
-            out += String.fromCharCode(c);
-        }
-        return out;
-    }
-
-    function loadWebdavAuth() {
-        try {
-            let raw = '';
-            if (typeof GM_getValue === 'function') {
-                raw = GM_getValue(WEBDAV_AUTH_STORAGE_KEY, '');
-            } else if (pageWindow.localStorage) {
-                raw = pageWindow.localStorage.getItem(WEBDAV_AUTH_STORAGE_KEY) || '';
-            }
-            if (raw) {
-                const parsed = JSON.parse(raw);
-                if (parsed && typeof parsed === 'object') {
-                    if (parsed.v === 1) {
-                        return {
-                            username: decryptWebdavField(parsed.username || ''),
-                            password: decryptWebdavField(parsed.password || '')
-                        };
-                    }
-                    return {
-                        username: parsed.username || '',
-                        password: parsed.password || ''
-                    };
-                }
-            }
-        } catch (e) {
-            console.warn('草榴Manager: 無法讀取 WebDAV 憑據', e);
-        }
-        return { username: '', password: '' };
-    }
-
-    function saveWebdavAuth(auth) {
-        const payload = {
-            v: 1,
-            username: encryptWebdavField((auth && auth.username) || ''),
-            password: encryptWebdavField((auth && auth.password) || '')
-        };
-        const serialized = JSON.stringify(payload);
-        try {
-            if (typeof GM_setValue === 'function') {
-                GM_setValue(WEBDAV_AUTH_STORAGE_KEY, serialized);
-            }
-        } catch (e) {
-            console.warn('草榴Manager: 無法通過 GM_setValue 保存 WebDAV 憑據', e);
-        }
-        try {
-            if (pageWindow.localStorage) {
-                pageWindow.localStorage.setItem(WEBDAV_AUTH_STORAGE_KEY, serialized);
-            }
-        } catch (e) {
-            console.warn('草榴Manager: 無法通過 localStorage 保存 WebDAV 憑據', e);
-        }
-    }
-
-    function buildWebdavAuthHeaders(config) {
-        const headers = {};
-        let username = '';
-        let password = '';
-
-        try {
-            const auth = loadWebdavAuth();
-            if (auth) {
-                username = auth.username || '';
-                password = auth.password || '';
-            }
-        } catch (e) {
-            console.warn('草榴Manager: 讀取 WebDAV 憑據失敗', e);
-        }
-
-        // 兼容舊版本：如果安全存儲中沒有，回退到設置中的字段
-        if (!username && config && config.username) {
-            username = config.username || '';
-            password = config.password || '';
-        }
-
-        if (username) {
-            const tokenSource = username + ':' + (password || '');
-            try {
-                headers['Authorization'] = 'Basic ' + btoa(unescape(encodeURIComponent(tokenSource)));
-            } catch (e) {
-                headers['Authorization'] = 'Basic ' + btoa(tokenSource);
-            }
-        }
-        return headers;
-    }
-
-    function buildWebdavFileUrl(config) {
-        if (!config || !config.url) return null;
-        let base = (config.url || '').trim();
-        if (!base) return null;
-
-        // 去掉查詢參數和 hash，只判斷路徑部分
-        const withoutQuery = base.split(/[?#]/)[0];
-        if (/\.json$/i.test(withoutQuery)) {
-            // 兼容舊版本：直接使用完整 JSON 文件地址
-            return base;
-        }
-        if (!base.endsWith('/')) {
-            base += '/';
-        }
-        return base + 'clm_sync.json';
-    }
-
-    function scheduleWebdavSync() {
-        const config = getWebdavConfig();
-        const fileUrl = buildWebdavFileUrl(config);
-        if (!config.enabled || !fileUrl) {
-            return;
-        }
-        if (webdavSyncTimerId) {
-            clearTimeout(webdavSyncTimerId);
-        }
-        webdavSyncTimerId = setTimeout(() => {
-            webdavSyncTimerId = null;
-            syncDownloadRecordsWithWebdav({ silent: true })
-                .then((ok) => {
-                    if (ok === false) {
-                        const now = Date.now();
-                        if (!lastWebdavAutoSyncFailedAt || now - lastWebdavAutoSyncFailedAt > 60000) {
-                            lastWebdavAutoSyncFailedAt = now;
-                            showToast('WebDAV 自動同步失敗，請在設置面板中點擊「立即同步 WebDAV」查看詳情。', 'warning');
-                        }
-                    }
-                })
-                .catch((err) => {
-                    const now = Date.now();
-                    if (!lastWebdavAutoSyncFailedAt || now - lastWebdavAutoSyncFailedAt > 60000) {
-                        lastWebdavAutoSyncFailedAt = now;
-                        const msg = (err && err.message) ? err.message : String(err);
-                        showToast('WebDAV 自動同步失敗：' + msg, 'warning');
-                    }
-                });
-        }, 5000);
-    }
-
-    async function syncDownloadRecordsWithWebdav(options = {}) {
-        const statusCallback = typeof options.statusCallback === 'function' ? options.statusCallback : null;
-        const silent = !!options.silent;
-        const config = getWebdavConfig();
-        const fileUrl = buildWebdavFileUrl(config);
-        if (!config.enabled || !fileUrl) {
-            const msg = 'WebDAV 未啟用或未配置目錄地址';
-            if (statusCallback) {
-                statusCallback(msg);
-            }
-            if (!silent) {
-                showToast(msg, 'warning');
-            }
+            // 上述特征都不存在，则认为是电脑版模板
+            debugLog('  - 最终判定为桌面端模板');
             return false;
         }
-        if (webdavSyncInProgress) {
-            const msg = '已有 WebDAV 同步在進行中，請稍候再試';
-            if (statusCallback) {
-                statusCallback(msg);
-            }
-            if (!silent) {
-                showToast(msg, 'info');
-            }
-            return false;
-        }
-        webdavSyncInProgress = true;
-        try {
-            if (statusCallback) {
-                statusCallback('正在從 WebDAV 讀取數據…');
-            }
 
-            let remoteDownloadRecords = {};
-            let remoteGalleryRecords = {};
-            let remoteSettings = null;
-            let remoteUpdatedAt = 0;
-
-            try {
-                const resp = await gmCompatibleFetch(fileUrl, {
-                    method: 'GET',
-                    headers: buildWebdavAuthHeaders(config),
-                    timeout: 20000
-                });
-                if (resp.ok) {
-                    const text = await resp.text();
-                    if (text) {
-                        let parsed = null;
-                        try {
-                            parsed = JSON.parse(text);
-                        } catch (e) {
-                            console.warn('草榴Manager: WebDAV 返回內容不是合法 JSON，原文前 200 字符：', text.slice(0, 200));
-                        }
-                        if (parsed && typeof parsed === 'object') {
-                            if (parsed.version === 1 && (parsed.downloadRecords || parsed.galleryVisitedRecords || parsed.settings)) {
-                                if (parsed.downloadRecords && typeof parsed.downloadRecords === 'object') {
-                                    remoteDownloadRecords = parsed.downloadRecords;
-                                }
-                                if (parsed.galleryVisitedRecords && typeof parsed.galleryVisitedRecords === 'object') {
-                                    remoteGalleryRecords = parsed.galleryVisitedRecords;
-                                }
-                                if (parsed.settings && typeof parsed.settings === 'object') {
-                                    remoteSettings = parsed.settings;
-                                    if (typeof parsed.settings.updatedAt === 'number') {
-                                        remoteUpdatedAt = parsed.settings.updatedAt;
-                                    }
-                                }
-                            } else {
-                                // 舊版本：整個對象就是下載記錄 map
-                                remoteDownloadRecords = parsed;
-                            }
-                        }
-                    }
-                } else if (resp.status === 404) {
-                    // 文件不存在時視為空數據
-                    remoteDownloadRecords = {};
-                    remoteGalleryRecords = {};
-                    remoteSettings = null;
-                } else {
-                    throw new Error('HTTP ' + resp.status);
-                }
-            } catch (err) {
-                const msg = err && err.message ? err.message : String(err);
-                if (!silent) {
-                    showToast('WebDAV 讀取失敗：' + msg, 'error');
-                }
-                if (statusCallback) {
-                    statusCallback('讀取失敗：' + msg);
-                }
-                return false;
-            }
-
-            remoteDownloadRecords = normalizeRecordKeyMap(remoteDownloadRecords);
-            remoteGalleryRecords = normalizeRecordKeyMap(remoteGalleryRecords);
-
-            const localDownloadRecords = getDownloadRecords();
-            const localGalleryRecords = getGalleryVisitedRecords();
-            const localSettings = loadSettings();
-            const localUpdatedAt = typeof localSettings.updatedAt === 'number' ? localSettings.updatedAt : 0;
-
-            // 合併下載記錄（按時間戳取較新者）
-            const mergedDownloadRecords = {};
-            Object.keys(remoteDownloadRecords || {}).forEach((k) => {
-                const v = Number(remoteDownloadRecords[k]) || 0;
-                if (v > 0) {
-                    mergedDownloadRecords[k] = v;
-                }
-            });
-            Object.keys(localDownloadRecords || {}).forEach((k) => {
-                const localTs = Number(localDownloadRecords[k]) || 0;
-                const remoteTs = Number(mergedDownloadRecords[k]) || 0;
-                if (!remoteTs || localTs > remoteTs) {
-                    mergedDownloadRecords[k] = localTs;
-                }
-            });
-            const newDownloadKeysForLocal = [];
-            Object.keys(mergedDownloadRecords).forEach((k) => {
-                if (!localDownloadRecords[k]) {
-                    newDownloadKeysForLocal.push(k);
-                }
-            });
-
-            // 合併畫廊瀏覽記錄
-            const mergedGalleryRecords = {};
-            Object.keys(remoteGalleryRecords || {}).forEach((k) => {
-                const v = Number(remoteGalleryRecords[k]) || 0;
-                if (v > 0) {
-                    mergedGalleryRecords[k] = v;
-                }
-            });
-            Object.keys(localGalleryRecords || {}).forEach((k) => {
-                const localTs = Number(localGalleryRecords[k]) || 0;
-                const remoteTs = Number(mergedGalleryRecords[k]) || 0;
-                if (!remoteTs || localTs > remoteTs) {
-                    mergedGalleryRecords[k] = localTs;
-                }
-            });
-            const newGalleryKeysForLocal = [];
-            Object.keys(mergedGalleryRecords).forEach((k) => {
-                if (!localGalleryRecords[k]) {
-                    newGalleryKeysForLocal.push(k);
-                }
-            });
-            const removedGalleryKeys = pruneGalleryVisitedRecords(mergedGalleryRecords);
-
-            // 應用合併結果到本地
-            downloadRecordsCache = mergedDownloadRecords;
-            persistDownloadRecords();
-            newDownloadKeysForLocal.forEach((k) => notifyDownloadStatusChange(k));
-
-            galleryVisitedCache = mergedGalleryRecords;
-            persistGalleryVisitedRecords();
-            newGalleryKeysForLocal.forEach((k) => refreshGalleryVisitedStateForKey(k));
-            removedGalleryKeys.forEach((k) => refreshGalleryVisitedStateForKey(k));
-
-            // 合併設置（基於 updatedAt 判斷新舊）
-            let mergedSettingsPayload = null;
-            let settingsChangedFromRemote = false;
-
-            if (remoteSettings && remoteUpdatedAt > localUpdatedAt) {
-                // 以遠端設置為準
-                try {
-                    saveSettings(remoteSettings);
-                    settingsChangedFromRemote = true;
-                } catch (e) {
-                    console.warn('草榴Manager: 無法應用 WebDAV 遠端設置', e);
-                }
-                mergedSettingsPayload = remoteSettings;
-            } else {
-                // 以本地設置為準
-                mergedSettingsPayload = localSettings;
-            }
-
-            // 構建要上傳到 WebDAV 的設置快照（移除 WebDAV 憑據）
-            let settingsForUpload = null;
-            if (mergedSettingsPayload && typeof mergedSettingsPayload === 'object') {
-                settingsForUpload = JSON.parse(JSON.stringify(mergedSettingsPayload));
-                if (settingsForUpload.webdav) {
-                    delete settingsForUpload.webdav.username;
-                    delete settingsForUpload.webdav.password;
-                }
-            }
-
-            if (statusCallback) {
-                const totalDownloads = Object.keys(mergedDownloadRecords).length;
-                const totalVisited = Object.keys(mergedGalleryRecords).length;
-                statusCallback('同步成功，本地下載記錄 ' + totalDownloads + ' 條，瀏覽記錄 ' + totalVisited + ' 條');
-            }
-            if (!silent) {
-                showToast('WebDAV 同步已完成', 'success');
-                if (settingsChangedFromRemote) {
-                    showToast('已從 WebDAV 更新設置', 'success');
-                }
-            }
-
-            // 粗略比較，有差異則推送到 WebDAV
-            let needPush = false;
-            if (JSON.stringify(mergedDownloadRecords || {}) !== JSON.stringify(remoteDownloadRecords || {})) {
-                needPush = true;
-            }
-            if (JSON.stringify(mergedGalleryRecords || {}) !== JSON.stringify(remoteGalleryRecords || {})) {
-                needPush = true;
-            }
-            if (JSON.stringify(settingsForUpload || {}) !== JSON.stringify(remoteSettings || {})) {
-                needPush = true;
-            }
-
-            if (needPush) {
-                const payload = {
-                    version: 1,
-                    downloadRecords: mergedDownloadRecords,
-                    galleryVisitedRecords: mergedGalleryRecords,
-                    settings: settingsForUpload || {}
-                };
-                const headers = buildWebdavAuthHeaders(config);
-                headers['Content-Type'] = 'application/json; charset=UTF-8';
-                try {
-                    const resp = await gmCompatibleFetch(fileUrl, {
-                        method: 'PUT',
-                        headers,
-                        body: JSON.stringify(payload),
-                        timeout: 20000
-                    });
-                    if (!resp.ok && !silent) {
-                        showToast('WebDAV 上傳失敗：HTTP ' + resp.status, 'error');
-                    }
-                } catch (err) {
-                    if (!silent) {
-                        const msg = err && err.message ? err.message : String(err);
-                        showToast('WebDAV 上傳失敗：' + msg, 'error');
-                    }
-                }
-            }
-            return true;
-        } finally {
-            webdavSyncInProgress = false;
-        }
-    }
-
-    function notifyDownloadStatusChange(threadKey) {
-        const listeners = downloadStatusListeners.get(threadKey);
-        if (!listeners) return;
-        listeners.forEach((fn) => {
-            try {
-                fn(true);
-            } catch (err) {
-                console.warn('草榴Manager: 下載狀態回調失敗', err);
-            }
-        });
-    }
-
-    const QB_LOG_STORAGE_KEY = '草榴ManagerQbLogs';
-    const MAX_QB_LOG_ENTRIES = 80;
-    let qbLogCache = null;
-    const qbLogSubscribers = new Set();
-
-    function loadQbLogsFromStorage() {
-        try {
-            const raw = localStorage.getItem(QB_LOG_STORAGE_KEY);
-            if (raw) {
-                const parsed = JSON.parse(raw);
-                if (Array.isArray(parsed)) {
-                    return parsed;
-                }
-            }
-        } catch (err) {
-            console.warn('草榴Manager: 無法讀取日志', err);
-        }
-        return [];
-    }
-
-    function getQbLogs() {
-        if (!qbLogCache) {
-            qbLogCache = loadQbLogsFromStorage();
-        }
-        return qbLogCache;
-    }
-
-    function persistQbLogs() {
-        if (!qbLogCache) return;
-        try {
-            localStorage.setItem(QB_LOG_STORAGE_KEY, JSON.stringify(qbLogCache));
-        } catch (err) {
-            console.warn('草榴Manager: 無法保存日志', err);
-        }
-    }
-
-    function appendQbLog(message, level = 'info') {
-        const logs = getQbLogs();
-        logs.push({
-            id: Date.now() + '_' + Math.random().toString(16).slice(2),
-            time: Date.now(),
-            level,
-            message
-        });
-        while (logs.length > MAX_QB_LOG_ENTRIES) {
-            logs.shift();
-        }
-        persistQbLogs();
-        qbLogSubscribers.forEach((fn) => {
-            try {
-                fn(logs.slice());
-            } catch (err) {
-                console.warn('草榴Manager: 日志訂閱回調失敗', err);
-            }
-        });
-    }
-
-    function clearQbLogs() {
-        qbLogCache = [];
-        persistQbLogs();
-        qbLogSubscribers.forEach((fn) => {
-            try {
-                fn([]);
-            } catch (err) {
-                console.warn('草榴Manager: 日志訂閱回調失敗', err);
-            }
-        });
-    }
-
-    function subscribeQbLogs(handler) {
-        if (typeof handler !== 'function') {
-            return () => {};
-        }
-        qbLogSubscribers.add(handler);
-        return () => {
-            qbLogSubscribers.delete(handler);
-        };
-    }
-
-    function formatLogTime(ts) {
-        const date = new Date(ts);
-        const pad = (n) => (n < 10 ? '0' + n : '' + n);
-        return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
-    }
-
-    let toastContainer = null;
-    let toastStyleInjected = false;
-
-    function ensureToastContainer() {
-        if (toastContainer) return toastContainer;
-        toastContainer = document.createElement('div');
-        toastContainer.className = 'clm-toast-container';
-        document.body.appendChild(toastContainer);
-        if (!toastStyleInjected) {
-            toastStyleInjected = true;
-            injectStyle(`
-                .clm-toast-container {
-                    position: fixed;
-                    right: 20px;
-                    bottom: 20px;
-                    display: flex;
-                    flex-direction: column;
-                    gap: 8px;
-                    z-index: 999999 !important;
-                    pointer-events: none;
-                }
-                .clm-toast {
-                    min-width: 220px;
-                    max-width: 320px;
-                    background: rgba(0, 0, 0, 0.8);
-                    color: #fff;
-                    padding: 10px 12px;
-                    border-radius: 6px;
-                    font-size: 12px;
-                    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
-                    transform: translateY(20px);
-                    opacity: 0;
-                    transition: opacity 0.25s ease, transform 0.25s ease;
-                }
-                .clm-toast.clm-show {
-                    opacity: 1;
-                    transform: translateY(0);
-                }
-                .clm-toast.clm-success {
-                    background: rgba(22, 163, 74, 0.95);
-                    min-width: 280px;
-                    max-width: 440px;
-                    padding: 18px 20px;
-                    font-size: 14px;
-                    font-weight: 600;
-                }
-                .clm-toast.clm-error {
-                    background: rgba(220, 38, 38, 0.95);
-                }
-                .clm-toast.clm-warning {
-                    background: rgba(234, 179, 8, 0.95);
-                    color: #1f2937;
-                }
-            `);
-        }
-        return toastContainer;
-    }
-
-    function showToast(message, type = 'info', duration = 4000) {
-        const container = ensureToastContainer();
-        const toast = document.createElement('div');
-        toast.className = `clm-toast clm-${type}`;
-        toast.textContent = message;
-        container.appendChild(toast);
-        requestAnimationFrame(() => {
-            toast.classList.add('clm-show');
-        });
-        setTimeout(() => {
-            toast.classList.remove('clm-show');
-            setTimeout(() => {
-                toast.remove();
-            }, 250);
-        }, duration);
-    }
-
-    function summarizeResource(value, maxLength = 80) {
-        if (!value) return '未知資源';
-        const str = String(value).trim();
-        if (str.length <= maxLength) return str;
-        return str.slice(0, maxLength - 3) + '...';
-    }
-
-    function collectGalleryImages(threadContent, baseHref = location.href) {
-        if (!threadContent) return [];
-        const seen = new Set();
-        const gallery = [];
-
-        function pushItem(rawUrl, label) {
-            if (!rawUrl) return;
-            // 排除广告占位符和无效URL
-            if (rawUrl.includes('adblo_ck.jpg') || rawUrl.includes('http://a.d/')) return;
-            const abs = getAbsoluteUrl(rawUrl, baseHref);
-            if (!abs || seen.has(abs)) return;
-            seen.add(abs);
-            gallery.push({
-                src: abs,
-                url: abs,
-                label: label || ''
-            });
-        }
-
-        // 收集所有带有真实图片数据的img标签
-        // 优先查找在.tpc_content中的图片，排除广告区域
-        const contentArea = threadContent.querySelector('.tpc_content') || threadContent;
-        const allImages = contentArea.querySelectorAll('img[ess-data], img[iyl-data], img[data-src], img[src]');
-        
-        allImages.forEach(img => {
-            // 优先使用ess-data，然后是data-src，然后是iyl-data，最后是src
-            const imgUrl = img.getAttribute('ess-data') ||
-                img.getAttribute('data-src') ||
-                img.getAttribute('iyl-data') ||
-                img.src;
+        /**
+         * 检测页面类型
+         */
+        function detectPageType() {
+            const href = window.location.href;
+            const isMobile = isMobilePage();
             
-            if (imgUrl && !imgUrl.includes('adblo_ck.jpg') && !imgUrl.includes('http://a.d/')) {
-                // 过滤掉太小的图片（可能是图标或广告）
-                const width = img.naturalWidth || img.width || 0;
-                const height = img.naturalHeight || img.height || 0;
-                if (width < 100 && height < 100 && img.src && !img.getAttribute('ess-data') && !img.getAttribute('data-src')) {
-                    return; // 跳过小图片
-                }
-                
-                const label = img.getAttribute('title') || 
-                    img.getAttribute('alt') || 
-                    (gallery.length === 0 ? '封面' : `圖片 ${gallery.length + 1}`);
-                pushItem(imgUrl, label);
+            if (href.indexOf('/htm_mob/') !== -1 || href.indexOf('/htm_data/') !== -1) {
+                return isMobile ? 'mobile-thread' : 'desktop-thread';
             }
-        });
-
-        // 如果没有找到任何图片，尝试查找封面图片（兼容旧逻辑）
-        if (gallery.length === 0) {
-            const coverImg = threadContent.querySelector('img[ess-data], img[iyl-data], img[data-src], img[src*="pb_"], img[src*="cover"]');
-            if (coverImg) {
-                const coverUrl = coverImg.getAttribute('ess-data') ||
-                    coverImg.getAttribute('data-src') ||
-                    coverImg.getAttribute('iyl-data') ||
-                    coverImg.src;
-                if (coverUrl) {
-                    pushItem(coverUrl, coverImg.getAttribute('title') || '封面');
-                }
+            if (href.indexOf('search.php') !== -1) {
+                return isMobile ? 'mobile-search' : 'desktop-search';
             }
+            if (href.indexOf('thread0806.php') !== -1) {
+                return isMobile ? 'mobile-forum' : 'desktop-forum';
+            }
+            return 'unknown';
         }
 
-        // 收集.cl-gallery中的链接（兼容旧逻辑）
-        const galleryAnchors = threadContent.querySelectorAll('.cl-gallery a[href]');
-        galleryAnchors.forEach(anchor => {
-            const href = anchor.getAttribute('href');
-            if (!href) return;
-            const label = anchor.querySelector('img')?.getAttribute('title') || anchor.textContent.trim() || '預覽';
-            pushItem(href, label);
-        });
-
-        return gallery;
-    }
-
-    function extractCleanText(node) {
-        if (!node) return '';
-        const clone = node.cloneNode(true);
-        const removable = clone.querySelectorAll('script, style, iframe, video, audio');
-        removable.forEach(el => el.remove());
-        
-        // 将 <br> 和 <br/> 标签转换为换行符
-        const brElements = clone.querySelectorAll('br');
-        brElements.forEach(br => {
-            const textNode = document.createTextNode('\n');
-            br.parentNode.replaceChild(textNode, br);
-        });
-        
-        const text = clone.textContent
-            .replace(/\u00A0/g, ' ')
-            .replace(/\s+\n/g, '\n')
-            .replace(/\n{2,}/g, '\n')
-            .replace(/[ \t]{2,}/g, ' ')
-            .trim();
-        return text;
-    }
-
-    function extractPostUser(contentEl) {
-        if (!contentEl) return '';
-        
-        // 手机端 htm_mob：.tpc_cont 与 .tpc_detail 在同一块内，优先从同一块里的 .tpc_detail 读取用户名
-        if (contentEl.classList && contentEl.classList.contains('tpc_cont')) {
-            const parent = contentEl.parentElement;
-            if (parent) {
-                const mobileDetail = parent.querySelector('.tpc_detail.f10.fl li');
-                if (mobileDetail) {
-                    const html = mobileDetail.innerHTML || '';
-                    // 提取 <br> 之前的内容（用户名），如：血色不浪漫<br>#1樓 ...
-                    const match = html.match(/^([^<]+?)(?:<br|<BR)/i);
-                    if (match && match[1]) {
-                        const username = match[1].trim();
-                        console.log('草榴Manager: 手机端提取到用户名:', username);
-                        if (username && !username.includes('#') && !username.includes('樓')) {
-                            return username;
-                        }
-                    }
-                    // 如果没有 <br>，回退到第一行文本
-                    const text = mobileDetail.textContent || mobileDetail.innerText || '';
-                    const lines = text.split('\n').map(l => l.trim()).filter(l => l);
-                    if (lines.length > 0 && !lines[0].includes('#') && !lines[0].includes('樓')) {
-                        console.log('草榴Manager: 手机端从文本提取用户名:', lines[0]);
-                        return lines[0];
-                    }
-                }
-            }
-        }
-        
-        // 电脑端 / 其他布局：尝试从 .tpc_detail.f10.fl 所在的 .t.t2/.t2/.t 容器中提取用户名
-        const postContainer = contentEl.closest('.t.t2, .t2, .t');
-        if (postContainer) {
-            const tpcDetail = postContainer.querySelector('.tpc_detail.f10.fl li');
-            if (tpcDetail) {
-                // 获取 innerHTML 并解析
-                const html = tpcDetail.innerHTML || '';
-                // 提取 <br> 之前的内容（用户名）
-                // 匹配格式：血色不浪漫<br>#1樓
-                const match = html.match(/^([^<]+?)(?:<br|<BR)/i);
-                if (match && match[1]) {
-                    const username = match[1].trim();
-                    console.log('草榴Manager: 提取到用户名:', username);
-                    if (username && !username.includes('#') && !username.includes('樓')) {
-                        return username;
-                    }
-                }
-                // 如果没有 <br>，尝试提取第一行
-                const text = tpcDetail.textContent || tpcDetail.innerText || '';
-                const lines = text.split('\n').map(l => l.trim()).filter(l => l);
-                if (lines.length > 0 && !lines[0].includes('#') && !lines[0].includes('樓')) {
-                    console.log('草榴Manager: 从文本提取用户名:', lines[0]);
-                    return lines[0];
-                }
-            }
-        }
-        
-        // 方法1：向上查找包含 tpc_content 的最外层 th（评论内容所在的 th）
-        // 然后找到这个 th 所在行的第一个 th（用户名所在的 th）
-        let current = contentEl;
-        let outerTh = null;
-        
-        // 向上查找，找到包含 tpc_content 的最外层 th
-        // 这个 th 应该包含一个 table 元素，并且这个 table 应该包含当前的 contentEl
-        while (current && current !== document.body) {
-            if (current.tagName === 'TH') {
-                const table = current.querySelector('table');
-                if (table && table.contains(contentEl)) {
-                    outerTh = current;
-                    break;
-                }
-            }
-            current = current.parentElement;
-        }
-        
-        if (outerTh) {
-            // 找到这个 th 所在的 tr
-            const row = outerTh.closest('tr');
-            if (row) {
-                // 查找同一行的第一个 th（包含用户名）
-                const firstTh = row.querySelector('th:first-child');
-                if (firstTh && firstTh !== outerTh) {
-                    // 在第一个 th 中查找 b 标签（用户名）
-                    const bTag = firstTh.querySelector('b');
-                    if (bTag) {
-                        const text = bTag.textContent.trim();
-                        if (text) {
-                            return text;
-                        }
-                    }
-                }
-            }
-        }
-        
-        // 方法2：直接查找包含 tpc_content 的 div.t.t2 或 .t2，然后找第一行的第一个 th
-        const tDiv = contentEl.closest('.t.t2, .t2');
-        if (tDiv) {
-            // 查找 tDiv 内的第一个 table（最外层的 table）
-            const table = tDiv.querySelector('> table, table');
-            if (table) {
-                // 查找 table 的第一行（tbody 内的第一行，或者直接的第一行）
-                const firstRow = table.querySelector('tbody > tr.tr1, tbody > tr:first-child, tr.tr1, tr:first-child');
-                if (firstRow) {
-                    // 查找第一行的第一个 th（包含用户名）
-                    const firstTh = firstRow.querySelector('th:first-child');
-                    if (firstTh) {
-                        // 在第一个 th 中查找 b 标签（用户名）
-                        const bTag = firstTh.querySelector('b');
-                        if (bTag) {
-                            const text = bTag.textContent.trim();
-                            if (text) {
-                                return text;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        // 方法3：查找包含 tpc_content 的表格，向上找到包含它的最外层 table
-        // 然后查找这个 table 的第一行第一个 th
-        let table = contentEl.closest('table');
-        if (table) {
-            // 继续向上查找，找到最外层的 table（包含评论的 table）
-            while (table && table.parentElement) {
-                const parentTable = table.parentElement.closest('table');
-                if (parentTable) {
-                    table = parentTable;
-                } else {
-                    break;
-                }
-            }
-            
-            // 查找这个 table 的第一行第一个 th
-            const firstRow = table.querySelector('tbody > tr:first-child, tr:first-child');
-            if (firstRow) {
-                const firstTh = firstRow.querySelector('th:first-child');
-                if (firstTh) {
-                    const bTag = firstTh.querySelector('b');
-                    if (bTag) {
-                        const text = bTag.textContent.trim();
-                        if (text) {
-                            return text;
-                        }
-                    }
-                }
-            }
-        }
-        
-        // 最后备用方案：查找其他可能的位置
-        const td = contentEl.closest('td');
-        const row = td?.parentElement;
-        const candidateContainers = new Set();
-
-        if (row) {
-            const firstCell = row.querySelector('td:first-child, th:first-child');
-            if (firstCell && firstCell !== td) {
-                candidateContainers.add(firstCell);
-            }
-            if (row.previousElementSibling) {
-                candidateContainers.add(row.previousElementSibling);
-            }
-            candidateContainers.add(row);
+        /**
+         * 向页面注入 CSS
+         */
+        function injectStyle(css) {
+            const style = document.createElement('style');
+            style.type = 'text/css';
+            style.textContent = css;
+            document.head.appendChild(style);
         }
 
-        candidateContainers.add(td?.previousElementSibling || null);
-        candidateContainers.add(contentEl.closest('.tpc'));
-        candidateContainers.add(contentEl.closest('table'));
-
-        const selectors = [
-            '.readName a',
-            '.readName',
-            '.tpc_info a',
-            '.tpc_info',
-            '.tipad a',
-            '.tipad b',
-            '.tal a',
-            '.tal b',
-            '.authi a',
-            '.authi',
-            'b'
-        ];
-
-        for (const container of candidateContainers) {
-            if (!container) continue;
-            for (const sel of selectors) {
-                const target = container.querySelector(sel);
-                if (target) {
-                    const text = target.textContent.trim();
-                    if (text) {
-                        return text;
-                    }
-                }
+        function fetchCrossOriginText(url) {
+            if (!url) {
+                return Promise.reject(new Error('無效的請求地址'));
             }
-            if (container.dataset?.author) {
-                const author = container.dataset.author.trim();
-                if (author) return author;
-            }
-        }
-        return '';
-    }
-
-    function parseTitleTags(titleText) {
-        if (!titleText) return { quality: null, size: null, code: null, title: '' };
-        
-        // 移除 HTML 标签和多余空格
-        const cleanTitle = titleText.replace(/<[^>]+>/g, '').trim();
-        
-        // 匹配格式：允许前面有前缀，如 "新作 [HD/5.75G] BOKD-305 标题文本"
-        // 使用非贪婪匹配，确保能匹配到第一个 [ ] 对
-        const match = cleanTitle.match(/\[([^\]]+)\]\s*(.+)$/);
-        if (!match) {
-            // 如果没有匹配到 [ ] 格式，尝试直接匹配番号格式
-            // 例如：BOKD-303 标题文本，或 OLM-257E 标题文本（末尾帶字母）
-            const codeMatch = cleanTitle.match(/^([A-Z0-9]+[-_][0-9]+[A-Z]*)\s+(.+)$/i);
-            if (codeMatch) {
-                return {
-                    quality: null,
-                    size: null,
-                    code: codeMatch[1].toUpperCase(),
-                    title: codeMatch[2].trim()
-                };
-            }
-            return { quality: null, size: null, code: null, title: cleanTitle };
-        }
-        
-        const bracketContent = match[1]; // HD/5.75G
-        const titlePart = match[2]; // BOKD-305 AVデビュー ボクこう見えてオチンチンついてます。 神戸まこ。
-        
-        let quality = null;
-        let size = null;
-        let code = null;
-        let title = '';
-        
-        // 解析括号内的内容：HD/5.75G
-        const bracketParts = bracketContent.split('/');
-        if (bracketParts.length >= 2) {
-            // 第一个部分：清晰度 (SD/HD/4K/VR)
-            const qualityPart = bracketParts[0].trim().toUpperCase();
-            if (['SD', 'HD', '4K', 'VR'].includes(qualityPart)) {
-                quality = qualityPart;
-            }
-            
-            // 第二个部分：文件大小 (如 5.75G, 6.23G)
-            const sizePart = bracketParts[1].trim();
-            if (sizePart.match(/^[\d.]+[GMK]?B?$/i)) {
-                size = sizePart.toUpperCase();
-            }
-        } else if (bracketContent.trim()) {
-            // 如果只有一个部分，尝试判断是清晰度还是大小
-            const singlePart = bracketContent.trim().toUpperCase();
-            if (['SD', 'HD', '4K', 'VR'].includes(singlePart)) {
-                quality = singlePart;
-            } else if (singlePart.match(/^[\d.]+[GMK]?B?$/i)) {
-                size = singlePart;
-            }
-        }
-        
-        // 解析标题部分：提取番号和片名
-        // 匹配番号格式：BOKD-305、OLM-257E 等 (字母数字-数字+可选字母，支持多种分隔符)
-        const codeMatch = titlePart.match(/^([A-Z0-9]+[-_][0-9]+[A-Z]*)\s+(.+)$/i);
-        if (codeMatch) {
-            code = codeMatch[1].toUpperCase(); // BOKD-305
-            title = codeMatch[2].trim(); // AVデビュー ボクこう見えてオチンチンついてます。 神戸まこ。
-        } else {
-            // 如果没有番号，整个作为标题
-            title = titlePart.trim();
-        }
-        
-        return { quality, size, code, title };
-    }
-
-    function collectThreadContext(doc) {
-        // 兼容电脑端 .tpc_content 和手机端 .tpc_cont
-        let contentBlocks = Array.from(doc.querySelectorAll('.tpc_content'));
-        if (!contentBlocks.length) {
-            // 尝试手机端选择器
-            contentBlocks = Array.from(doc.querySelectorAll('.tpc_cont'));
-        }
-        if (!contentBlocks.length) {
-            return {
-                topic: null,
-                comments: [],
-                ads: []
-            };
-        }
-
-        // 收集所有 ftad-ct 元素
-        const allFtadElements = Array.from(doc.querySelectorAll('.ftad-ct'));
-        const ads = allFtadElements.map(el => el.outerHTML);
-        
-        // 调试：输出收集到的广告数量
-        if (ads.length > 0) {
-            console.log('clm 收集到广告数量:', ads.length, ads);
-        }
-
-        // 获取标题（从 <td class="h"> 中获取）
-        let titleInfo = null;
-        let rawTitleText = null;
-        // 查找 <td class="h"> 元素
-        const hTd = doc.querySelector('td.h');
-        if (hTd) {
-            // 查找 <b>本頁主題:</b> 或 <b>本页主题:</b>
-            const themeLabel = hTd.querySelector('b');
-            if (themeLabel && (themeLabel.textContent.includes('本頁主題') || themeLabel.textContent.includes('本页主题'))) {
-                // 获取 <b> 标签后面的所有内容
-                let titleText = '';
-                // 方法1：尝试从整个 td 的 innerHTML 中提取（保留格式信息）
-                const fullHtml = hTd.innerHTML || '';
-                const htmlMatch = fullHtml.match(/本[頁页]主題[：:]\s*<\/b>\s*(.+)/);
-                if (htmlMatch) {
-                    // 提取 HTML 内容，然后转换为文本（保留格式如 [HD/5.87G]）
-                    const tempDiv = document.createElement('div');
-                    tempDiv.innerHTML = htmlMatch[1];
-                    titleText = tempDiv.textContent || tempDiv.innerText || '';
-                }
-                // 方法2：如果方法1没获取到，从 <b> 标签的 nextSibling 开始，收集所有后续节点的文本
-                if (!titleText.trim()) {
-                    let node = themeLabel.nextSibling;
-                    while (node) {
-                        if (node.nodeType === Node.TEXT_NODE) {
-                            titleText += node.textContent;
-                        } else if (node.nodeType === Node.ELEMENT_NODE) {
-                            titleText += node.textContent;
-                        }
-                        node = node.nextSibling;
-                    }
-                }
-                // 方法3：如果方法2没获取到，尝试从整个 td 中提取（使用正则）
-                if (!titleText.trim()) {
-                    const fullText = hTd.textContent || hTd.innerText || '';
-                    const match = fullText.match(/本[頁页]主題[：:]\s*(.+)/);
-                    if (match) {
-                        titleText = match[1].trim();
-                    }
-                }
-                // 方法4：如果还是没获取到，尝试获取整个 td 的文本，然后移除"本頁主題:"部分
-                if (!titleText.trim()) {
-                    const fullText = hTd.textContent || hTd.innerText || '';
-                    titleText = fullText.replace(/.*?本[頁页]主題[：:]\s*/, '').trim();
-                }
-                if (titleText.trim()) {
-                    rawTitleText = titleText.trim();
-                    titleInfo = parseTitleTags(titleText);
-                    // 如果解析后没有标题，使用原始标题
-                    if (titleInfo && !titleInfo.title) {
-                        titleInfo.title = rawTitleText;
-                    }
-                }
-            }
-        }
-        // 如果从 td.h 没获取到，尝试从 f16 或 f18 获取（作为后备方案）
-        if (!titleInfo && !rawTitleText) {
-            const firstContentBlock = contentBlocks[0];
-            if (firstContentBlock) {
-                // 尝试多种方式查找 f16 或 f18 元素
-                let titleElement = null;
-                const postContainer = firstContentBlock.closest('.t.t2, .t2, .t');
-                if (postContainer) {
-                    titleElement = postContainer.querySelector('h4.f16, .f16, h4[class*="f16"], .f18');
-                }
-                // 如果没找到，尝试在整个文档中查找（作为后备方案）
-                if (!titleElement) {
-                    titleElement = doc.querySelector('h4.f16, .f16, h4[class*="f16"], .f18');
-                }
-                if (titleElement) {
-                    let titleText = titleElement.textContent || titleElement.innerText || '';
-                    // 移除可能存在的“新作”标签
-                    titleText = titleText.replace(/^新作\s*/, '');
-                    if (titleText.trim()) {
-                        rawTitleText = titleText.trim();
-                        titleInfo = parseTitleTags(titleText);
-                        // 如果解析后没有标题，使用原始标题
-                        if (titleInfo && !titleInfo.title) {
-                            titleInfo.title = rawTitleText;
-                        }
-                    }
-                }
-            }
-        }
-
-        const posts = contentBlocks.map((el, idx) => {
-            const user = extractPostUser(el) || (idx === 0 ? '樓主' : `回覆 ${idx}`);
-            const content = extractCleanText(el);
-            
-            // 查找该帖子相关的 ftad-ct 元素（在同一个 .t.t2 容器内或附近）
-            const postContainer = el.closest('.t.t2, .t2, .t');
-            let postAds = [];
-            if (postContainer) {
-                // 查找同一容器内的 ftad-ct 元素
-                const containerFtads = postContainer.querySelectorAll('.ftad-ct');
-                postAds = Array.from(containerFtads).map(ftad => ftad.outerHTML);
-            }
-            
-            // 查找该帖子对应的 tr.tr1.do_not_catch 中的 tips 元素
-            let postTips = [];
-            if (postContainer) {
-                // 方法1：查找同一容器内的 tr.tr1.do_not_catch 元素
-                let tr1DoNotCatch = postContainer.querySelector('tr.tr1.do_not_catch');
-                
-                // 方法2：如果没找到，尝试查找包含当前 contentEl 的 table，然后找其 tr.tr1.do_not_catch
-                if (!tr1DoNotCatch) {
-                    const contentTable = el.closest('table');
-                    if (contentTable) {
-                        // 向上查找最外层的 table（包含整个帖子的 table）
-                        let outerTable = contentTable;
-                        while (outerTable && outerTable.parentElement) {
-                            const parentTable = outerTable.parentElement.closest('table');
-                            if (parentTable) {
-                                outerTable = parentTable;
-                            } else {
-                                break;
-                            }
-                        }
-                        if (outerTable) {
-                            tr1DoNotCatch = outerTable.querySelector('tr.tr1.do_not_catch');
-                        }
-                    }
-                }
-                
-                if (tr1DoNotCatch) {
-                    // 只查找 .tips 元素，排除 .tiptop 等其他包含 tip 的元素
-                    const tipsElements = tr1DoNotCatch.querySelectorAll('.tips');
-                    postTips = Array.from(tipsElements).map(tip => tip.outerHTML);
-                }
-            }
-            
-            return {
-                user,
-                content: content.length > 600 ? `${content.slice(0, 600)}…` : content,
-                ads: postAds,
-                tips: postTips,
-                titleInfo: idx === 0 ? titleInfo : null,
-                rawTitle: idx === 0 ? rawTitleText : null
-            };
-        });
-
-        const [topic, ...rest] = posts;
-        const comments = rest.slice(0, 30);
-
-        return {
-            topic,
-            comments,
-            ads
-        };
-    }
-
-    function collectThreadAdBlocks(doc) {
-        if (!doc) return [];
-        // 收集所有 ftad-ct 元素
-        const ftadElements = Array.from(doc.querySelectorAll('.ftad-ct'));
-        return ftadElements.map(el => el.outerHTML);
-    }
-
-    const adScriptCache = new Map();
-
-    function decodeJsStringLiteral(input) {
-        if (!input) return '';
-        let output = '';
-        for (let i = 0; i < input.length; i++) {
-            const ch = input[i];
-            if (ch !== '\\') {
-                output += ch;
-                continue;
-            }
-            i += 1;
-            if (i >= input.length) {
-                break;
-            }
-            const next = input[i];
-            switch (next) {
-                case 'n':
-                    output += '\n';
-                    break;
-                case 'r':
-                    output += '\r';
-                    break;
-                case 't':
-                    output += '\t';
-                    break;
-                case 'b':
-                    output += '\b';
-                    break;
-                case 'f':
-                    output += '\f';
-                    break;
-                case 'v':
-                    output += '\v';
-                    break;
-                case '0':
-                    output += '\0';
-                    break;
-                case '\\':
-                    output += '\\';
-                    break;
-                case '"':
-                case '\'':
-                case '`':
-                    output += next;
-                    break;
-                case 'x': {
-                    const hex = input.slice(i + 1, i + 3);
-                    if (/^[0-9a-fA-F]{2}$/.test(hex)) {
-                        output += String.fromCharCode(parseInt(hex, 16));
-                        i += 2;
-                    } else {
-                        output += next;
-                    }
-                    break;
-                }
-                case 'u': {
-                    if (input[i + 1] === '{') {
-                        const endBrace = input.indexOf('}', i + 2);
-                        if (endBrace !== -1) {
-                            const codePointHex = input.slice(i + 2, endBrace);
-                            if (/^[0-9a-fA-F]+$/.test(codePointHex)) {
-                                output += String.fromCodePoint(parseInt(codePointHex, 16));
-                                i = endBrace;
-                                break;
-                            }
-                        }
-                    }
-                    const hex = input.slice(i + 1, i + 5);
-                    if (/^[0-9a-fA-F]{4}$/.test(hex)) {
-                        output += String.fromCharCode(parseInt(hex, 16));
-                        i += 4;
-                    } else {
-                        output += next;
-                    }
-                    break;
-                }
-                default:
-                    output += next;
-                    break;
-            }
-        }
-        return output;
-    }
-
-    function extractSpjsonPayload(scriptText) {
-        if (!scriptText) return '';
-        const assignMatch = scriptText.match(/(?:var|let|const)?\s*(?:window\.)?\s*spJson\s*=\s*([\s\S]+?);/i);
-        if (!assignMatch || !assignMatch[1]) {
-            return '';
-        }
-
-        function resolveExpression(expr) {
-            const trimmed = expr.trim();
-            if (!trimmed) {
-                return '';
-            }
-            const literalMatch = trimmed.match(/^(['"`])([\s\S]*)\1$/);
-            if (literalMatch) {
-                return decodeJsStringLiteral(literalMatch[2]);
-            }
-            const decodeMatch = trimmed.match(/^decodeURIComponent\s*\(([\s\S]+)\)$/i);
-            if (decodeMatch) {
-                const inner = resolveExpression(decodeMatch[1]);
-                try {
-                    return decodeURIComponent(inner);
-                } catch (err) {
-                    return inner;
-                }
-            }
-            const jsonParseMatch = trimmed.match(/^JSON\.parse\s*\(([\s\S]+)\)$/i);
-            if (jsonParseMatch) {
-                const inner = resolveExpression(jsonParseMatch[1]);
-                try {
-                    const parsed = JSON.parse(inner);
-                    if (typeof parsed === 'string') {
-                        return parsed;
-                    }
-                    return JSON.stringify(parsed);
-                } catch (err) {
-                    return inner;
-                }
-            }
-            return '';
-        }
-
-        return resolveExpression(assignMatch[1]);
-    }
-
-    async function fetchAdScriptSource(scriptUrl) {
-        if (!scriptUrl) return '';
-        if (adScriptCache.has(scriptUrl)) {
-            return adScriptCache.get(scriptUrl);
-        }
-        const requester = (async () => {
-            // 直接使用 GM_xmlhttpRequest 避免 CORS 问题
             if (typeof GM_xmlhttpRequest === 'function') {
                 return new Promise((resolve, reject) => {
                     GM_xmlhttpRequest({
                         method: 'GET',
-                        url: scriptUrl,
+                        url,
                         headers: {
-                            'Referer': location.origin
+                            'Referer': 'https://www.rmdown.com/'
                         },
                         onload: (resp) => {
                             if (resp.status >= 200 && resp.status < 400) {
@@ -2040,1918 +145,4332 @@
                     });
                 });
             }
-            // 如果没有 GM_xmlhttpRequest，尝试使用 fetch（可能会遇到 CORS 问题）
-            try {
-                const resp = await fetch(scriptUrl, { credentials: 'include' });
+            return fetch(url, { credentials: 'include' }).then(resp => {
                 if (!resp.ok) {
                     throw new Error('HTTP ' + resp.status);
                 }
-                return await resp.text();
-            } catch (err) {
-                throw err;
-            }
-        })();
-        requester.catch(() => adScriptCache.delete(scriptUrl));
-        adScriptCache.set(scriptUrl, requester);
-        return requester;
-    }
-
-    function createFtadGridElement(doc, adEntries) {
-        if (!doc || !adEntries || !adEntries.length) return null;
-        const container = doc.createElement('div');
-        container.className = 'ftad-ct';
-        const columns = adEntries.length > 10 ? Math.ceil(adEntries.length / 2) : 'auto-fit';
-        container.style.gridTemplateColumns = `repeat(${columns}, minmax(100px, 1fr))`;
-        adEntries.forEach((entry) => {
-            if (!entry || !entry.u) return;
-            const item = doc.createElement('div');
-            item.className = 'ftad-item';
-            const link = doc.createElement('a');
-            link.setAttribute('target', '_blank');
-            link.setAttribute('title', entry.c || '');
-            link.setAttribute('href', entry.u);
-            const title = entry.t ? entry.t.split('|')[1] || entry.t : '';
-            link.textContent = title;
-            item.appendChild(link);
-            container.appendChild(item);
-        });
-        return container;
-    }
-
-    function createSpinitTableElement(doc, leftEntry, rightEntry, startIndex = 0) {
-        if (!doc || !leftEntry) return null;
-        const table = doc.createElement('table');
-        table.setAttribute('cellspacing', '0');
-        table.setAttribute('cellpadding', '5');
-        table.setAttribute('width', '100%');
-        table.className = 'sptable_do_not_remove';
-        const tbody = doc.createElement('tbody');
-        const tr = doc.createElement('tr');
-
-        const makeCell = (entry, linkIndex, appendInfo = false) => {
-            if (!entry) return null;
-            const td = doc.createElement('td');
-            td.setAttribute('width', '50%');
-            td.setAttribute('valign', 'top');
-            td.setAttribute('onclick', `clurl('${entry.u}', ${linkIndex})`);
-            const titleWrapper = doc.createElement('div');
-            titleWrapper.id = 'ti';
-            const titleLink = doc.createElement('a');
-            const title = entry.t ? entry.t.split('|')[0] || entry.t : '';
-            titleLink.textContent = title;
-            titleWrapper.appendChild(titleLink);
-            td.appendChild(titleWrapper);
-            if (entry.c) {
-                td.appendChild(doc.createTextNode(entry.c));
-            }
-            td.appendChild(doc.createElement('br'));
-            const anchor = doc.createElement('a');
-            anchor.id = `srcf${linkIndex}`;
-            anchor.setAttribute('href', entry.u);
-            anchor.setAttribute('target', '_blank');
-            anchor.setAttribute('onclick', 'event.stopPropagation();');
-            anchor.textContent = entry.l || entry.u;
-            td.appendChild(anchor);
-            return td;
-        };
-
-        const leftCell = makeCell(leftEntry, startIndex, false);
-        const rightCell = rightEntry ? makeCell(rightEntry, startIndex + 1, true) : null;
-        if (leftCell) {
-            tr.appendChild(leftCell);
+                return resp.text();
+            });
         }
-        if (rightCell) {
-            tr.appendChild(rightCell);
-        }
-        tbody.appendChild(tr);
-        table.appendChild(tbody);
-        return table;
-    }
 
-    function hydrateThreadAdsFromData(doc, adEntries) {
-        if (!doc || !adEntries || !adEntries.length) return false;
-        let mutated = false;
-        const inlineScripts = Array.from(doc.querySelectorAll('script')).filter((script) => {
-            return !script.src && /spinit2?\s*\(\s*\)/.test(script.textContent || '');
-        });
-        if (!inlineScripts.length) {
-            return false;
-        }
-        const ftadScripts = inlineScripts.filter((script) => /\bspinit2\s*\(/.test(script.textContent || ''));
-        ftadScripts.forEach((script) => {
-            const grid = createFtadGridElement(doc, adEntries);
-            if (grid) {
-                script.insertAdjacentElement('afterend', grid);
-                mutated = true;
+        function fetchCrossOriginBinary(url, options = {}) {
+            if (!url) {
+                return Promise.reject(new Error('無效的請求地址'));
             }
-        });
+            const headers = {
+                'Referer': options.referer || 'https://www.rmdown.com/',
+                ...(options.headers || {})
+            };
+            const method = options.method || 'GET';
+            if (typeof GM_xmlhttpRequest === 'function') {
+                return new Promise((resolve, reject) => {
+                    GM_xmlhttpRequest({
+                        method,
+                        url,
+                        headers,
+                        responseType: 'arraybuffer',
+                        onload: (resp) => {
+                            if (resp.status >= 200 && resp.status < 400) {
+                                resolve({
+                                    buffer: resp.response,
+                                    headers: resp.responseHeaders || ''
+                                });
+                            } else {
+                                reject(new Error('HTTP ' + resp.status));
+                            }
+                        },
+                        onerror: () => reject(new Error('網絡錯誤')),
+                        ontimeout: () => reject(new Error('請求超時'))
+                    });
+                });
+            }
+            return fetch(url, {
+                method,
+                headers,
+                credentials: 'include'
+            }).then(async (resp) => {
+                if (!resp.ok) {
+                    throw new Error('HTTP ' + resp.status);
+                }
+                const buffer = await resp.arrayBuffer();
+                return {
+                    buffer,
+                    headers: resp.headers
+                };
+            });
+        }
 
-        const pairQueue = adEntries.slice();
-        let linkIndex = 0;
-        inlineScripts.filter((script) => /\bspinit\s*\(/.test(script.textContent || '') && !/\bspinit2\s*\(/.test(script.textContent || '')).forEach((script) => {
-            const left = pairQueue.shift();
-            if (!left) {
+        // 远程模块加载配置：manifest 地址与本地缓存 key
+        const REMOTE_MANIFEST_URL = 'https://raw.githubusercontent.com/truclocphung1713/CLManager/main/manifest.json';
+        const REMOTE_MODULE_CACHE_KEY = 'CLM_RemoteModuleCache_v1';
+
+        function getRemoteModuleCache() {
+            const empty = { manifestVersion: '', modules: {} };
+            let raw = '';
+            try {
+                if (typeof GM_getValue === 'function') {
+                    raw = GM_getValue(REMOTE_MODULE_CACHE_KEY, '');
+                } else if (pageWindow.localStorage) {
+                    raw = pageWindow.localStorage.getItem(REMOTE_MODULE_CACHE_KEY) || '';
+                }
+            } catch (e) {
+                console.warn('草榴Manager: 讀取遠程模塊緩存失敗', e);
+                return empty;
+            }
+            if (!raw) return empty;
+            try {
+                const parsed = JSON.parse(raw);
+                if (parsed && typeof parsed === 'object') {
+                    return parsed;
+                }
+            } catch (e) {
+                console.warn('草榴Manager: 解析遠程模塊緩存失敗', e);
+            }
+            return empty;
+        }
+
+        function saveRemoteModuleCache(cache) {
+            let text;
+            try {
+                text = JSON.stringify(cache || {});
+            } catch (e) {
+                console.warn('草榴Manager: 無法序列化遠程模塊緩存', e);
                 return;
             }
-            const right = pairQueue.shift() || null;
-            const table = createSpinitTableElement(doc, left, right, linkIndex);
-            if (table) {
-                script.insertAdjacentElement('afterend', table);
-                linkIndex += right ? 2 : 1;
-                mutated = true;
-            }
-        });
-        return mutated;
-    }
-
-    async function collectThreadAdsWithScriptFallback(doc, baseHref, rawHtml = '') {
-        const direct = collectThreadAdBlocks(doc);
-        // 检查是否已经找到了 ftad-ct
-        const hasFtadCt = direct.some(html => /\bftad-ct\b/i.test(html));
-        
-        // 如果已经找到了 ftad-ct，直接返回
-        if (hasFtadCt || !doc) {
-            return direct;
-        }
-
-        const hydrateWithPayload = (payload) => {
-            if (!payload) {
-                return false;
-            }
             try {
-                const adEntries = JSON.parse(payload);
-                if (!Array.isArray(adEntries) || !adEntries.length) {
-                    return false;
+                if (typeof GM_setValue === 'function') {
+                    GM_setValue(REMOTE_MODULE_CACHE_KEY, text);
+                } else if (pageWindow.localStorage) {
+                    pageWindow.localStorage.setItem(REMOTE_MODULE_CACHE_KEY, text);
                 }
-                return hydrateThreadAdsFromData(doc, adEntries);
-            } catch (err) {
-                console.warn('clm 解析 spJson 失敗', err);
-                return false;
+            } catch (e) {
+                console.warn('草榴Manager: 寫入遠程模塊緩存失敗', e);
             }
-        };
+        }
 
-        const inlinePayload = rawHtml ? extractSpjsonPayload(rawHtml) : '';
-        if (inlinePayload && hydrateWithPayload(inlinePayload)) {
-            const afterHydrate = collectThreadAdBlocks(doc);
-            // 合并直接找到的广告和恢复的广告，去重
-            const combined = [...direct];
-            afterHydrate.forEach(html => {
-                if (!combined.some(existing => existing === html)) {
-                    combined.push(html);
+        function shouldLoadModuleForPage(manifestEntry, pageType) {
+            if (!manifestEntry) return false;
+            const targets = manifestEntry.targets;
+            if (!targets || !Array.isArray(targets) || !targets.length) {
+                return true;
+            }
+            return targets.indexOf(pageType) !== -1;
+        }
+
+        async function initRemoteModules(pageType) {
+            const cache = getRemoteModuleCache();
+            let manifest = null;
+            try {
+                const text = await fetchCrossOriginText(REMOTE_MANIFEST_URL);
+                manifest = JSON.parse(text);
+            } catch (e) {
+                console.warn('草榴Manager: 無法從 GitHub 獲取 manifest，將回退到本地緩存模塊', e);
+            }
+
+            const modulesToExecute = [];
+
+            if (!manifest || !manifest.modules || typeof manifest.modules !== 'object') {
+                // 没有 manifest 时，只能执行已有緩存中的全部模塊
+                const cachedModules = cache.modules || {};
+                Object.keys(cachedModules).forEach((name) => {
+                    const cached = cachedModules[name];
+                    if (cached && cached.code) {
+                        modulesToExecute.push({ name, code: cached.code });
+                    }
+                });
+            } else {
+                const newCache = {
+                    manifestVersion: manifest.version || '',
+                    modules: cache.modules || {}
+                };
+                const manifestModules = manifest.modules || {};
+
+                for (const name of Object.keys(manifestModules)) {
+                    const entry = manifestModules[name];
+                    if (!shouldLoadModuleForPage(entry, pageType)) continue;
+
+                    const cached = (cache.modules && cache.modules[name]) || null;
+                    let code = cached && cached.code;
+                    const needsUpdate = !cached || cached.version !== entry.version || cached.url !== entry.url;
+
+                    if (needsUpdate && entry.url) {
+                        try {
+                            code = await fetchCrossOriginText(entry.url);
+                            newCache.modules[name] = {
+                                version: entry.version || '',
+                                url: entry.url,
+                                code,
+                                lastUpdated: Date.now()
+                            };
+                            console.log('草榴Manager: 已更新遠程模塊', name, 'version=', entry.version);
+                        } catch (e) {
+                            console.error('草榴Manager: 加載遠程模塊失敗，嘗試使用緩存', name, e);
+                            if (cached && cached.code) {
+                                code = cached.code;
+                                newCache.modules[name] = cached;
+                            }
+                        }
+                    }
+
+                    if (code) {
+                        modulesToExecute.push({ name, code });
+                    }
+                }
+
+                saveRemoteModuleCache(newCache);
+            }
+
+            modulesToExecute.forEach((mod) => {
+                try {
+                    const fn = new Function('window', '"use strict";\n' + mod.code + '\n//# sourceURL=CLM-remote-module-' + mod.name + '.js');
+                    fn(pageWindow);
+                    console.log('草榴Manager: 已執行遠程模塊', mod.name);
+                } catch (e) {
+                    console.error('草榴Manager: 執行遠程模塊出錯', mod.name, e);
                 }
             });
-            return combined;
         }
 
-        const scriptNode = doc.querySelector('script[src*="post.js"]');
-        if (!scriptNode) {
-            return direct;
+        function extractFilenameFromContentDisposition(headerValue) {
+            if (!headerValue) return '';
+            let matched = headerValue.match(/filename\*=(?:UTF-8'')?([^;]+)/i);
+            if (matched && matched[1]) {
+                try {
+                    return decodeURIComponent(matched[1].trim().replace(/["']/g, ''));
+                } catch (err) {
+                    return matched[1].trim().replace(/["']/g, '');
+                }
+            }
+            matched = headerValue.match(/filename="([^"]+)"/i);
+            if (matched && matched[1]) {
+                return matched[1].trim();
+            }
+            matched = headerValue.match(/filename=([^;]+)/i);
+            if (matched && matched[1]) {
+                return matched[1].trim().replace(/["']/g, '');
+            }
+            return '';
         }
-        const scriptUrl = getAbsoluteUrl(scriptNode.getAttribute('src'), baseHref);
-        if (!scriptUrl) {
-            return direct;
+
+        function extractFilenameFromHeaders(headers) {
+            if (!headers) return '';
+            if (typeof headers === 'string') {
+                const lines = headers.split(/\r?\n/);
+                for (const line of lines) {
+                    if (!line) continue;
+                    if (line.toLowerCase().startsWith('content-disposition')) {
+                        const value = line.split(':').slice(1).join(':').trim();
+                        return extractFilenameFromContentDisposition(value);
+                    }
+                }
+                return '';
+            }
+            if (typeof headers.get === 'function') {
+                const value = headers.get('content-disposition');
+                return extractFilenameFromContentDisposition(value || '');
+            }
+            return '';
         }
-        try {
-            const scriptText = await fetchAdScriptSource(scriptUrl);
-            const payload = extractSpjsonPayload(scriptText);
-            if (!payload) {
-                return direct;
+
+        function ensureArrayBuffer(data) {
+            if (!data) return null;
+            if (data instanceof ArrayBuffer) {
+                return data;
             }
-            if (!hydrateWithPayload(payload)) {
-                return direct;
+            if (ArrayBuffer.isView(data)) {
+                return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
             }
-            const afterHydrate = collectThreadAdBlocks(doc);
-            // 合并直接找到的广告和恢复的广告，去重
-            const combined = [...direct];
-            afterHydrate.forEach(html => {
-                if (!combined.some(existing => existing === html)) {
-                    combined.push(html);
-                }
-            });
-            return combined;
-        } catch (err) {
-            console.warn('clm 無法恢復社區贊助內容', err);
-            return direct;
+            return null;
         }
-    }
 
-    function extractThreadDownloadInfo(doc, baseHref = location.href) {
-        if (!doc) return null;
-        const candidate = doc.querySelector('#rmlink[href], a[href*="rmdown.com/link.php"]');
-        if (!candidate) return null;
-        const raw = candidate.getAttribute('href') || candidate.href;
-        const pageUrl = getAbsoluteUrl(raw, baseHref);
-        if (!pageUrl) return null;
-        return {
-            type: 'rmdown',
-            pageUrl
-        };
-    }
-
-    async function resolveThreadDownloadTarget(downloadInfo) {
-        if (!downloadInfo) {
-            throw new Error('沒有可用的下載資訊');
-        }
-        if (downloadInfo.type !== 'rmdown') {
-            throw new Error('未知的下載來源');
-        }
-        const cacheKey = downloadInfo.pageUrl;
-        if (downloadResolveCache.has(cacheKey)) {
-            return downloadResolveCache.get(cacheKey);
-        }
-        const resolver = (async () => {
-            const html = await fetchCrossOriginText(downloadInfo.pageUrl);
-            const parser = new DOMParser();
-            const doc = parser.parseFromString(html, 'text/html');
-            const form = doc.querySelector('form#dl');
-            if (!form) {
-                throw new Error('無法在下載頁中找到目標表單');
-            }
-            const params = [];
-            Array.from(form.elements || []).forEach((el) => {
-                if (!el || !el.name) return;
-                const value = el.value || '';
-                if (!value) return;
-                params.push(encodeURIComponent(el.name) + '=' + encodeURIComponent(value));
-            });
-            if (!params.length) {
-                throw new Error('下載表單缺少必需參數');
-            }
-            const base = new URL('download.php', downloadInfo.pageUrl);
-            const separator = base.search ? '&' : '?';
-            const downloadUrl = base.origin + base.pathname + separator + params.join('&');
-            const { buffer, headers } = await fetchCrossOriginBinary(downloadUrl);
-            const torrentBinary = ensureArrayBuffer(buffer);
-            if (!torrentBinary || !torrentBinary.byteLength) {
-                throw new Error('無法獲取種子文件內容');
-            }
-            const filename = extractFilenameFromHeaders(headers) || ('rmdown_' + Date.now() + '.torrent');
-            return {
-                url: downloadUrl,
-                filename,
-                torrentBinary
-            };
-        })();
-        resolver.catch(() => {
-            downloadResolveCache.delete(cacheKey);
-        });
-        downloadResolveCache.set(cacheKey, resolver);
-        return resolver;
-    }
-
-    function createGalleryOverlay() {
-        debugLog('创建画廊覆盖层');
-        injectStyle(`
-            .clm-gallery-overlay {
-                position: fixed;
-                inset: 0;
-                background: rgba(10, 10, 20, 0.82);
-                display: none;
-                align-items: center;
-                justify-content: center;
-                flex-direction: column;
-                gap: 12px;
-                z-index: 100000;
-                /* 顶部保留间距，左右无 padding，黑色背景真正全屏 */
-                padding: 32px 0;
-            }
-            .clm-gallery-overlay.clm-active {
-                display: flex;
-            }
-            .clm-gallery-layout {
-                display: grid;
-                /* 左右侧栏更窄，中间图片区域更大 */
-                grid-template-columns: minmax(260px, 22vw) 1fr minmax(260px, 22vw);
-                gap: 16px;
-                width: 100vw;
-                max-width: 2400px;
-                height: calc(100vh - 160px);
-                max-height: calc(100vh - 160px);
-                align-items: stretch;
-            }
-            .clm-gallery-viewer-column {
-                display: flex;
-                flex-direction: column;
-                gap: 18px;
-                height: 100%;
-                min-height: 0;
-            }
-            .clm-gallery-panel {
-                background: rgba(255, 255, 255, 0.08);
-                border: 1px solid rgba(255, 255, 255, 0.15);
-                border-radius: 12px;
-                padding: 16px;
-                color: #fff;
-                backdrop-filter: blur(4px);
-                display: flex;
-                flex-direction: column;
-                gap: 12px;
-                max-height: 100%;
-            }
-            .clm-gallery-panel-topic {
-                max-width: 100%;
-            }
-            .clm-gallery-panel-comments {
-                max-width: 100%;
-            }
-            .clm-gallery-panel-header {
-                font-size: 14px;
-                font-weight: 600;
-                letter-spacing: 0.05em;
-            }
-            .clm-gallery-panel-body {
-                flex: 1;
-                overflow: auto;
-                font-size: 13px;
-                line-height: 1.5;
-                color: rgba(255, 255, 255, 0.92);
-            }
-            .clm-gallery-panel-body::-webkit-scrollbar {
-                width: 6px;
-            }
-            .clm-gallery-panel-body::-webkit-scrollbar-thumb {
-                background: rgba(255, 255, 255, 0.25);
-                border-radius: 3px;
-            }
-            .clm-panel-entry {
-                padding: 8px 10px;
-                background: rgba(0, 0, 0, 0.25);
-                border-radius: 8px;
-                border: 1px solid rgba(255, 255, 255, 0.08);
-                display: flex;
-                flex-direction: column;
-                gap: 4px;
-                margin-bottom: 10px;
-                min-width: 0;
-            }
-            .clm-panel-entry-user {
-                font-size: 12px;
-                letter-spacing: 0.04em;
-                color: rgba(255, 255, 255, 0.75);
-            }
-            .clm-panel-entry-content {
-                font-size: 13px;
-                color: #fff;
-                white-space: pre-line;
-                word-wrap: break-word;
-                overflow-wrap: break-word;
-                word-break: break-word;
-                min-width: 0;
-            }
-            .clm-panel-entry-content .clm-type-tag {
-                display: inline-block;
-                padding: 2px 8px;
-                margin: 2px 4px 2px 0;
-                border-radius: 4px;
-                font-size: 11px;
-                line-height: 1.4;
-            }
-            /* 类型标签使用不同颜色 - 基于类名，至少10种颜色循环使用 */
-            .clm-panel-entry-content .clm-type-tag.clm-type-tag-color-1 {
-                background: rgba(59, 130, 246, 0.2) !important;
-                border: 1px solid rgba(59, 130, 246, 0.4) !important;
-                color: rgba(147, 197, 253, 0.95) !important;
-            }
-            .clm-panel-entry-content .clm-type-tag.clm-type-tag-color-2 {
-                background: rgba(34, 197, 94, 0.2) !important;
-                border: 1px solid rgba(34, 197, 94, 0.4) !important;
-                color: rgba(134, 239, 172, 0.95) !important;
-            }
-            .clm-panel-entry-content .clm-type-tag.clm-type-tag-color-3 {
-                background: rgba(249, 115, 22, 0.2) !important;
-                border: 1px solid rgba(249, 115, 22, 0.4) !important;
-                color: rgba(254, 215, 170, 0.95) !important;
-            }
-            .clm-panel-entry-content .clm-type-tag.clm-type-tag-color-4 {
-                background: rgba(168, 85, 247, 0.2) !important;
-                border: 1px solid rgba(168, 85, 247, 0.4) !important;
-                color: rgba(221, 214, 254, 0.95) !important;
-            }
-            .clm-panel-entry-content .clm-type-tag.clm-type-tag-color-5 {
-                background: rgba(236, 72, 153, 0.2) !important;
-                border: 1px solid rgba(236, 72, 153, 0.4) !important;
-                color: rgba(251, 207, 232, 0.95) !important;
-            }
-            .clm-panel-entry-content .clm-type-tag.clm-type-tag-color-6 {
-                background: rgba(6, 182, 212, 0.2) !important;
-                border: 1px solid rgba(6, 182, 212, 0.4) !important;
-                color: rgba(165, 243, 252, 0.95) !important;
-            }
-            .clm-panel-entry-content .clm-type-tag.clm-type-tag-color-7 {
-                background: rgba(234, 179, 8, 0.2) !important;
-                border: 1px solid rgba(234, 179, 8, 0.4) !important;
-                color: rgba(253, 224, 71, 0.95) !important;
-            }
-            .clm-panel-entry-content .clm-type-tag.clm-type-tag-color-8 {
-                background: rgba(239, 68, 68, 0.2) !important;
-                border: 1px solid rgba(239, 68, 68, 0.4) !important;
-                color: rgba(254, 202, 202, 0.95) !important;
-            }
-            .clm-panel-entry-content .clm-type-tag.clm-type-tag-color-9 {
-                background: rgba(99, 102, 241, 0.2) !important;
-                border: 1px solid rgba(99, 102, 241, 0.4) !important;
-                color: rgba(196, 181, 253, 0.95) !important;
-            }
-            .clm-panel-entry-content .clm-type-tag.clm-type-tag-color-10 {
-                background: rgba(20, 184, 166, 0.2) !important;
-                border: 1px solid rgba(20, 184, 166, 0.4) !important;
-                color: rgba(153, 246, 228, 0.95) !important;
-            }
-            /* 出演者标签样式 - 复用类型标签的颜色方案 */
-            .clm-panel-entry-content .clm-performer-tag {
-                display: inline-block;
-                padding: 2px 8px;
-                margin: 2px 4px 2px 0;
-                border-radius: 4px;
-                font-size: 11px;
-                line-height: 1.4;
-                cursor: pointer;
-                user-select: none;
-            }
-            .clm-panel-entry-content .clm-performer-tag.clm-performer-tag-color-1 {
-                background: rgba(59, 130, 246, 0.2) !important;
-                border: 1px solid rgba(59, 130, 246, 0.4) !important;
-                color: rgba(147, 197, 253, 0.95) !important;
-            }
-            .clm-panel-entry-content .clm-performer-tag.clm-performer-tag-color-2 {
-                background: rgba(34, 197, 94, 0.2) !important;
-                border: 1px solid rgba(34, 197, 94, 0.4) !important;
-                color: rgba(134, 239, 172, 0.95) !important;
-            }
-            .clm-panel-entry-content .clm-performer-tag.clm-performer-tag-color-3 {
-                background: rgba(249, 115, 22, 0.2) !important;
-                border: 1px solid rgba(249, 115, 22, 0.4) !important;
-                color: rgba(254, 215, 170, 0.95) !important;
-            }
-            .clm-panel-entry-content .clm-performer-tag.clm-performer-tag-color-4 {
-                background: rgba(168, 85, 247, 0.2) !important;
-                border: 1px solid rgba(168, 85, 247, 0.4) !important;
-                color: rgba(221, 214, 254, 0.95) !important;
-            }
-            .clm-panel-entry-content .clm-performer-tag.clm-performer-tag-color-5 {
-                background: rgba(236, 72, 153, 0.2) !important;
-                border: 1px solid rgba(236, 72, 153, 0.4) !important;
-                color: rgba(251, 207, 232, 0.95) !important;
-            }
-            .clm-panel-entry-content .clm-performer-tag.clm-performer-tag-color-6 {
-                background: rgba(6, 182, 212, 0.2) !important;
-                border: 1px solid rgba(6, 182, 212, 0.4) !important;
-                color: rgba(165, 243, 252, 0.95) !important;
-            }
-            .clm-panel-entry-content .clm-performer-tag.clm-performer-tag-color-7 {
-                background: rgba(234, 179, 8, 0.2) !important;
-                border: 1px solid rgba(234, 179, 8, 0.4) !important;
-                color: rgba(253, 224, 71, 0.95) !important;
-            }
-            .clm-panel-entry-content .clm-performer-tag.clm-performer-tag-color-8 {
-                background: rgba(239, 68, 68, 0.2) !important;
-                border: 1px solid rgba(239, 68, 68, 0.4) !important;
-                color: rgba(254, 202, 202, 0.95) !important;
-            }
-            .clm-panel-entry-content .clm-performer-tag.clm-performer-tag-color-9 {
-                background: rgba(99, 102, 241, 0.2) !important;
-                border: 1px solid rgba(99, 102, 241, 0.4) !important;
-                color: rgba(196, 181, 253, 0.95) !important;
-            }
-            .clm-panel-entry-content .clm-performer-tag.clm-performer-tag-color-10 {
-                background: rgba(20, 184, 166, 0.2) !important;
-                border: 1px solid rgba(20, 184, 166, 0.4) !important;
-                color: rgba(153, 246, 228, 0.95) !important;
-            }
-            .clm-panel-entry-content .clm-performer-tag:hover {
-                opacity: 0.8;
-            }
-            .clm-panel-entry-title {
-                font-size: 16px;
-                font-weight: 600;
-                color: #fff;
-                margin-bottom: 12px;
-                line-height: 1.5;
-            }
-            .clm-panel-entry-title-tags {
-                display: flex;
-                flex-wrap: wrap;
-                gap: 6px;
-                margin-bottom: 8px;
-            }
-            .clm-panel-entry-title-tag {
-                display: inline-block;
-                padding: 4px 10px;
-                border-radius: 6px;
-                font-size: 12px;
-                font-weight: 500;
-                line-height: 1.4;
-            }
-            /* 清晰度标签 - 绿色 */
-            .clm-title-tag-quality {
-                background: rgba(34, 197, 94, 0.25);
-                border: 1px solid rgba(34, 197, 94, 0.5);
-                color: rgba(134, 239, 172, 1);
-            }
-            /* 文件大小标签 - 橙色 */
-            .clm-title-tag-size {
-                background: rgba(249, 115, 22, 0.25);
-                border: 1px solid rgba(249, 115, 22, 0.5);
-                color: rgba(254, 215, 170, 1);
-            }
-            /* 番号标签 - 紫色，嵌套结构 */
-            .clm-title-tag-code {
-                background: rgba(168, 85, 247, 0.25);
-                border: 1px solid rgba(168, 85, 247, 0.5);
-                color: rgba(221, 214, 254, 1);
-            }
-            /* 番号标签前缀部分 - 更深的紫色背景 */
-            .clm-title-tag-code-prefix {
-                display: inline-block;
-                background: rgba(168, 85, 247, 0.5);
-                padding: 4px 6px;
-                margin: -4px 4px -4px -10px;
-                border-radius: 6px 0 0 6px;
-                font-weight: 600;
-                cursor: pointer;
-            }
-            .clm-title-tag-code-prefix:hover {
-                background: rgba(168, 85, 247, 0.7);
-            }
-            /* 番号标签后缀部分 - 可点击，搜索完整番号 */
-            .clm-title-tag-code-suffix {
-                display: inline-block;
-                padding: 4px 6px;
-                margin: -4px -10px -4px 4px;
-                border-radius: 0 6px 6px 0;
-                transition: background 0.2s ease;
-            }
-            .clm-title-tag-code-suffix:hover {
-                background: rgba(168, 85, 247, 0.4);
-            }
-            /* 搜索弹窗样式 */
-            .clm-search-dialog-mask {
-                position: fixed;
-                inset: 0;
-                background: rgba(0, 0, 0, 0.5);
-                z-index: 100003;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                padding: 20px;
-            }
-            .clm-search-dialog {
-                background: #fff;
-                border-radius: 8px;
-                box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
-                width: min(600px, 90vw);
-                max-height: 85vh;
-                display: flex;
-                flex-direction: column;
-                overflow: hidden;
-            }
-            .clm-search-dialog-header {
-                padding: 14px 18px;
-                border-bottom: 1px solid #e5e7eb;
-                background: #f9fafb;
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-            }
-            .clm-search-dialog-title {
-                font-weight: 600;
-                font-size: 15px;
-                color: #111827;
-            }
-            .clm-search-dialog-close {
-                background: none;
-                border: none;
-                font-size: 20px;
-                cursor: pointer;
-                color: #6b7280;
-                padding: 0;
-                width: 24px;
-                height: 24px;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                border-radius: 4px;
-            }
-            .clm-search-dialog-close:hover {
-                background: #e5e7eb;
-                color: #111827;
-            }
-            .clm-search-dialog-body {
-                padding: 18px;
-                overflow-y: auto;
-                flex: 1;
-            }
-            .clm-search-form-row {
-                margin-bottom: 16px;
-            }
-            .clm-search-form-row:last-child {
-                margin-bottom: 0;
-            }
-            .clm-search-form-label {
-                display: block;
-                font-weight: 600;
-                font-size: 13px;
-                color: #374151;
-                margin-bottom: 6px;
-            }
-            .clm-search-form-label.required::after {
-                content: ' *';
-                color: #dc2626;
-            }
-            .clm-search-form-select,
-            .clm-search-form-input {
-                width: 100%;
-                padding: 6px 10px;
-                border: 1px solid #d1d5db;
-                border-radius: 4px;
-                font-size: 13px;
-                box-sizing: border-box;
-            }
-            .clm-search-form-select:focus,
-            .clm-search-form-input:focus {
-                outline: none;
-                border-color: #3b82f6;
-                box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-            }
-            .clm-search-form-radio-group {
-                display: flex;
-                gap: 16px;
-                flex-wrap: wrap;
-            }
-            .clm-search-form-radio {
-                display: flex;
-                align-items: center;
-                gap: 6px;
-            }
-            .clm-search-form-radio input[type="radio"] {
-                margin: 0;
-            }
-            .clm-search-form-checkbox {
-                display: flex;
-                align-items: center;
-                gap: 6px;
-            }
-            .clm-search-form-checkbox input[type="checkbox"] {
-                margin: 0;
-            }
-            .clm-search-dialog-footer {
-                padding: 12px 18px;
-                border-top: 1px solid #e5e7eb;
-                background: #f9fafb;
-                display: flex;
-                justify-content: flex-end;
-                gap: 10px;
-            }
-            .clm-search-btn {
-                padding: 8px 20px;
-                border-radius: 6px;
-                font-size: 13px;
-                font-weight: 500;
-                cursor: pointer;
-                border: none;
-                transition: background 0.2s;
-            }
-            .clm-search-btn-primary {
-                background: #3b82f6;
-                color: #fff;
-            }
-            .clm-search-btn-primary:hover {
-                background: #2563eb;
-            }
-            .clm-search-btn-secondary {
-                background: #e5e7eb;
-                color: #374151;
-            }
-            .clm-search-btn-secondary:hover {
-                background: #d1d5db;
-            }
-            .clm-type-tag {
-                cursor: pointer;
-            }
-            .clm-type-tag:hover {
-                opacity: 0.8;
-            }
-            .clm-panel-entry-title-text {
-                font-size: 16px;
-                color: #fff;
-                line-height: 1.5;
-            }
-            .clm-panel-entry-tips {
-                margin-top: 8px;
-                padding-top: 8px;
-                border-top: 1px solid rgba(255, 255, 255, 0.1);
-                color: #333;
-                max-width: 100%;
-                overflow: hidden;
-                position: relative;
-            }
-            .clm-panel-entry-tips > div {
-                color: #333;
-                max-width: 100%;
-                overflow: hidden;
-            }
-            .clm-panel-entry-tips-scale-wrapper {
-                width: 100%;
-                overflow: hidden;
-                transform-origin: top left;
-            }
-            .clm-panel-entry-tips table {
-                width: 100%;
-                max-width: 100%;
-                color: #333;
-                background: #fff;
-                table-layout: auto;
-                word-break: break-word;
-            }
-            .clm-panel-entry-tips table td,
-            .clm-panel-entry-tips table th {
-                color: #333;
-                word-break: break-word;
-                overflow-wrap: break-word;
-            }
-            .clm-panel-entry-tips a {
-                color: #0b5ed7;
-                word-break: break-all;
-            }
-            .clm-panel-empty {
-                padding: 12px;
-                text-align: center;
-                color: rgba(255, 255, 255, 0.6);
-                font-size: 13px;
-            }
-            /* 手机端评论面板中的空状态提示：白底下使用深色文字，避免看不清 */
-            body.clm-mobile-gallery .clm-gallery-panel-comments .clm-panel-empty {
-                color: #666 !important;
-            }
-            .clm-gallery-viewer {
-                position: relative;
-                max-width: 100%;
-                width: 100%;
-                flex: 1;
-                min-height: 0;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                gap: 16px;
-                border-radius: 12px;
-                background: rgba(0, 0, 0, 0.35);
-                overflow: hidden;
-            }
-            .clm-gallery-viewer img {
-                max-width: 100%;
-                max-height: 100%;
-                width: auto;
-                height: auto;
-                object-fit: contain;
-                border-radius: 8px;
-                box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
-                background: #000;
-                transition: opacity 0.2s ease;
-                transform-origin: center center;
-                cursor: zoom-in;
-            }
-            .clm-gallery-viewer img.clm-zoomed {
-                cursor: move;
-            }
-            .clm-gallery-ads-slot {
-                display: flex;
-                flex-direction: column;
-                gap: 8px;
-            }
-            .clm-gallery-ads-slot-viewer-top,
-            .clm-gallery-ads-slot-viewer-bottom {
-                width: 100%;
-            }
-            .clm-gallery-ads-title {
-                font-size: 12px;
-                letter-spacing: 0.08em;
-                text-transform: uppercase;
-                color: rgba(255, 255, 255, 0.68);
-                margin-bottom: 4px;
-            }
-            .clm-gallery-ads {
-                background: rgba(255, 255, 255, 0.96);
-                color: #111;
-                border-radius: 10px;
-                padding: 12px;
-                box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), 0 16px 32px rgba(0, 0, 0, 0.35);
-                overflow: hidden;
-            }
-            /* 手机端：让 clm-gallery-ads 变成透明容器，内部 ftad-ct 完全使用 mob_style.css 原生样式 */
-            body.clm-mobile-gallery .clm-gallery-ads {
-                background: transparent !important;
-                box-shadow: none !important;
-                padding: 0 !important;
-                border-radius: 0 !important;
-            }
-            .clm-gallery-ads .sptable_info {
-                display: none;
-            }
-            .clm-viewer-loading img {
-                opacity: 0;
-            }
-            .clm-gallery-loading-indicator {
-                position: absolute;
-                inset: 0;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                font-size: 14px;
-                color: rgba(255, 255, 255, 0.9);
-                letter-spacing: 0.08em;
-                background: linear-gradient(135deg, rgba(0,0,0,0.35), rgba(0,0,0,0.15));
-                opacity: 0;
-                visibility: hidden;
-                transition: opacity 0.2s ease;
-                pointer-events: none;
-            }
-            .clm-viewer-loading .clm-gallery-loading-indicator {
-                opacity: 1;
-                visibility: visible;
-            }
-            .clm-gallery-arrow {
-                position: absolute;
-                top: 50%;
-                transform: translateY(-50%);
-                background: rgba(0, 0, 0, 0.55);
-                color: #fff;
-                border: 1px solid rgba(255, 255, 255, 0.25);
-                border-radius: 50%;
-                width: 44px;
-                height: 44px;
-                font-size: 22px;
-                cursor: pointer;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                transition: background 0.2s ease;
-            }
-            .clm-gallery-arrow:hover {
-                background: rgba(0, 0, 0, 0.85);
-            }
-            .clm-gallery-arrow-left {
-                left: -22px;
-            }
-            .clm-gallery-arrow-right {
-                right: -22px;
-            }
-            .clm-gallery-close {
-                position: absolute;
-                top: 16px;
-                right: 24px;
-                background: rgba(0, 0, 0, 0.55);
-                color: #fff;
-                border: none;
-                font-size: 26px;
-                cursor: pointer;
-                padding: 4px 10px;
-                border-radius: 6px;
-                z-index: 100020;
-            }
-            .clm-gallery-meta {
-                position: absolute;
-                left: 50%;
-                bottom: 32px;
-                transform: translateX(-50%);
-                color: #f5f5f5;
-                font-size: 14px;
-                text-align: center;
-                text-shadow: 0 2px 4px rgba(0, 0, 0, 0.7);
-                pointer-events: none;
-            }
-            .clm-gallery-hint {
-                position: absolute;
-                left: 50%;
-                bottom: 12px;
-                transform: translateX(-50%);
-                font-size: 12px;
-                color: rgba(255, 255, 255, 0.8);
-                text-align: center;
-                text-shadow: 0 2px 4px rgba(0, 0, 0, 0.7);
-                pointer-events: none;
-            }
-            .clm-gallery-actions {
-                position: absolute;
-                right: 16px;
-                bottom: 16px;
-                display: flex;
-                justify-content: flex-end;
-                align-items: flex-end;
-                gap: 12px;
-                width: auto;
-                max-width: 100%;
-                z-index: 100010;
-                pointer-events: none;
-            }
-            .clm-gallery-actions .clm-gallery-download-btn {
-                pointer-events: auto;
-            }
-            .clm-gallery-download-preview {
-                position: fixed;
-                background: #fff;
-                border-radius: 14px;
-                box-shadow: 0 30px 60px rgba(0, 0, 0, 0.35);
-                display: none;
-                flex-direction: column;
-                z-index: 100010;
-                pointer-events: auto;
-                overflow: hidden;
-            }
-            
-            /* 桌面端：使用边距 */
-            @media (min-width: 769px) {
-                .clm-gallery-download-preview {
-                    inset: clamp(24px, 6vw, 64px);
+        function gmCompatibleFetch(url, options = {}) {
+            const method = options.method || 'GET';
+            const headers = options.headers ? { ...options.headers } : {};
+            let body = options.body;
+            if (body instanceof URLSearchParams) {
+                if (!headers['Content-Type'] && !headers['content-type']) {
+                    headers['Content-Type'] = 'application/x-www-form-urlencoded; charset=UTF-8';
                 }
+                body = body.toString();
             }
-            
-            /* 手机端画廊模式：全屏显示 */
-            body.clm-mobile-gallery .clm-gallery-download-preview {
-                inset: 0 !important;
-                border-radius: 0 !important;
-                top: 0 !important;
-                left: 0 !important;
-                right: 0 !important;
-                bottom: 0 !important;
-                width: 100vw !important;
-                height: 100vh !important;
-                max-width: 100vw !important;
-                max-height: 100vh !important;
-                margin: 0 !important;
-                padding: 0 !important;
+            if (typeof GM_xmlhttpRequest !== 'function') {
+                return fetch(url, {
+                    ...options,
+                    method,
+                    headers,
+                    body
+                });
             }
-            .clm-gallery-download-preview.clm-active {
-                display: flex;
-            }
-            .clm-gallery-download-preview-subtitle {
-                font-size: 12px;
-                color: #6b7280;
-                margin-top: 2px;
-            }
-            .clm-gallery-download-preview-subtitle:empty {
-                display: none;
-            }
-            .clm-gallery-download-preview-header {
-                display: flex;
-                align-items: center;
-                gap: 12px;
-                padding: 14px 18px;
-                border-bottom: 1px solid rgba(0, 0, 0, 0.08);
-                background: linear-gradient(90deg, #f7f8fb, #ffffff);
-            }
-            .clm-gallery-download-preview-title {
-                font-weight: 600;
-                font-size: 14px;
-                color: #0e0f1a;
-            }
-            .clm-gallery-download-preview-link {
-                margin-left: auto;
-                font-size: 12px;
-                color: #0b5ed7;
-                text-decoration: none;
-            }
-            .clm-gallery-download-preview-close {
-                border: none;
-                background: #0d1117;
-                color: #fff;
-                font-size: 12px;
-                border-radius: 20px;
-                padding: 6px 14px;
-                cursor: pointer;
-            }
-            .clm-gallery-download-preview-close:hover {
-                background: #272c34;
-            }
-            .clm-gallery-download-preview-frame {
-                flex: 1;
-                border: none;
-                width: 100%;
-                min-height: 60vh;
-                background: #fff;
-            }
-            .clm-gallery-download-preview-footer {
-                padding: 10px 18px;
-                font-size: 12px;
-                color: rgba(0, 0, 0, 0.6);
-                border-top: 1px solid rgba(0, 0, 0, 0.05);
-                background: #fafafa;
-            }
-            .clm-download-window-mask {
-                position: fixed;
-                inset: 0;
-                background: rgba(8, 8, 12, 0.65);
-                display: none;
-                align-items: center;
-                justify-content: center;
-                z-index: 100120;
-                padding: clamp(16px, 4vw, 48px);
-                transition: opacity 0.2s ease, visibility 0.2s ease;
-            }
-            
-            /* 手机端画廊模式：mask无padding，让preview全屏 */
-            body.clm-mobile-gallery .clm-download-window-mask {
-                padding: 0 !important;
-            }
-            .clm-download-window-mask.clm-active {
-                display: flex;
-            }
-            .clm-download-window-status {
-                font-size: 12px;
-                color: rgba(0, 0, 0, 0.65);
-                line-height: 1.5;
-            }
-            .clm-download-window-status[data-variant="success"] {
-                color: #059669;
-            }
-            .clm-download-window-status[data-variant="error"] {
-                color: #b91c1c;
-            }
-            .clm-gallery-download-btn {
-                padding: 10px 20px;
-                border-radius: 999px;
-                border: 1px solid rgba(255, 255, 255, 0.35);
-                background: rgba(0, 0, 0, 0.45);
-                color: #fff;
-                font-size: 13px;
-                letter-spacing: 0.08em;
-                cursor: pointer;
-                transition: background 0.2s ease, opacity 0.2s ease;
-                min-width: 220px;
-            }
-            .clm-gallery-download-btn:hover:not(:disabled) {
-                background: rgba(0, 0, 0, 0.75);
-            }
-            .clm-gallery-download-btn.clm-downloaded {
-                border-color: rgba(16, 185, 129, 0.7);
-                background: rgba(16, 185, 129, 0.22);
-                color: #d1fae5;
-            }
-            .clm-gallery-download-btn:disabled {
-                opacity: 0.5;
-                cursor: not-allowed;
-            }
-            .clm-preset-picker-mask {
-                position: fixed;
-                inset: 0;
-                background: transparent;
-                z-index: 100120;
-                display: flex;
-                align-items: flex-end;
-                justify-content: flex-end;
-            }
-            .clm-preset-picker {
-                width: min(360px, 90vw);
-                max-height: 80vh;
-                background: #fff;
-                border-radius: 12px;
-                display: flex;
-                flex-direction: column;
-                box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
-                overflow: hidden;
-                margin: 20px;
-            }
-            .clm-preset-picker-title {
-                padding: 14px 18px;
-                font-weight: 600;
-                border-bottom: 1px solid #eee;
-            }
-            .clm-preset-picker-list {
-                padding: 12px 18px;
-                overflow: auto;
-                display: flex;
-                flex-direction: column;
-                gap: 10px;
-            }
-            .clm-preset-picker-option {
-                border: 1px solid #d0d0d0;
-                border-radius: 8px;
-                padding: 10px 12px;
-                text-align: left;
-                background: #fdfdfd;
-                cursor: pointer;
-                display: flex;
-                flex-direction: column;
-                gap: 4px;
-                transition: border-color 0.2s ease, background 0.2s ease;
-            }
-            .clm-preset-picker-option:hover {
-                background: #f3f6ff;
-                border-color: #8da9ff;
-            }
-            .clm-preset-picker-option strong {
-                font-size: 13px;
-            }
-            .clm-preset-picker-option span {
-                font-size: 12px;
-                color: #555;
-                word-break: break-all;
-            }
-            .clm-preset-picker-cancel {
-                border: none;
-                border-top: 1px solid #eee;
-                background: #fafafa;
-                padding: 10px 0;
-                cursor: pointer;
-                font-size: 13px;
-            }
-            .clm-preset-picker-cancel:hover {
-                background: #f0f0f0;
-            }
-            /* 保持桌面端画廊始终全屏，不再缩放 overlay，只根据宽度微调布局 */
-            @media (max-width: 1800px) {
-                .clm-gallery-overlay {
-                    transform: none;
-                }
-            }
-            @media (max-width: 1600px) {
-                .clm-gallery-overlay {
-                    transform: none;
-                }
-                .clm-gallery-layout {
-                    grid-template-columns: minmax(260px, 22vw) 1fr minmax(260px, 22vw);
-                    width: 100vw;
-                }
-            }
-            @media (max-width: 1400px) {
-                .clm-gallery-overlay {
-                    transform: none;
-                }
-                .clm-gallery-layout {
-                    grid-template-columns: minmax(240px, 24vw) 1fr minmax(240px, 24vw);
-                    width: 100vw;
-                }
-            }
-            @media (max-width: 1200px) {
-                .clm-gallery-overlay {
-                    transform: none;
-                }
-                .clm-gallery-layout {
-                    grid-template-columns: minmax(220px, 26vw) 1fr minmax(220px, 26vw);
-                    width: 100vw;
-                }
-            }
-            @media (max-width: 1024px) {
-                .clm-gallery-overlay {
-                    transform: none;
-                }
-                .clm-gallery-layout {
-                    grid-template-columns: 1fr;
-                }
-                .clm-gallery-download-preview {
-                    inset: clamp(14px, 4vw, 32px);
-                }
-            }
-        `);
-
-        const overlay = document.createElement('div');
-        overlay.className = 'clm-gallery-overlay';
-
-        const closeBtn = document.createElement('button');
-        closeBtn.type = 'button';
-        closeBtn.className = 'clm-gallery-close';
-        closeBtn.textContent = '✕';
-
-        const layout = document.createElement('div');
-        layout.className = 'clm-gallery-layout';
-
-        const topicPanel = document.createElement('section');
-        topicPanel.className = 'clm-gallery-panel clm-gallery-panel-topic';
-        const topicHeader = document.createElement('div');
-        topicHeader.className = 'clm-gallery-panel-header';
-        topicHeader.textContent = '主題內容';
-        
-        // 添加复制按钮（仅手机端）
-        if (isMobilePage()) {
-            const copyBtn = document.createElement('button');
-            copyBtn.type = 'button';
-            copyBtn.className = 'clm-topic-copy-btn';
-            copyBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px;"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
-            copyBtn.title = '复制主题内容';
-            copyBtn.style.cssText = 'position: absolute; right: 10px; top: 10px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: #fff; padding: 6px 8px; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; z-index: 10;';
-            
-            copyBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const text = topicBody.textContent;
-                navigator.clipboard.writeText(text).then(() => {
-                    copyBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px;"><polyline points="20 6 9 17 4 12"></polyline></svg>';
-                    setTimeout(() => {
-                        copyBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px;"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
-                    }, 2000);
-                }).catch(err => {
-                    console.error('复制失败:', err);
+            return new Promise((resolve, reject) => {
+                GM_xmlhttpRequest({
+                    method,
+                    url,
+                    headers,
+                    data: body,
+                    timeout: options.timeout || 20000,
+                    anonymous: options.credentials === 'omit',
+                    responseType: options.responseType || 'text',
+                    onload: (resp) => {
+                        const responseText = resp.responseText ?? '';
+                        resolve({
+                            ok: resp.status >= 200 && resp.status < 300,
+                            status: resp.status,
+                            statusText: resp.statusText || '',
+                            headers: resp.responseHeaders || '',
+                            text: () => Promise.resolve(responseText),
+                            json: () => Promise.resolve(responseText ? JSON.parse(responseText) : null)
+                        });
+                    },
+                    onerror: (resp) => {
+                        reject(new Error(resp?.statusText || '網絡錯誤'));
+                    },
+                    ontimeout: () => reject(new Error('請求超時'))
                 });
             });
-            
-            topicHeader.style.position = 'relative';
-            topicHeader.style.display = 'flex';
-            topicHeader.style.alignItems = 'center';
-            topicHeader.style.justifyContent = 'space-between';
-            topicHeader.appendChild(copyBtn);
         }
-        
-        const topicBody = document.createElement('div');
-        topicBody.className = 'clm-gallery-panel-body';
-        topicPanel.appendChild(topicHeader);
-        topicPanel.appendChild(topicBody);
-        
-        let toggleTopicPanelState = null;
 
-        // 手机端主题内容伸缩功能
-        if (isMobilePage()) {
-            topicPanel.classList.add('clm-topic-collapsed');
+        const href = location.href;
 
-            toggleTopicPanelState = () => {
-                const isExpanded = topicPanel.classList.contains('clm-topic-expanded');
-                if (isExpanded) {
-                    topicPanel.classList.remove('clm-topic-expanded');
-                    topicPanel.classList.add('clm-topic-collapsed');
+        const threadDataCache = new Map();
+        let currentListHoverCtx = null;
+        let gallerySourceHighlight = null;
+
+        function setCurrentListHover(ctx) {
+            currentListHoverCtx = ctx;
+        }
+
+        function clearGallerySourceHighlight() {
+            if (gallerySourceHighlight?.element && gallerySourceHighlight.className) {
+                try {
+                    gallerySourceHighlight.element.classList.remove(gallerySourceHighlight.className);
+                } catch (err) {
+                    // 元素可能已被移除，忽略錯誤
+                }
+            }
+            gallerySourceHighlight = null;
+        }
+
+        function applyGallerySourceHighlight(ctx) {
+            if (!ctx || !ctx.threadUrl) {
+                clearGallerySourceHighlight();
+                return;
+            }
+            let target = null;
+            let className = '';
+            if (ctx.source === 'board' && ctx.cover instanceof HTMLElement) {
+                target = ctx.cover;
+                className = 'clm-gallery-focus-cover';
+            } else if (ctx.source === 'search' && ctx.titleEl instanceof HTMLElement) {
+                target = ctx.titleEl;
+                className = 'clm-gallery-focus-title';
+            }
+            if (!target || !className) {
+                clearGallerySourceHighlight();
+                return;
+            }
+            clearGallerySourceHighlight();
+            target.classList.add(className);
+            gallerySourceHighlight = { element: target, className, threadUrl: ctx.threadUrl };
+        }
+
+        function focusGallerySource(threadUrl, ctxOverride = null) {
+            if (!threadUrl) {
+                clearGallerySourceHighlight();
+                return;
+            }
+            const normalizedTarget = normalizeThreadKey(threadUrl);
+            if (!normalizedTarget) {
+                clearGallerySourceHighlight();
+                return;
+            }
+            let candidate = ctxOverride;
+            if (!candidate || normalizeThreadKey(candidate.threadUrl) !== normalizedTarget) {
+                if (currentListHoverCtx && normalizeThreadKey(currentListHoverCtx.threadUrl) === normalizedTarget) {
+                    candidate = currentListHoverCtx;
+                }
+            }
+            if (candidate) {
+                applyGallerySourceHighlight(candidate);
+            } else {
+                clearGallerySourceHighlight();
+            }
+        }
+
+        function getAbsoluteUrl(url, base = location.href) {
+            if (!url) return null;
+            try {
+                return new URL(url, base).href;
+            } catch (e) {
+                console.warn('clm 無法解析 URL', url, e);
+                return null;
+            }
+        }
+
+        function normalizeThreadKey(threadUrl) {
+            if (!threadUrl) return null;
+            if (typeof threadUrl === 'string' && threadUrl.indexOf('tid:') === 0) {
+                return threadUrl;
+            }
+            const abs = getAbsoluteUrl(threadUrl);
+            if (!abs) return null;
+            try {
+                const u = new URL(abs);
+                u.hash = '';
+                let host = u.hostname || '';
+                host = host.toLowerCase();
+                if (host.indexOf('t66y.com') !== -1) {
+                    let tid = null;
+                    const m = u.pathname && u.pathname.match(/\/(\d+)\.html$/);
+                    if (m && m[1]) {
+                        tid = m[1];
+                    } else if (u.search) {
+                        const m2 = u.search.match(/[?&]tid=(\d+)/);
+                        if (m2 && m2[1]) {
+                            tid = m2[1];
+                        }
+                    }
+                    if (tid) {
+                        return 'tid:' + tid;
+                    }
+                }
+                return u.href;
+            } catch (e) {
+                return abs;
+            }
+        }
+
+        const GALLERY_VISITED_STORAGE_KEY = '草榴ManagerGalleryVisited';
+        const MAX_GALLERY_VISITED_ENTRIES = 400;
+        let galleryVisitedCache = null;
+
+        function normalizeRecordKeyMap(records) {
+            if (!records || typeof records !== 'object') {
+                return {};
+            }
+            const normalized = {};
+            Object.keys(records).forEach((key) => {
+                const ts = Number(records[key]) || 0;
+                if (!ts) return;
+                const newKey = normalizeThreadKey(key) || key;
+                const prev = Number(normalized[newKey]) || 0;
+                if (ts > prev) {
+                    normalized[newKey] = ts;
+                }
+            });
+            return normalized;
+        }
+
+        function loadGalleryVisitedRecords() {
+            try {
+                const raw = localStorage.getItem(GALLERY_VISITED_STORAGE_KEY);
+                if (raw) {
+                    const parsed = JSON.parse(raw);
+                    if (parsed && typeof parsed === 'object') {
+                        return normalizeRecordKeyMap(parsed);
+                    }
+                }
+            } catch (err) {
+                console.warn('草榴Manager: 無法讀取畫廊歷史記錄', err);
+            }
+            return {};
+        }
+
+        function getGalleryVisitedRecords() {
+            if (!galleryVisitedCache) {
+                galleryVisitedCache = loadGalleryVisitedRecords();
+            }
+            return galleryVisitedCache;
+        }
+
+        function persistGalleryVisitedRecords() {
+            if (!galleryVisitedCache) {
+                galleryVisitedCache = {};
+            }
+            try {
+                localStorage.setItem(GALLERY_VISITED_STORAGE_KEY, JSON.stringify(galleryVisitedCache));
+            } catch (err) {
+                console.warn('草榴Manager: 無法保存畫廊歷史記錄', err);
+            }
+        }
+
+        function pruneGalleryVisitedRecords(records) {
+            const keys = Object.keys(records);
+            if (keys.length <= MAX_GALLERY_VISITED_ENTRIES) {
+                return [];
+            }
+            const sorted = keys.sort((a, b) => (records[b] || 0) - (records[a] || 0));
+            const removed = [];
+            for (let i = MAX_GALLERY_VISITED_ENTRIES; i < sorted.length; i++) {
+                const key = sorted[i];
+                removed.push(key);
+                delete records[key];
+            }
+            return removed;
+        }
+
+        function resolveThreadKey(keyOrUrl) {
+            if (!keyOrUrl) return null;
+            if (
+                keyOrUrl.startsWith('http://') ||
+                keyOrUrl.startsWith('https://') ||
+                keyOrUrl.startsWith('//') ||
+                keyOrUrl.startsWith('/')
+            ) {
+                return normalizeThreadKey(keyOrUrl);
+            }
+            return keyOrUrl;
+        }
+
+        function hasGalleryVisitedThread(keyOrUrl) {
+            const threadKey = resolveThreadKey(keyOrUrl);
+            if (!threadKey) return false;
+            const records = getGalleryVisitedRecords();
+            return !!records[threadKey];
+        }
+
+        function applyVisitedStateToElement(el, visited) {
+            if (!el || !el.dataset) return;
+            const variant = el.dataset.clmGalleryVisitedVariant;
+            if (!variant) return;
+            if (variant === 'cover') {
+                el.classList.toggle('clm-gallery-visited-cover', !!visited);
+            } else if (variant === 'title') {
+                el.classList.toggle('clm-gallery-visited-title', !!visited);
+            }
+        }
+
+        function refreshGalleryVisitedStateForKey(threadKey) {
+            if (!threadKey) return;
+            const visited = hasGalleryVisitedThread(threadKey);
+            document.querySelectorAll('[data-clm-gallery-visited-variant]').forEach((el) => {
+                if (el.dataset.clmThreadKey === threadKey) {
+                    applyVisitedStateToElement(el, visited);
+                }
+            });
+        }
+
+        function bindGalleryVisitedIndicator(element, threadUrl, variant) {
+            if (!element || !threadUrl) return null;
+            const threadKey = normalizeThreadKey(threadUrl);
+            if (!threadKey) return null;
+            element.dataset.clmThreadKey = threadKey;
+            if (variant) {
+                element.dataset.clmGalleryVisitedVariant = variant;
+            }
+            applyVisitedStateToElement(element, hasGalleryVisitedThread(threadKey));
+            return threadKey;
+        }
+
+        function markThreadGalleryVisited(threadUrl) {
+            const threadKey = normalizeThreadKey(threadUrl);
+            if (!threadKey) return;
+            const records = getGalleryVisitedRecords();
+            records[threadKey] = Date.now();
+            const removedKeys = pruneGalleryVisitedRecords(records);
+            persistGalleryVisitedRecords();
+            refreshGalleryVisitedStateForKey(threadKey);
+            removedKeys.forEach((key) => refreshGalleryVisitedStateForKey(key));
+            // 瀏覽記錄也參與 WebDAV 同步
+            scheduleWebdavSync();
+        }
+
+        function getDownloadRecords() {
+            if (!downloadRecordsCache) {
+                downloadRecordsCache = loadDownloadRecordsFromStorage();
+            }
+            return downloadRecordsCache;
+        }
+
+        function loadDownloadRecordsFromStorage() {
+            try {
+                const raw = localStorage.getItem(DOWNLOAD_RECORDS_KEY);
+                if (raw) {
+                    const parsed = JSON.parse(raw);
+                    if (parsed && typeof parsed === 'object') {
+                        return normalizeRecordKeyMap(parsed);
+                    }
+                }
+            } catch (err) {
+                console.warn('草榴Manager: 無法讀取下載記錄', err);
+            }
+            return {};
+        }
+
+        function persistDownloadRecords() {
+            if (!downloadRecordsCache) {
+                downloadRecordsCache = {};
+            }
+            try {
+                localStorage.setItem(DOWNLOAD_RECORDS_KEY, JSON.stringify(downloadRecordsCache));
+            } catch (err) {
+                console.warn('草榴Manager: 無法保存下載記錄', err);
+            }
+        }
+
+        function hasDownloadedThread(threadUrl) {
+            const key = normalizeThreadKey(threadUrl);
+            if (!key) return false;
+            const records = getDownloadRecords();
+            return !!records[key];
+        }
+
+        function markThreadDownloaded(threadUrl) {
+            const key = normalizeThreadKey(threadUrl);
+            if (!key) return;
+            const records = getDownloadRecords();
+            records[key] = Date.now();
+            persistDownloadRecords();
+            notifyDownloadStatusChange(key);
+            scheduleWebdavSync();
+        }
+
+        function subscribeDownloadStatus(threadUrl, handler) {
+            const key = normalizeThreadKey(threadUrl);
+            if (!key || typeof handler !== 'function') {
+                return () => {};
+            }
+            if (!downloadStatusListeners.has(key)) {
+                downloadStatusListeners.set(key, new Set());
+            }
+            const listeners = downloadStatusListeners.get(key);
+            listeners.add(handler);
+            return () => {
+                listeners.delete(handler);
+                if (!listeners.size) {
+                    downloadStatusListeners.delete(key);
+                }
+            };
+        }
+
+        let webdavSyncInProgress = false;
+        let webdavSyncTimerId = null;
+        let lastWebdavAutoSyncFailedAt = 0;
+
+        function getWebdavConfig() {
+            const settings = loadSettings();
+            return settings.webdav || {};
+        }
+
+        function encryptWebdavField(plain) {
+            if (!plain) return '';
+            const key = WEBDAV_AUTH_SECRET_KEY;
+            let out = '';
+            for (let i = 0; i < plain.length; i++) {
+                const c = plain.charCodeAt(i) ^ key.charCodeAt(i % key.length);
+                out += String.fromCharCode(c);
+            }
+            try {
+                return btoa(unescape(encodeURIComponent(out)));
+            } catch (e) {
+                return btoa(out);
+            }
+        }
+
+        function decryptWebdavField(cipher) {
+            if (!cipher) return '';
+            let decoded = '';
+            try {
+                decoded = decodeURIComponent(escape(atob(cipher)));
+            } catch (e) {
+                try {
+                    decoded = atob(cipher);
+                } catch (e2) {
+                    return '';
+                }
+            }
+            const key = WEBDAV_AUTH_SECRET_KEY;
+            let out = '';
+            for (let i = 0; i < decoded.length; i++) {
+                const c = decoded.charCodeAt(i) ^ key.charCodeAt(i % key.length);
+                out += String.fromCharCode(c);
+            }
+            return out;
+        }
+
+        function loadWebdavAuth() {
+            try {
+                let raw = '';
+                if (typeof GM_getValue === 'function') {
+                    raw = GM_getValue(WEBDAV_AUTH_STORAGE_KEY, '');
+                } else if (pageWindow.localStorage) {
+                    raw = pageWindow.localStorage.getItem(WEBDAV_AUTH_STORAGE_KEY) || '';
+                }
+                if (raw) {
+                    const parsed = JSON.parse(raw);
+                    if (parsed && typeof parsed === 'object') {
+                        if (parsed.v === 1) {
+                            return {
+                                username: decryptWebdavField(parsed.username || ''),
+                                password: decryptWebdavField(parsed.password || '')
+                            };
+                        }
+                        return {
+                            username: parsed.username || '',
+                            password: parsed.password || ''
+                        };
+                    }
+                }
+            } catch (e) {
+                console.warn('草榴Manager: 無法讀取 WebDAV 憑據', e);
+            }
+            return { username: '', password: '' };
+        }
+
+        function saveWebdavAuth(auth) {
+            const payload = {
+                v: 1,
+                username: encryptWebdavField((auth && auth.username) || ''),
+                password: encryptWebdavField((auth && auth.password) || '')
+            };
+            const serialized = JSON.stringify(payload);
+            try {
+                if (typeof GM_setValue === 'function') {
+                    GM_setValue(WEBDAV_AUTH_STORAGE_KEY, serialized);
+                }
+            } catch (e) {
+                console.warn('草榴Manager: 無法通過 GM_setValue 保存 WebDAV 憑據', e);
+            }
+            try {
+                if (pageWindow.localStorage) {
+                    pageWindow.localStorage.setItem(WEBDAV_AUTH_STORAGE_KEY, serialized);
+                }
+            } catch (e) {
+                console.warn('草榴Manager: 無法通過 localStorage 保存 WebDAV 憑據', e);
+            }
+        }
+
+        function buildWebdavAuthHeaders(config) {
+            const headers = {};
+            let username = '';
+            let password = '';
+
+            try {
+                const auth = loadWebdavAuth();
+                if (auth) {
+                    username = auth.username || '';
+                    password = auth.password || '';
+                }
+            } catch (e) {
+                console.warn('草榴Manager: 讀取 WebDAV 憑據失敗', e);
+            }
+
+            // 兼容舊版本：如果安全存儲中沒有，回退到設置中的字段
+            if (!username && config && config.username) {
+                username = config.username || '';
+                password = config.password || '';
+            }
+
+            if (username) {
+                const tokenSource = username + ':' + (password || '');
+                try {
+                    headers['Authorization'] = 'Basic ' + btoa(unescape(encodeURIComponent(tokenSource)));
+                } catch (e) {
+                    headers['Authorization'] = 'Basic ' + btoa(tokenSource);
+                }
+            }
+            return headers;
+        }
+
+        function buildWebdavFileUrl(config) {
+            if (!config || !config.url) return null;
+            let base = (config.url || '').trim();
+            if (!base) return null;
+
+            // 去掉查詢參數和 hash，只判斷路徑部分
+            const withoutQuery = base.split(/[?#]/)[0];
+            if (/\.json$/i.test(withoutQuery)) {
+                // 兼容舊版本：直接使用完整 JSON 文件地址
+                return base;
+            }
+            if (!base.endsWith('/')) {
+                base += '/';
+            }
+            return base + 'clm_sync.json';
+        }
+
+        function scheduleWebdavSync() {
+            const config = getWebdavConfig();
+            const fileUrl = buildWebdavFileUrl(config);
+            if (!config.enabled || !fileUrl) {
+                return;
+            }
+            if (webdavSyncTimerId) {
+                clearTimeout(webdavSyncTimerId);
+            }
+            webdavSyncTimerId = setTimeout(() => {
+                webdavSyncTimerId = null;
+                syncDownloadRecordsWithWebdav({ silent: true })
+                    .then((ok) => {
+                        if (ok === false) {
+                            const now = Date.now();
+                            if (!lastWebdavAutoSyncFailedAt || now - lastWebdavAutoSyncFailedAt > 60000) {
+                                lastWebdavAutoSyncFailedAt = now;
+                                showToast('WebDAV 自動同步失敗，請在設置面板中點擊「立即同步 WebDAV」查看詳情。', 'warning');
+                            }
+                        }
+                    })
+                    .catch((err) => {
+                        const now = Date.now();
+                        if (!lastWebdavAutoSyncFailedAt || now - lastWebdavAutoSyncFailedAt > 60000) {
+                            lastWebdavAutoSyncFailedAt = now;
+                            const msg = (err && err.message) ? err.message : String(err);
+                            showToast('WebDAV 自動同步失敗：' + msg, 'warning');
+                        }
+                    });
+            }, 5000);
+        }
+
+        async function syncDownloadRecordsWithWebdav(options = {}) {
+            const statusCallback = typeof options.statusCallback === 'function' ? options.statusCallback : null;
+            const silent = !!options.silent;
+            const config = getWebdavConfig();
+            const fileUrl = buildWebdavFileUrl(config);
+            if (!config.enabled || !fileUrl) {
+                const msg = 'WebDAV 未啟用或未配置目錄地址';
+                if (statusCallback) {
+                    statusCallback(msg);
+                }
+                if (!silent) {
+                    showToast(msg, 'warning');
+                }
+                return false;
+            }
+            if (webdavSyncInProgress) {
+                const msg = '已有 WebDAV 同步在進行中，請稍候再試';
+                if (statusCallback) {
+                    statusCallback(msg);
+                }
+                if (!silent) {
+                    showToast(msg, 'info');
+                }
+                return false;
+            }
+            webdavSyncInProgress = true;
+            try {
+                if (statusCallback) {
+                    statusCallback('正在從 WebDAV 讀取數據…');
+                }
+
+                let remoteDownloadRecords = {};
+                let remoteGalleryRecords = {};
+                let remoteSettings = null;
+                let remoteUpdatedAt = 0;
+
+                try {
+                    const resp = await gmCompatibleFetch(fileUrl, {
+                        method: 'GET',
+                        headers: buildWebdavAuthHeaders(config),
+                        timeout: 20000
+                    });
+                    if (resp.ok) {
+                        const text = await resp.text();
+                        if (text) {
+                            let parsed = null;
+                            try {
+                                parsed = JSON.parse(text);
+                            } catch (e) {
+                                console.warn('草榴Manager: WebDAV 返回內容不是合法 JSON，原文前 200 字符：', text.slice(0, 200));
+                            }
+                            if (parsed && typeof parsed === 'object') {
+                                if (parsed.version === 1 && (parsed.downloadRecords || parsed.galleryVisitedRecords || parsed.settings)) {
+                                    if (parsed.downloadRecords && typeof parsed.downloadRecords === 'object') {
+                                        remoteDownloadRecords = parsed.downloadRecords;
+                                    }
+                                    if (parsed.galleryVisitedRecords && typeof parsed.galleryVisitedRecords === 'object') {
+                                        remoteGalleryRecords = parsed.galleryVisitedRecords;
+                                    }
+                                    if (parsed.settings && typeof parsed.settings === 'object') {
+                                        remoteSettings = parsed.settings;
+                                        if (typeof parsed.settings.updatedAt === 'number') {
+                                            remoteUpdatedAt = parsed.settings.updatedAt;
+                                        }
+                                    }
+                                } else {
+                                    // 舊版本：整個對象就是下載記錄 map
+                                    remoteDownloadRecords = parsed;
+                                }
+                            }
+                        }
+                    } else if (resp.status === 404) {
+                        // 文件不存在時視為空數據
+                        remoteDownloadRecords = {};
+                        remoteGalleryRecords = {};
+                        remoteSettings = null;
+                    } else {
+                        throw new Error('HTTP ' + resp.status);
+                    }
+                } catch (err) {
+                    const msg = err && err.message ? err.message : String(err);
+                    if (!silent) {
+                        showToast('WebDAV 讀取失敗：' + msg, 'error');
+                    }
+                    if (statusCallback) {
+                        statusCallback('讀取失敗：' + msg);
+                    }
+                    return false;
+                }
+
+                remoteDownloadRecords = normalizeRecordKeyMap(remoteDownloadRecords);
+                remoteGalleryRecords = normalizeRecordKeyMap(remoteGalleryRecords);
+
+                const localDownloadRecords = getDownloadRecords();
+                const localGalleryRecords = getGalleryVisitedRecords();
+                const localSettings = loadSettings();
+                const localUpdatedAt = typeof localSettings.updatedAt === 'number' ? localSettings.updatedAt : 0;
+
+                // 合併下載記錄（按時間戳取較新者）
+                const mergedDownloadRecords = {};
+                Object.keys(remoteDownloadRecords || {}).forEach((k) => {
+                    const v = Number(remoteDownloadRecords[k]) || 0;
+                    if (v > 0) {
+                        mergedDownloadRecords[k] = v;
+                    }
+                });
+                Object.keys(localDownloadRecords || {}).forEach((k) => {
+                    const localTs = Number(localDownloadRecords[k]) || 0;
+                    const remoteTs = Number(mergedDownloadRecords[k]) || 0;
+                    if (!remoteTs || localTs > remoteTs) {
+                        mergedDownloadRecords[k] = localTs;
+                    }
+                });
+                const newDownloadKeysForLocal = [];
+                Object.keys(mergedDownloadRecords).forEach((k) => {
+                    if (!localDownloadRecords[k]) {
+                        newDownloadKeysForLocal.push(k);
+                    }
+                });
+
+                // 合併畫廊瀏覽記錄
+                const mergedGalleryRecords = {};
+                Object.keys(remoteGalleryRecords || {}).forEach((k) => {
+                    const v = Number(remoteGalleryRecords[k]) || 0;
+                    if (v > 0) {
+                        mergedGalleryRecords[k] = v;
+                    }
+                });
+                Object.keys(localGalleryRecords || {}).forEach((k) => {
+                    const localTs = Number(localGalleryRecords[k]) || 0;
+                    const remoteTs = Number(mergedGalleryRecords[k]) || 0;
+                    if (!remoteTs || localTs > remoteTs) {
+                        mergedGalleryRecords[k] = localTs;
+                    }
+                });
+                const newGalleryKeysForLocal = [];
+                Object.keys(mergedGalleryRecords).forEach((k) => {
+                    if (!localGalleryRecords[k]) {
+                        newGalleryKeysForLocal.push(k);
+                    }
+                });
+                const removedGalleryKeys = pruneGalleryVisitedRecords(mergedGalleryRecords);
+
+                // 應用合併結果到本地
+                downloadRecordsCache = mergedDownloadRecords;
+                persistDownloadRecords();
+                newDownloadKeysForLocal.forEach((k) => notifyDownloadStatusChange(k));
+
+                galleryVisitedCache = mergedGalleryRecords;
+                persistGalleryVisitedRecords();
+                newGalleryKeysForLocal.forEach((k) => refreshGalleryVisitedStateForKey(k));
+                removedGalleryKeys.forEach((k) => refreshGalleryVisitedStateForKey(k));
+
+                // 合併設置（基於 updatedAt 判斷新舊）
+                let mergedSettingsPayload = null;
+                let settingsChangedFromRemote = false;
+
+                if (remoteSettings && remoteUpdatedAt > localUpdatedAt) {
+                    // 以遠端設置為準
+                    try {
+                        saveSettings(remoteSettings);
+                        settingsChangedFromRemote = true;
+                    } catch (e) {
+                        console.warn('草榴Manager: 無法應用 WebDAV 遠端設置', e);
+                    }
+                    mergedSettingsPayload = remoteSettings;
                 } else {
-                    topicPanel.classList.remove('clm-topic-collapsed');
-                    topicPanel.classList.add('clm-topic-expanded');
+                    // 以本地設置為準
+                    mergedSettingsPayload = localSettings;
+                }
+
+                // 構建要上傳到 WebDAV 的設置快照（移除 WebDAV 憑據）
+                let settingsForUpload = null;
+                if (mergedSettingsPayload && typeof mergedSettingsPayload === 'object') {
+                    settingsForUpload = JSON.parse(JSON.stringify(mergedSettingsPayload));
+                    if (settingsForUpload.webdav) {
+                        delete settingsForUpload.webdav.username;
+                        delete settingsForUpload.webdav.password;
+                    }
+                }
+
+                if (statusCallback) {
+                    const totalDownloads = Object.keys(mergedDownloadRecords).length;
+                    const totalVisited = Object.keys(mergedGalleryRecords).length;
+                    statusCallback('同步成功，本地下載記錄 ' + totalDownloads + ' 條，瀏覽記錄 ' + totalVisited + ' 條');
+                }
+                if (!silent) {
+                    showToast('WebDAV 同步已完成', 'success');
+                    if (settingsChangedFromRemote) {
+                        showToast('已從 WebDAV 更新設置', 'success');
+                    }
+                }
+
+                // 粗略比較，有差異則推送到 WebDAV
+                let needPush = false;
+                if (JSON.stringify(mergedDownloadRecords || {}) !== JSON.stringify(remoteDownloadRecords || {})) {
+                    needPush = true;
+                }
+                if (JSON.stringify(mergedGalleryRecords || {}) !== JSON.stringify(remoteGalleryRecords || {})) {
+                    needPush = true;
+                }
+                if (JSON.stringify(settingsForUpload || {}) !== JSON.stringify(remoteSettings || {})) {
+                    needPush = true;
+                }
+
+                if (needPush) {
+                    const payload = {
+                        version: 1,
+                        downloadRecords: mergedDownloadRecords,
+                        galleryVisitedRecords: mergedGalleryRecords,
+                        settings: settingsForUpload || {}
+                    };
+                    const headers = buildWebdavAuthHeaders(config);
+                    headers['Content-Type'] = 'application/json; charset=UTF-8';
+                    try {
+                        const resp = await gmCompatibleFetch(fileUrl, {
+                            method: 'PUT',
+                            headers,
+                            body: JSON.stringify(payload),
+                            timeout: 20000
+                        });
+                        if (!resp.ok && !silent) {
+                            showToast('WebDAV 上傳失敗：HTTP ' + resp.status, 'error');
+                        }
+                    } catch (err) {
+                        if (!silent) {
+                            const msg = err && err.message ? err.message : String(err);
+                            showToast('WebDAV 上傳失敗：' + msg, 'error');
+                        }
+                    }
+                }
+                return true;
+            } finally {
+                webdavSyncInProgress = false;
+            }
+        }
+
+        function notifyDownloadStatusChange(threadKey) {
+            const listeners = downloadStatusListeners.get(threadKey);
+            if (!listeners) return;
+            listeners.forEach((fn) => {
+                try {
+                    fn(true);
+                } catch (err) {
+                    console.warn('草榴Manager: 下載狀態回調失敗', err);
+                }
+            });
+        }
+
+        const QB_LOG_STORAGE_KEY = '草榴ManagerQbLogs';
+        const MAX_QB_LOG_ENTRIES = 80;
+        let qbLogCache = null;
+        const qbLogSubscribers = new Set();
+
+        function loadQbLogsFromStorage() {
+            try {
+                const raw = localStorage.getItem(QB_LOG_STORAGE_KEY);
+                if (raw) {
+                    const parsed = JSON.parse(raw);
+                    if (Array.isArray(parsed)) {
+                        return parsed;
+                    }
+                }
+            } catch (err) {
+                console.warn('草榴Manager: 無法讀取日志', err);
+            }
+            return [];
+        }
+
+        function getQbLogs() {
+            if (!qbLogCache) {
+                qbLogCache = loadQbLogsFromStorage();
+            }
+            return qbLogCache;
+        }
+
+        function persistQbLogs() {
+            if (!qbLogCache) return;
+            try {
+                localStorage.setItem(QB_LOG_STORAGE_KEY, JSON.stringify(qbLogCache));
+            } catch (err) {
+                console.warn('草榴Manager: 無法保存日志', err);
+            }
+        }
+
+        function appendQbLog(message, level = 'info') {
+            const logs = getQbLogs();
+            logs.push({
+                id: Date.now() + '_' + Math.random().toString(16).slice(2),
+                time: Date.now(),
+                level,
+                message
+            });
+            while (logs.length > MAX_QB_LOG_ENTRIES) {
+                logs.shift();
+            }
+            persistQbLogs();
+            qbLogSubscribers.forEach((fn) => {
+                try {
+                    fn(logs.slice());
+                } catch (err) {
+                    console.warn('草榴Manager: 日志訂閱回調失敗', err);
+                }
+            });
+        }
+
+        function clearQbLogs() {
+            qbLogCache = [];
+            persistQbLogs();
+            qbLogSubscribers.forEach((fn) => {
+                try {
+                    fn([]);
+                } catch (err) {
+                    console.warn('草榴Manager: 日志訂閱回調失敗', err);
+                }
+            });
+        }
+
+        function subscribeQbLogs(handler) {
+            if (typeof handler !== 'function') {
+                return () => {};
+            }
+            qbLogSubscribers.add(handler);
+            return () => {
+                qbLogSubscribers.delete(handler);
+            };
+        }
+
+        function formatLogTime(ts) {
+            const date = new Date(ts);
+            const pad = (n) => (n < 10 ? '0' + n : '' + n);
+            return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+        }
+
+        let toastContainer = null;
+        let toastStyleInjected = false;
+
+        function ensureToastContainer() {
+            if (toastContainer) return toastContainer;
+            toastContainer = document.createElement('div');
+            toastContainer.className = 'clm-toast-container';
+            document.body.appendChild(toastContainer);
+            if (!toastStyleInjected) {
+                toastStyleInjected = true;
+                injectStyle(`
+                    .clm-toast-container {
+                        position: fixed;
+                        right: 20px;
+                        bottom: 20px;
+                        display: flex;
+                        flex-direction: column;
+                        gap: 8px;
+                        z-index: 999999 !important;
+                        pointer-events: none;
+                    }
+                    .clm-toast {
+                        min-width: 220px;
+                        max-width: 320px;
+                        background: rgba(0, 0, 0, 0.8);
+                        color: #fff;
+                        padding: 10px 12px;
+                        border-radius: 6px;
+                        font-size: 12px;
+                        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+                        transform: translateY(20px);
+                        opacity: 0;
+                        transition: opacity 0.25s ease, transform 0.25s ease;
+                    }
+                    .clm-toast.clm-show {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
+                    .clm-toast.clm-success {
+                        background: rgba(22, 163, 74, 0.95);
+                        min-width: 280px;
+                        max-width: 440px;
+                        padding: 18px 20px;
+                        font-size: 14px;
+                        font-weight: 600;
+                    }
+                    .clm-toast.clm-error {
+                        background: rgba(220, 38, 38, 0.95);
+                    }
+                    .clm-toast.clm-warning {
+                        background: rgba(234, 179, 8, 0.95);
+                        color: #1f2937;
+                    }
+                `);
+            }
+            return toastContainer;
+        }
+
+        function showToast(message, type = 'info', duration = 4000) {
+            const container = ensureToastContainer();
+            const toast = document.createElement('div');
+            toast.className = `clm-toast clm-${type}`;
+            toast.textContent = message;
+            container.appendChild(toast);
+            requestAnimationFrame(() => {
+                toast.classList.add('clm-show');
+            });
+            setTimeout(() => {
+                toast.classList.remove('clm-show');
+                setTimeout(() => {
+                    toast.remove();
+                }, 250);
+            }, duration);
+        }
+
+        function summarizeResource(value, maxLength = 80) {
+            if (!value) return '未知資源';
+            const str = String(value).trim();
+            if (str.length <= maxLength) return str;
+            return str.slice(0, maxLength - 3) + '...';
+        }
+
+        function collectGalleryImages(threadContent, baseHref = location.href) {
+            if (!threadContent) return [];
+            const seen = new Set();
+            const gallery = [];
+
+            function pushItem(rawUrl, label) {
+                if (!rawUrl) return;
+                // 排除广告占位符和无效URL
+                if (rawUrl.includes('adblo_ck.jpg') || rawUrl.includes('http://a.d/')) return;
+                const abs = getAbsoluteUrl(rawUrl, baseHref);
+                if (!abs || seen.has(abs)) return;
+                seen.add(abs);
+                gallery.push({
+                    src: abs,
+                    url: abs,
+                    label: label || ''
+                });
+            }
+
+            // 收集所有带有真实图片数据的img标签
+            // 优先查找在.tpc_content中的图片，排除广告区域
+            const contentArea = threadContent.querySelector('.tpc_content') || threadContent;
+            const allImages = contentArea.querySelectorAll('img[ess-data], img[iyl-data], img[data-src], img[src]');
+            
+            allImages.forEach(img => {
+                // 优先使用ess-data，然后是data-src，然后是iyl-data，最后是src
+                const imgUrl = img.getAttribute('ess-data') ||
+                    img.getAttribute('data-src') ||
+                    img.getAttribute('iyl-data') ||
+                    img.src;
+                
+                if (imgUrl && !imgUrl.includes('adblo_ck.jpg') && !imgUrl.includes('http://a.d/')) {
+                    // 过滤掉太小的图片（可能是图标或广告）
+                    const width = img.naturalWidth || img.width || 0;
+                    const height = img.naturalHeight || img.height || 0;
+                    if (width < 100 && height < 100 && img.src && !img.getAttribute('ess-data') && !img.getAttribute('data-src')) {
+                        return; // 跳过小图片
+                    }
+                    
+                    const label = img.getAttribute('title') || 
+                        img.getAttribute('alt') || 
+                        (gallery.length === 0 ? '封面' : `圖片 ${gallery.length + 1}`);
+                    pushItem(imgUrl, label);
+                }
+            });
+
+            // 如果没有找到任何图片，尝试查找封面图片（兼容旧逻辑）
+            if (gallery.length === 0) {
+                const coverImg = threadContent.querySelector('img[ess-data], img[iyl-data], img[data-src], img[src*="pb_"], img[src*="cover"]');
+                if (coverImg) {
+                    const coverUrl = coverImg.getAttribute('ess-data') ||
+                        coverImg.getAttribute('data-src') ||
+                        coverImg.getAttribute('iyl-data') ||
+                        coverImg.src;
+                    if (coverUrl) {
+                        pushItem(coverUrl, coverImg.getAttribute('title') || '封面');
+                    }
+                }
+            }
+
+            // 收集.cl-gallery中的链接（兼容旧逻辑）
+            const galleryAnchors = threadContent.querySelectorAll('.cl-gallery a[href]');
+            galleryAnchors.forEach(anchor => {
+                const href = anchor.getAttribute('href');
+                if (!href) return;
+                const label = anchor.querySelector('img')?.getAttribute('title') || anchor.textContent.trim() || '預覽';
+                pushItem(href, label);
+            });
+
+            return gallery;
+        }
+
+        function extractCleanText(node) {
+            if (!node) return '';
+            const clone = node.cloneNode(true);
+            const removable = clone.querySelectorAll('script, style, iframe, video, audio');
+            removable.forEach(el => el.remove());
+            
+            // 将 <br> 和 <br/> 标签转换为换行符
+            const brElements = clone.querySelectorAll('br');
+            brElements.forEach(br => {
+                const textNode = document.createTextNode('\n');
+                br.parentNode.replaceChild(textNode, br);
+            });
+            
+            const text = clone.textContent
+                .replace(/\u00A0/g, ' ')
+                .replace(/\s+\n/g, '\n')
+                .replace(/\n{2,}/g, '\n')
+                .replace(/[ \t]{2,}/g, ' ')
+                .trim();
+            return text;
+        }
+
+        function extractPostUser(contentEl) {
+            if (!contentEl) return '';
+            
+            // 手机端 htm_mob：.tpc_cont 与 .tpc_detail 在同一块内，优先从同一块里的 .tpc_detail 读取用户名
+            if (contentEl.classList && contentEl.classList.contains('tpc_cont')) {
+                const parent = contentEl.parentElement;
+                if (parent) {
+                    const mobileDetail = parent.querySelector('.tpc_detail.f10.fl li');
+                    if (mobileDetail) {
+                        const html = mobileDetail.innerHTML || '';
+                        // 提取 <br> 之前的内容（用户名），如：血色不浪漫<br>#1樓 ...
+                        const match = html.match(/^([^<]+?)(?:<br|<BR)/i);
+                        if (match && match[1]) {
+                            const username = match[1].trim();
+                            console.log('草榴Manager: 手机端提取到用户名:', username);
+                            if (username && !username.includes('#') && !username.includes('樓')) {
+                                return username;
+                            }
+                        }
+                        // 如果没有 <br>，回退到第一行文本
+                        const text = mobileDetail.textContent || mobileDetail.innerText || '';
+                        const lines = text.split('\n').map(l => l.trim()).filter(l => l);
+                        if (lines.length > 0 && !lines[0].includes('#') && !lines[0].includes('樓')) {
+                            console.log('草榴Manager: 手机端从文本提取用户名:', lines[0]);
+                            return lines[0];
+                        }
+                    }
+                }
+            }
+            
+            // 电脑端 / 其他布局：尝试从 .tpc_detail.f10.fl 所在的 .t.t2/.t2/.t 容器中提取用户名
+            const postContainer = contentEl.closest('.t.t2, .t2, .t');
+            if (postContainer) {
+                const tpcDetail = postContainer.querySelector('.tpc_detail.f10.fl li');
+                if (tpcDetail) {
+                    // 获取 innerHTML 并解析
+                    const html = tpcDetail.innerHTML || '';
+                    // 提取 <br> 之前的内容（用户名）
+                    // 匹配格式：血色不浪漫<br>#1樓
+                    const match = html.match(/^([^<]+?)(?:<br|<BR)/i);
+                    if (match && match[1]) {
+                        const username = match[1].trim();
+                        console.log('草榴Manager: 提取到用户名:', username);
+                        if (username && !username.includes('#') && !username.includes('樓')) {
+                            return username;
+                        }
+                    }
+                    // 如果没有 <br>，尝试提取第一行
+                    const text = tpcDetail.textContent || tpcDetail.innerText || '';
+                    const lines = text.split('\n').map(l => l.trim()).filter(l => l);
+                    if (lines.length > 0 && !lines[0].includes('#') && !lines[0].includes('樓')) {
+                        console.log('草榴Manager: 从文本提取用户名:', lines[0]);
+                        return lines[0];
+                    }
+                }
+            }
+            
+            // 方法1：向上查找包含 tpc_content 的最外层 th（评论内容所在的 th）
+            // 然后找到这个 th 所在行的第一个 th（用户名所在的 th）
+            let current = contentEl;
+            let outerTh = null;
+            
+            // 向上查找，找到包含 tpc_content 的最外层 th
+            // 这个 th 应该包含一个 table 元素，并且这个 table 应该包含当前的 contentEl
+            while (current && current !== document.body) {
+                if (current.tagName === 'TH') {
+                    const table = current.querySelector('table');
+                    if (table && table.contains(contentEl)) {
+                        outerTh = current;
+                        break;
+                    }
+                }
+                current = current.parentElement;
+            }
+            
+            if (outerTh) {
+                // 找到这个 th 所在的 tr
+                const row = outerTh.closest('tr');
+                if (row) {
+                    // 查找同一行的第一个 th（包含用户名）
+                    const firstTh = row.querySelector('th:first-child');
+                    if (firstTh && firstTh !== outerTh) {
+                        // 在第一个 th 中查找 b 标签（用户名）
+                        const bTag = firstTh.querySelector('b');
+                        if (bTag) {
+                            const text = bTag.textContent.trim();
+                            if (text) {
+                                return text;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // 方法2：直接查找包含 tpc_content 的 div.t.t2 或 .t2，然后找第一行的第一个 th
+            const tDiv = contentEl.closest('.t.t2, .t2');
+            if (tDiv) {
+                // 查找 tDiv 内的第一个 table（最外层的 table）
+                const table = tDiv.querySelector('> table, table');
+                if (table) {
+                    // 查找 table 的第一行（tbody 内的第一行，或者直接的第一行）
+                    const firstRow = table.querySelector('tbody > tr.tr1, tbody > tr:first-child, tr.tr1, tr:first-child');
+                    if (firstRow) {
+                        // 查找第一行的第一个 th（包含用户名）
+                        const firstTh = firstRow.querySelector('th:first-child');
+                        if (firstTh) {
+                            // 在第一个 th 中查找 b 标签（用户名）
+                            const bTag = firstTh.querySelector('b');
+                            if (bTag) {
+                                const text = bTag.textContent.trim();
+                                if (text) {
+                                    return text;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // 方法3：查找包含 tpc_content 的表格，向上找到包含它的最外层 table
+            // 然后查找这个 table 的第一行第一个 th
+            let table = contentEl.closest('table');
+            if (table) {
+                // 继续向上查找，找到最外层的 table（包含评论的 table）
+                while (table && table.parentElement) {
+                    const parentTable = table.parentElement.closest('table');
+                    if (parentTable) {
+                        table = parentTable;
+                    } else {
+                        break;
+                    }
+                }
+                
+                // 查找这个 table 的第一行第一个 th
+                const firstRow = table.querySelector('tbody > tr:first-child, tr:first-child');
+                if (firstRow) {
+                    const firstTh = firstRow.querySelector('th:first-child');
+                    if (firstTh) {
+                        const bTag = firstTh.querySelector('b');
+                        if (bTag) {
+                            const text = bTag.textContent.trim();
+                            if (text) {
+                                return text;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // 最后备用方案：查找其他可能的位置
+            const td = contentEl.closest('td');
+            const row = td?.parentElement;
+            const candidateContainers = new Set();
+
+            if (row) {
+                const firstCell = row.querySelector('td:first-child, th:first-child');
+                if (firstCell && firstCell !== td) {
+                    candidateContainers.add(firstCell);
+                }
+                if (row.previousElementSibling) {
+                    candidateContainers.add(row.previousElementSibling);
+                }
+                candidateContainers.add(row);
+            }
+
+            candidateContainers.add(td?.previousElementSibling || null);
+            candidateContainers.add(contentEl.closest('.tpc'));
+            candidateContainers.add(contentEl.closest('table'));
+
+            const selectors = [
+                '.readName a',
+                '.readName',
+                '.tpc_info a',
+                '.tpc_info',
+                '.tipad a',
+                '.tipad b',
+                '.tal a',
+                '.tal b',
+                '.authi a',
+                '.authi',
+                'b'
+            ];
+
+            for (const container of candidateContainers) {
+                if (!container) continue;
+                for (const sel of selectors) {
+                    const target = container.querySelector(sel);
+                    if (target) {
+                        const text = target.textContent.trim();
+                        if (text) {
+                            return text;
+                        }
+                    }
+                }
+                if (container.dataset?.author) {
+                    const author = container.dataset.author.trim();
+                    if (author) return author;
+                }
+            }
+            return '';
+        }
+
+        function parseTitleTags(titleText) {
+            if (!titleText) return { quality: null, size: null, code: null, title: '' };
+            
+            // 移除 HTML 标签和多余空格
+            const cleanTitle = titleText.replace(/<[^>]+>/g, '').trim();
+            
+            // 匹配格式：允许前面有前缀，如 "新作 [HD/5.75G] BOKD-305 标题文本"
+            // 使用非贪婪匹配，确保能匹配到第一个 [ ] 对
+            const match = cleanTitle.match(/\[([^\]]+)\]\s*(.+)$/);
+            if (!match) {
+                // 如果没有匹配到 [ ] 格式，尝试直接匹配番号格式
+                // 例如：BOKD-303 标题文本，或 OLM-257E 标题文本（末尾帶字母）
+                const codeMatch = cleanTitle.match(/^([A-Z0-9]+[-_][0-9]+[A-Z]*)\s+(.+)$/i);
+                if (codeMatch) {
+                    return {
+                        quality: null,
+                        size: null,
+                        code: codeMatch[1].toUpperCase(),
+                        title: codeMatch[2].trim()
+                    };
+                }
+                return { quality: null, size: null, code: null, title: cleanTitle };
+            }
+            
+            const bracketContent = match[1]; // HD/5.75G
+            const titlePart = match[2]; // BOKD-305 AVデビュー ボクこう見えてオチンチンついてます。 神戸まこ。
+            
+            let quality = null;
+            let size = null;
+            let code = null;
+            let title = '';
+            
+            // 解析括号内的内容：HD/5.75G
+            const bracketParts = bracketContent.split('/');
+            if (bracketParts.length >= 2) {
+                // 第一个部分：清晰度 (SD/HD/4K/VR)
+                const qualityPart = bracketParts[0].trim().toUpperCase();
+                if (['SD', 'HD', '4K', 'VR'].includes(qualityPart)) {
+                    quality = qualityPart;
+                }
+                
+                // 第二个部分：文件大小 (如 5.75G, 6.23G)
+                const sizePart = bracketParts[1].trim();
+                if (sizePart.match(/^[\d.]+[GMK]?B?$/i)) {
+                    size = sizePart.toUpperCase();
+                }
+            } else if (bracketContent.trim()) {
+                // 如果只有一个部分，尝试判断是清晰度还是大小
+                const singlePart = bracketContent.trim().toUpperCase();
+                if (['SD', 'HD', '4K', 'VR'].includes(singlePart)) {
+                    quality = singlePart;
+                } else if (singlePart.match(/^[\d.]+[GMK]?B?$/i)) {
+                    size = singlePart;
+                }
+            }
+            
+            // 解析标题部分：提取番号和片名
+            // 先特殊处理 FC2-PPV 番号：整段视为一个完整番号，不再拆分前缀/后缀
+            const fc2Match = titlePart.match(/\b(FC2-PPV-[0-9]{5,8})\b/i);
+            if (fc2Match) {
+                code = fc2Match[1].toUpperCase();
+                const rest = titlePart.replace(fc2Match[0], '').trim();
+                title = rest || '';
+            } else {
+                // 匹配番号格式：BOKD-305、OLM-257E 等 (字母数字-数字+可选字母，支持多种分隔符)
+                const codeMatch = titlePart.match(/^([A-Z0-9]+[-_][0-9]+[A-Z]*)\s+(.+)$/i);
+                if (codeMatch) {
+                    code = codeMatch[1].toUpperCase(); // BOKD-305
+                    title = codeMatch[2].trim(); // AVデビュー ボクこう見えてオチンチンついてます。 神戸まこ。
+                } else {
+                    // 如果没有番号，整个作为标题
+                    title = titlePart.trim();
+                }
+            }
+            
+            return { quality, size, code, title };
+        }
+
+        function collectThreadContext(doc) {
+            // 兼容电脑端 .tpc_content 和手机端 .tpc_cont
+            let contentBlocks = Array.from(doc.querySelectorAll('.tpc_content'));
+            if (!contentBlocks.length) {
+                // 尝试手机端选择器
+                contentBlocks = Array.from(doc.querySelectorAll('.tpc_cont'));
+            }
+
+            // 从页面脚本中解析点评数据：var comm<postId> = {...};
+            const commentDataByPostId = new Map();
+            try {
+                const scripts = Array.from(doc.querySelectorAll('script'));
+                const commRegex = /var\s+comm(\d+)\s*=\s*({[\s\S]*?});/g;
+                scripts.forEach(script => {
+                    const text = script.textContent || '';
+                    let match;
+                    while ((match = commRegex.exec(text)) !== null) {
+                        const postId = match[1];
+                        const objStr = match[2];
+                        try {
+                            const data = JSON.parse(objStr);
+                            commentDataByPostId.set(postId, data);
+                        } catch (e) {
+                            console.warn('clm 解析点评 JSON 失败:', postId, e);
+                        }
+                    }
+                });
+            } catch (e) {
+                console.warn('clm 收集点评脚本失败:', e);
+            }
+            if (!contentBlocks.length) {
+                return {
+                    topic: null,
+                    comments: [],
+                    ads: []
+                };
+            }
+
+            // 收集所有 ftad-ct 元素
+            const allFtadElements = Array.from(doc.querySelectorAll('.ftad-ct'));
+            const ads = allFtadElements.map(el => el.outerHTML);
+            
+            // 调试：输出收集到的广告数量
+            if (ads.length > 0) {
+                console.log('clm 收集到广告数量:', ads.length, ads);
+            }
+
+            // 获取标题（从 <td class="h"> 中获取）
+            let titleInfo = null;
+            let rawTitleText = null;
+            // 查找 <td class="h"> 元素
+            const hTd = doc.querySelector('td.h');
+            if (hTd) {
+                // 查找 <b>本頁主題:</b> 或 <b>本页主题:</b>
+                const themeLabel = hTd.querySelector('b');
+                if (themeLabel && (themeLabel.textContent.includes('本頁主題') || themeLabel.textContent.includes('本页主题'))) {
+                    // 获取 <b> 标签后面的所有内容
+                    let titleText = '';
+                    // 方法1：尝试从整个 td 的 innerHTML 中提取（保留格式信息）
+                    const fullHtml = hTd.innerHTML || '';
+                    const htmlMatch = fullHtml.match(/本[頁页]主題[：:]\s*<\/b>\s*(.+)/);
+                    if (htmlMatch) {
+                        // 提取 HTML 内容，然后转换为文本（保留格式如 [HD/5.87G]）
+                        const tempDiv = document.createElement('div');
+                        tempDiv.innerHTML = htmlMatch[1];
+                        titleText = tempDiv.textContent || tempDiv.innerText || '';
+                    }
+                    // 方法2：如果方法1没获取到，从 <b> 标签的 nextSibling 开始，收集所有后续节点的文本
+                    if (!titleText.trim()) {
+                        let node = themeLabel.nextSibling;
+                        while (node) {
+                            if (node.nodeType === Node.TEXT_NODE) {
+                                titleText += node.textContent;
+                            } else if (node.nodeType === Node.ELEMENT_NODE) {
+                                titleText += node.textContent;
+                            }
+                            node = node.nextSibling;
+                        }
+                    }
+                    // 方法3：如果方法2没获取到，尝试从整个 td 中提取（使用正则）
+                    if (!titleText.trim()) {
+                        const fullText = hTd.textContent || hTd.innerText || '';
+                        const match = fullText.match(/本[頁页]主題[：:]\s*(.+)/);
+                        if (match) {
+                            titleText = match[1].trim();
+                        }
+                    }
+                    // 方法4：如果还是没获取到，尝试获取整个 td 的文本，然后移除"本頁主題:"部分
+                    if (!titleText.trim()) {
+                        const fullText = hTd.textContent || hTd.innerText || '';
+                        titleText = fullText.replace(/.*?本[頁页]主題[：:]\s*/, '').trim();
+                    }
+                    if (titleText.trim()) {
+                        rawTitleText = titleText.trim();
+                        titleInfo = parseTitleTags(titleText);
+                        // 如果解析后没有标题，使用原始标题
+                        if (titleInfo && !titleInfo.title) {
+                            titleInfo.title = rawTitleText;
+                        }
+                    }
+                }
+            }
+            // 如果从 td.h 没获取到，尝试从 f16 或 f18 获取（作为后备方案）
+            if (!titleInfo && !rawTitleText) {
+                const firstContentBlock = contentBlocks[0];
+                if (firstContentBlock) {
+                    // 尝试多种方式查找 f16 或 f18 元素
+                    let titleElement = null;
+                    const postContainer = firstContentBlock.closest('.t.t2, .t2, .t');
+                    if (postContainer) {
+                        titleElement = postContainer.querySelector('h4.f16, .f16, h4[class*="f16"], .f18');
+                    }
+                    // 如果没找到，尝试在整个文档中查找（作为后备方案）
+                    if (!titleElement) {
+                        titleElement = doc.querySelector('h4.f16, .f16, h4[class*="f16"], .f18');
+                    }
+                    if (titleElement) {
+                        let titleText = titleElement.textContent || titleElement.innerText || '';
+                        // 移除可能存在的“新作”标签
+                        titleText = titleText.replace(/^新作\s*/, '');
+                        if (titleText.trim()) {
+                            rawTitleText = titleText.trim();
+                            titleInfo = parseTitleTags(titleText);
+                            // 如果解析后没有标题，使用原始标题
+                            if (titleInfo && !titleInfo.title) {
+                                titleInfo.title = rawTitleText;
+                            }
+                        }
+                    }
+                }
+            }
+
+            const posts = contentBlocks.map((el, idx) => {
+                const user = extractPostUser(el) || (idx === 0 ? '樓主' : `回覆 ${idx}`);
+                let content = extractCleanText(el);
+
+                // 从内容块 id 中解析帖子 postId（例如 id="cont110899049"）
+                let postId = null;
+                if (el.id) {
+                    const pidMatch = el.id.match(/^cont(\d+)/);
+                    if (pidMatch) {
+                        postId = pidMatch[1];
+                    }
+                }
+                
+                // 查找该帖子相关的 ftad-ct 元素（在同一个 .t.t2 容器内或附近）
+                const postContainer = el.closest('.t.t2, .t2, .t');
+                let postAds = [];
+                if (postContainer) {
+                    // 查找同一容器内的 ftad-ct 元素
+                    const containerFtads = postContainer.querySelectorAll('.ftad-ct');
+                    postAds = Array.from(containerFtads).map(ftad => ftad.outerHTML);
+                }
+                
+                // 查找该帖子对应的 tr.tr1.do_not_catch 中的 tips 元素
+                let postTips = [];
+                if (postContainer) {
+                    // 方法1：查找同一容器内的 tr.tr1.do_not_catch 元素
+                    let tr1DoNotCatch = postContainer.querySelector('tr.tr1.do_not_catch');
+                    
+                    // 方法2：如果没找到，尝试查找包含当前 contentEl 的 table，然后找其 tr.tr1.do_not_catch
+                    if (!tr1DoNotCatch) {
+                        const contentTable = el.closest('table');
+                        if (contentTable) {
+                            // 向上查找最外层的 table（包含整个帖子的 table）
+                            let outerTable = contentTable;
+                            while (outerTable && outerTable.parentElement) {
+                                const parentTable = outerTable.parentElement.closest('table');
+                                if (parentTable) {
+                                    outerTable = parentTable;
+                                } else {
+                                    break;
+                                }
+                            }
+                            if (outerTable) {
+                                tr1DoNotCatch = outerTable.querySelector('tr.tr1.do_not_catch');
+                            }
+                        }
+                    }
+                    
+                    if (tr1DoNotCatch) {
+                        // 只查找 .tips 元素，排除 .tiptop 等其他包含 tip 的元素
+                        const tipsElements = tr1DoNotCatch.querySelectorAll('.tips');
+                        postTips = Array.from(tipsElements).map(tip => tip.outerHTML);
+                    }
+                }
+                
+                // 查找该楼层内的点评列表 ul.post_comm
+                // 兼容两种结构：
+                // 1) ul.post_comm 在当前 .t/.t2 容器内部
+                // 2) ul.post_comm 紧跟在当前容器之后，作为兄弟节点
+                let postComms = [];
+                if (postContainer) {
+                    const commLists = Array.from(postContainer.querySelectorAll('ul.post_comm'));
+                    // 查找紧跟在该楼层后面的兄弟节点中的点评列表
+                    let sibling = postContainer.nextElementSibling;
+                    while (sibling) {
+                        if (sibling.matches('.t.t2, .t2, .t')) {
+                            // 遇到下一楼层时停止
+                            break;
+                        }
+                        if (sibling.matches && sibling.matches('ul.post_comm')) {
+                            commLists.push(sibling);
+                        }
+                        sibling = sibling.nextElementSibling;
+                    }
+
+                    if (commLists.length > 0) {
+                        commLists.forEach(commList => {
+                            const items = commList.querySelectorAll('li');
+                            items.forEach(li => {
+                                const faceUser = li.querySelector('span a');
+                                const uname = faceUser ? faceUser.textContent.trim() : '';
+                                const contEl = li.querySelector('.post_cont');
+                                const commText = contEl ? extractCleanText(contEl) : '';
+                                if (commText) {
+                                    postComms.push({
+                                        user: uname || '点评',
+                                        content: commText
+                                    });
+                                }
+                            });
+                        });
+                    }
+                }
+
+                // 如果 DOM 中没有找到点评列表，但脚本中存在对应的 comm<postId> 数据，则从脚本恢复点评
+                if ((!postComms || postComms.length === 0) && postId && commentDataByPostId.has(postId)) {
+                    try {
+                        const commObj = commentDataByPostId.get(postId);
+                        const commItems = Object.values(commObj || {})
+                            .filter(item => item && (item.c || item.u))
+                            .sort((a, b) => (a.d || 0) - (b.d || 0));
+                        commItems.forEach(item => {
+                            const uname = (item.u || '').trim();
+                            const commText = (item.c || '').trim();
+                            if (!commText) return;
+                            postComms.push({
+                                user: uname || '点评',
+                                content: commText
+                            });
+                        });
+                    } catch (e) {
+                        console.warn('clm 从脚本构建点评失败:', postId, e);
+                    }
+                }
+                
+                return {
+                    user,
+                    content,
+                    ads: postAds,
+                    tips: postTips,
+                    postComms,
+                    titleInfo: idx === 0 ? titleInfo : null,
+                    rawTitle: idx === 0 ? rawTitleText : null
+                };
+            });
+
+            const [topic, ...rest] = posts;
+            const comments = rest.slice(0, 30);
+
+            return {
+                topic,
+                comments,
+                ads
+            };
+        }
+
+        function collectThreadAdBlocks(doc) {
+            if (!doc) return [];
+            // 收集所有 ftad-ct 元素
+            const ftadElements = Array.from(doc.querySelectorAll('.ftad-ct'));
+            return ftadElements.map(el => el.outerHTML);
+        }
+
+        const adScriptCache = new Map();
+
+        function decodeJsStringLiteral(input) {
+            if (!input) return '';
+            let output = '';
+            for (let i = 0; i < input.length; i++) {
+                const ch = input[i];
+                if (ch !== '\\') {
+                    output += ch;
+                    continue;
+                }
+                i += 1;
+                if (i >= input.length) {
+                    break;
+                }
+                const next = input[i];
+                switch (next) {
+                    case 'n':
+                        output += '\n';
+                        break;
+                    case 'r':
+                        output += '\r';
+                        break;
+                    case 't':
+                        output += '\t';
+                        break;
+                    case 'b':
+                        output += '\b';
+                        break;
+                    case 'f':
+                        output += '\f';
+                        break;
+                    case 'v':
+                        output += '\v';
+                        break;
+                    case '0':
+                        output += '\0';
+                        break;
+                    case '\\':
+                        output += '\\';
+                        break;
+                    case '"':
+                    case '\'':
+                    case '`':
+                        output += next;
+                        break;
+                    case 'x': {
+                        const hex = input.slice(i + 1, i + 3);
+                        if (/^[0-9a-fA-F]{2}$/.test(hex)) {
+                            output += String.fromCharCode(parseInt(hex, 16));
+                            i += 2;
+                        } else {
+                            output += next;
+                        }
+                        break;
+                    }
+                    case 'u': {
+                        if (input[i + 1] === '{') {
+                            const endBrace = input.indexOf('}', i + 2);
+                            if (endBrace !== -1) {
+                                const codePointHex = input.slice(i + 2, endBrace);
+                                if (/^[0-9a-fA-F]+$/.test(codePointHex)) {
+                                    output += String.fromCodePoint(parseInt(codePointHex, 16));
+                                    i = endBrace;
+                                    break;
+                                }
+                            }
+                        }
+                        const hex = input.slice(i + 1, i + 5);
+                        if (/^[0-9a-fA-F]{4}$/.test(hex)) {
+                            output += String.fromCharCode(parseInt(hex, 16));
+                            i += 4;
+                        } else {
+                            output += next;
+                        }
+                        break;
+                    }
+                    default:
+                        output += next;
+                        break;
+                }
+            }
+            return output;
+        }
+
+        function extractSpjsonPayload(scriptText) {
+            if (!scriptText) return '';
+            const assignMatch = scriptText.match(/(?:var|let|const)?\s*(?:window\.)?\s*spJson\s*=\s*([\s\S]+?);/i);
+            if (!assignMatch || !assignMatch[1]) {
+                return '';
+            }
+
+            function resolveExpression(expr) {
+                const trimmed = expr.trim();
+                if (!trimmed) {
+                    return '';
+                }
+                const literalMatch = trimmed.match(/^(['"`])([\s\S]*)\1$/);
+                if (literalMatch) {
+                    return decodeJsStringLiteral(literalMatch[2]);
+                }
+                const decodeMatch = trimmed.match(/^decodeURIComponent\s*\(([\s\S]+)\)$/i);
+                if (decodeMatch) {
+                    const inner = resolveExpression(decodeMatch[1]);
+                    try {
+                        return decodeURIComponent(inner);
+                    } catch (err) {
+                        return inner;
+                    }
+                }
+                const jsonParseMatch = trimmed.match(/^JSON\.parse\s*\(([\s\S]+)\)$/i);
+                if (jsonParseMatch) {
+                    const inner = resolveExpression(jsonParseMatch[1]);
+                    try {
+                        const parsed = JSON.parse(inner);
+                        if (typeof parsed === 'string') {
+                            return parsed;
+                        }
+                        return JSON.stringify(parsed);
+                    } catch (err) {
+                        return inner;
+                    }
+                }
+                return '';
+            }
+
+            return resolveExpression(assignMatch[1]);
+        }
+
+        async function fetchAdScriptSource(scriptUrl) {
+            if (!scriptUrl) return '';
+            if (adScriptCache.has(scriptUrl)) {
+                return adScriptCache.get(scriptUrl);
+            }
+            const requester = (async () => {
+                // 直接使用 GM_xmlhttpRequest 避免 CORS 问题
+                if (typeof GM_xmlhttpRequest === 'function') {
+                    return new Promise((resolve, reject) => {
+                        GM_xmlhttpRequest({
+                            method: 'GET',
+                            url: scriptUrl,
+                            headers: {
+                                'Referer': location.origin
+                            },
+                            onload: (resp) => {
+                                if (resp.status >= 200 && resp.status < 400) {
+                                    resolve(resp.responseText);
+                                } else {
+                                    reject(new Error('HTTP ' + resp.status));
+                                }
+                            },
+                            onerror: () => reject(new Error('網絡錯誤')),
+                            ontimeout: () => reject(new Error('請求超時'))
+                        });
+                    });
+                }
+                // 如果没有 GM_xmlhttpRequest，尝试使用 fetch（可能会遇到 CORS 问题）
+                try {
+                    const resp = await fetch(scriptUrl, { credentials: 'include' });
+                    if (!resp.ok) {
+                        throw new Error('HTTP ' + resp.status);
+                    }
+                    return await resp.text();
+                } catch (err) {
+                    throw err;
+                }
+            })();
+            requester.catch(() => adScriptCache.delete(scriptUrl));
+            adScriptCache.set(scriptUrl, requester);
+            return requester;
+        }
+
+        function createFtadGridElement(doc, adEntries) {
+            if (!doc || !adEntries || !adEntries.length) return null;
+            const container = doc.createElement('div');
+            container.className = 'ftad-ct';
+            const columns = adEntries.length > 10 ? Math.ceil(adEntries.length / 2) : 'auto-fit';
+            container.style.gridTemplateColumns = `repeat(${columns}, minmax(100px, 1fr))`;
+            adEntries.forEach((entry) => {
+                if (!entry || !entry.u) return;
+                const item = doc.createElement('div');
+                item.className = 'ftad-item';
+                const link = doc.createElement('a');
+                link.setAttribute('target', '_blank');
+                link.setAttribute('title', entry.c || '');
+                link.setAttribute('href', entry.u);
+                const title = entry.t ? entry.t.split('|')[1] || entry.t : '';
+                link.textContent = title;
+                item.appendChild(link);
+                container.appendChild(item);
+            });
+            return container;
+        }
+
+        function createSpinitTableElement(doc, leftEntry, rightEntry, startIndex = 0) {
+            if (!doc || !leftEntry) return null;
+            const table = doc.createElement('table');
+            table.setAttribute('cellspacing', '0');
+            table.setAttribute('cellpadding', '5');
+            table.setAttribute('width', '100%');
+            table.className = 'sptable_do_not_remove';
+            const tbody = doc.createElement('tbody');
+            const tr = doc.createElement('tr');
+
+            const makeCell = (entry, linkIndex, appendInfo = false) => {
+                if (!entry) return null;
+                const td = doc.createElement('td');
+                td.setAttribute('width', '50%');
+                td.setAttribute('valign', 'top');
+                td.setAttribute('onclick', `clurl('${entry.u}', ${linkIndex})`);
+                const titleWrapper = doc.createElement('div');
+                titleWrapper.id = 'ti';
+                const titleLink = doc.createElement('a');
+                const title = entry.t ? entry.t.split('|')[0] || entry.t : '';
+                titleLink.textContent = title;
+                titleWrapper.appendChild(titleLink);
+                td.appendChild(titleWrapper);
+                if (entry.c) {
+                    td.appendChild(doc.createTextNode(entry.c));
+                }
+                td.appendChild(doc.createElement('br'));
+                const anchor = doc.createElement('a');
+                anchor.id = `srcf${linkIndex}`;
+                anchor.setAttribute('href', entry.u);
+                anchor.setAttribute('target', '_blank');
+                anchor.setAttribute('onclick', 'event.stopPropagation();');
+                anchor.textContent = entry.l || entry.u;
+                td.appendChild(anchor);
+                return td;
+            };
+
+            const leftCell = makeCell(leftEntry, startIndex, false);
+            const rightCell = rightEntry ? makeCell(rightEntry, startIndex + 1, true) : null;
+            if (leftCell) {
+                tr.appendChild(leftCell);
+            }
+            if (rightCell) {
+                tr.appendChild(rightCell);
+            }
+            tbody.appendChild(tr);
+            table.appendChild(tbody);
+            return table;
+        }
+
+        function hydrateThreadAdsFromData(doc, adEntries) {
+            if (!doc || !adEntries || !adEntries.length) return false;
+            let mutated = false;
+            const inlineScripts = Array.from(doc.querySelectorAll('script')).filter((script) => {
+                return !script.src && /spinit2?\s*\(\s*\)/.test(script.textContent || '');
+            });
+            if (!inlineScripts.length) {
+                return false;
+            }
+            const ftadScripts = inlineScripts.filter((script) => /\bspinit2\s*\(/.test(script.textContent || ''));
+            ftadScripts.forEach((script) => {
+                const grid = createFtadGridElement(doc, adEntries);
+                if (grid) {
+                    script.insertAdjacentElement('afterend', grid);
+                    mutated = true;
+                }
+            });
+
+            const pairQueue = adEntries.slice();
+            let linkIndex = 0;
+            inlineScripts.filter((script) => /\bspinit\s*\(/.test(script.textContent || '') && !/\bspinit2\s*\(/.test(script.textContent || '')).forEach((script) => {
+                const left = pairQueue.shift();
+                if (!left) {
+                    return;
+                }
+                const right = pairQueue.shift() || null;
+                const table = createSpinitTableElement(doc, left, right, linkIndex);
+                if (table) {
+                    script.insertAdjacentElement('afterend', table);
+                    linkIndex += right ? 2 : 1;
+                    mutated = true;
+                }
+            });
+            return mutated;
+        }
+
+        async function collectThreadAdsWithScriptFallback(doc, baseHref, rawHtml = '') {
+            const direct = collectThreadAdBlocks(doc);
+            // 检查是否已经找到了 ftad-ct
+            const hasFtadCt = direct.some(html => /\bftad-ct\b/i.test(html));
+            
+            // 如果已经找到了 ftad-ct，直接返回
+            if (hasFtadCt || !doc) {
+                return direct;
+            }
+
+            const hydrateWithPayload = (payload) => {
+                if (!payload) {
+                    return false;
+                }
+                try {
+                    const adEntries = JSON.parse(payload);
+                    if (!Array.isArray(adEntries) || !adEntries.length) {
+                        return false;
+                    }
+                    return hydrateThreadAdsFromData(doc, adEntries);
+                } catch (err) {
+                    console.warn('clm 解析 spJson 失敗', err);
+                    return false;
                 }
             };
 
-            topicPanel.addEventListener('click', (e) => {
-                // 如果点击的是标签或其他交互元素，不触发伸缩
-                if (e.target.closest('.clm-performer-tag') || 
-                    e.target.closest('.clm-title-tag-code-prefix') || 
-                    e.target.closest('.clm-title-tag-code-suffix') ||
-                    e.target.closest('.clm-topic-copy-btn')) {
-                    return;
+            const inlinePayload = rawHtml ? extractSpjsonPayload(rawHtml) : '';
+            if (inlinePayload && hydrateWithPayload(inlinePayload)) {
+                const afterHydrate = collectThreadAdBlocks(doc);
+                // 合并直接找到的广告和恢复的广告，去重
+                const combined = [...direct];
+                afterHydrate.forEach(html => {
+                    if (!combined.some(existing => existing === html)) {
+                        combined.push(html);
+                    }
+                });
+                return combined;
+            }
+
+            const scriptNode = doc.querySelector('script[src*="post.js"]');
+            if (!scriptNode) {
+                return direct;
+            }
+            const scriptUrl = getAbsoluteUrl(scriptNode.getAttribute('src'), baseHref);
+            if (!scriptUrl) {
+                return direct;
+            }
+            try {
+                const scriptText = await fetchAdScriptSource(scriptUrl);
+                const payload = extractSpjsonPayload(scriptText);
+                if (!payload) {
+                    return direct;
+                }
+                if (!hydrateWithPayload(payload)) {
+                    return direct;
+                }
+                const afterHydrate = collectThreadAdBlocks(doc);
+                // 合并直接找到的广告和恢复的广告，去重
+                const combined = [...direct];
+                afterHydrate.forEach(html => {
+                    if (!combined.some(existing => existing === html)) {
+                        combined.push(html);
+                    }
+                });
+                return combined;
+            } catch (err) {
+                console.warn('clm 無法恢復社區贊助內容', err);
+                return direct;
+            }
+        }
+
+        function extractThreadDownloadInfo(doc, baseHref = location.href) {
+            if (!doc) return null;
+            const candidate = doc.querySelector('#rmlink[href], a[href*="rmdown.com/link.php"]');
+            if (!candidate) return null;
+            const raw = candidate.getAttribute('href') || candidate.href;
+            const pageUrl = getAbsoluteUrl(raw, baseHref);
+            if (!pageUrl) return null;
+            return {
+                type: 'rmdown',
+                pageUrl
+            };
+        }
+
+        function extractSmallFormatDownloadInfo(doc, baseHref = location.href) {
+            if (!doc) return null;
+            // 在帖子回帖中查找 by555 發佈的小格式種子鏈接
+            let contentBlocks = Array.from(doc.querySelectorAll('.tpc_content'));
+            if (!contentBlocks.length) {
+                contentBlocks = Array.from(doc.querySelectorAll('.tpc_cont'));
+            }
+            if (!contentBlocks.length) {
+                return null;
+            }
+            for (const el of contentBlocks) {
+                const user = (extractPostUser(el) || '').trim().toLowerCase();
+                if (user !== 'by555') continue;
+                const postContainer = el.closest('.t.t2, .t2, .t') || el;
+                if (!postContainer) continue;
+                // 只在當前樓層內查找 rmdown 下載鏈接
+                const links = Array.from(postContainer.querySelectorAll('a[href*="rmdown.com/link.php"]'));
+                if (!links.length) continue;
+                const text = (extractCleanText(el) || '').toLowerCase();
+                let candidate = null;
+                if (text.includes('小格式') || text.includes('省流版')) {
+                    candidate = links[0];
+                } else {
+                    candidate = links[0];
+                }
+                if (!candidate) continue;
+                const raw = candidate.getAttribute('href') || candidate.href;
+                const pageUrl = getAbsoluteUrl(raw, baseHref);
+                if (!pageUrl) continue;
+                return {
+                    type: 'rmdown',
+                    pageUrl
+                };
+            }
+            return null;
+        }
+
+        async function resolveThreadDownloadTarget(downloadInfo) {
+            if (!downloadInfo) {
+                throw new Error('沒有可用的下載資訊');
+            }
+            if (downloadInfo.type !== 'rmdown') {
+                throw new Error('未知的下載來源');
+            }
+            const cacheKey = downloadInfo.pageUrl;
+            if (downloadResolveCache.has(cacheKey)) {
+                return downloadResolveCache.get(cacheKey);
+            }
+            const resolver = (async () => {
+                const html = await fetchCrossOriginText(downloadInfo.pageUrl);
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(html, 'text/html');
+                const form = doc.querySelector('form#dl');
+                if (!form) {
+                    throw new Error('無法在下載頁中找到目標表單');
+                }
+                const params = [];
+                Array.from(form.elements || []).forEach((el) => {
+                    if (!el || !el.name) return;
+                    const value = el.value || '';
+                    if (!value) return;
+                    params.push(encodeURIComponent(el.name) + '=' + encodeURIComponent(value));
+                });
+                if (!params.length) {
+                    throw new Error('下載表單缺少必需參數');
+                }
+                const base = new URL('download.php', downloadInfo.pageUrl);
+                const separator = base.search ? '&' : '?';
+                const downloadUrl = base.origin + base.pathname + separator + params.join('&');
+                const { buffer, headers } = await fetchCrossOriginBinary(downloadUrl);
+                const torrentBinary = ensureArrayBuffer(buffer);
+                if (!torrentBinary || !torrentBinary.byteLength) {
+                    throw new Error('無法獲取種子文件內容');
+                }
+                const filename = extractFilenameFromHeaders(headers) || ('rmdown_' + Date.now() + '.torrent');
+                return {
+                    url: downloadUrl,
+                    filename,
+                    torrentBinary
+                };
+            })();
+            resolver.catch(() => {
+                downloadResolveCache.delete(cacheKey);
+            });
+            downloadResolveCache.set(cacheKey, resolver);
+            return resolver;
+        }
+
+        function createGalleryOverlay() {
+            debugLog('创建画廊覆盖层');
+            injectStyle(`
+                .clm-gallery-overlay {
+                    position: fixed;
+                    inset: 0;
+                    background: rgba(10, 10, 20, 0.82);
+                    display: none;
+                    align-items: center;
+                    justify-content: center;
+                    flex-direction: column;
+                    gap: 12px;
+                    z-index: 100000;
+                    /* 顶部保留间距，左右无 padding，黑色背景真正全屏 */
+                    padding: 32px 0;
+                }
+                .clm-gallery-overlay.clm-active {
+                    display: flex;
+                }
+                .clm-gallery-layout {
+                    display: grid;
+                    /* 左右侧栏更窄，中间图片区域更大 */
+                    grid-template-columns: minmax(260px, 22vw) 1fr minmax(260px, 22vw);
+                    gap: 16px;
+                    width: 100vw;
+                    max-width: 2400px;
+                    height: calc(100vh - 160px);
+                    max-height: calc(100vh - 160px);
+                    align-items: stretch;
+                }
+                .clm-gallery-viewer-column {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 18px;
+                    height: 100%;
+                    min-height: 0;
+                }
+                .clm-gallery-panel {
+                    background: rgba(255, 255, 255, 0.08);
+                    border: 1px solid rgba(255, 255, 255, 0.15);
+                    border-radius: 12px;
+                    padding: 16px;
+                    color: #fff;
+                    backdrop-filter: blur(4px);
+                    display: flex;
+                    flex-direction: column;
+                    gap: 12px;
+                    max-height: 100%;
+                }
+                .clm-gallery-panel-topic {
+                    max-width: 100%;
+                }
+                .clm-gallery-panel-comments {
+                    max-width: 100%;
+                }
+                /* 电脑端评论面板的内容区域使用滚动条，避免整体高度超出视口 */
+                .clm-gallery-panel-comments .clm-gallery-panel-body {
+                    max-height: calc(100vh - 220px);
+                    overflow-y: auto;
+                }
+                .clm-gallery-panel-header {
+                    font-size: 14px;
+                    font-weight: 600;
+                    letter-spacing: 0.05em;
+                }
+                .clm-gallery-panel-body {
+                    flex: 1;
+                    overflow: auto;
+                    font-size: 13px;
+                    line-height: 1.5;
+                    color: rgba(255, 255, 255, 0.92);
+                }
+                .clm-gallery-panel-body::-webkit-scrollbar {
+                    width: 6px;
+                }
+                .clm-gallery-panel-body::-webkit-scrollbar-thumb {
+                    background: rgba(255, 255, 255, 0.25);
+                    border-radius: 3px;
+                }
+                .clm-panel-entry {
+                    padding: 8px 10px;
+                    background: rgba(0, 0, 0, 0.25);
+                    border-radius: 8px;
+                    border: 1px solid rgba(255, 255, 255, 0.08);
+                    display: flex;
+                    flex-direction: column;
+                    gap: 4px;
+                    margin-bottom: 10px;
+                    min-width: 0;
+                }
+                .clm-panel-entry-user {
+                    font-size: 12px;
+                    letter-spacing: 0.04em;
+                    color: rgba(255, 255, 255, 0.75);
+                }
+                .clm-panel-entry-content {
+                    font-size: 13px;
+                    color: #fff;
+                    white-space: pre-line;
+                    word-wrap: break-word;
+                    overflow-wrap: break-word;
+                    word-break: break-word;
+                    min-width: 0;
+                }
+                /* 点评回复容器，类似嵌套评论的显示效果 */
+                .clm-panel-entry-replies {
+                    margin-top: 8px;
+                    padding-left: 12px;
+                    border-left: 2px solid rgba(148, 163, 184, 0.7);
+                    display: flex;
+                    flex-direction: column;
+                    gap: 8px;
+                }
+                .clm-panel-entry-reply {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 2px;
+                }
+                .clm-panel-entry-reply-user {
+                    font-size: 12px;
+                    color: rgba(148, 163, 184, 0.95);
+                }
+                .clm-panel-entry-reply-content {
+                    font-size: 13px;
+                    color: rgba(226, 232, 240, 0.98);
+                    white-space: pre-line;
+                    word-break: break-word;
+                }
+
+                /* 手机端评论面板中的点评内容：在白底上使用深色文字，避免看不清 */
+                body.clm-mobile-gallery .clm-gallery-panel-comments .clm-panel-entry-reply-user {
+                    color: #6b7280 !important; /* 灰色用户名 */
+                }
+                body.clm-mobile-gallery .clm-gallery-panel-comments .clm-panel-entry-reply-content {
+                    color: #111827 !important; /* 深色正文 */
+                }
+                .clm-panel-entry-content .clm-type-tag {
+                    display: inline-block;
+                    padding: 2px 8px;
+                    margin: 2px 4px 2px 0;
+                    border-radius: 4px;
+                    font-size: 11px;
+                    line-height: 1.4;
+                }
+                /* 类型标签使用不同颜色 - 基于类名，至少10种颜色循环使用 */
+                .clm-panel-entry-content .clm-type-tag.clm-type-tag-color-1 {
+                    background: rgba(59, 130, 246, 0.2) !important;
+                    border: 1px solid rgba(59, 130, 246, 0.4) !important;
+                    color: rgba(147, 197, 253, 0.95) !important;
+                }
+                .clm-panel-entry-content .clm-type-tag.clm-type-tag-color-2 {
+                    background: rgba(34, 197, 94, 0.2) !important;
+                    border: 1px solid rgba(34, 197, 94, 0.4) !important;
+                    color: rgba(134, 239, 172, 0.95) !important;
+                }
+                .clm-panel-entry-content .clm-type-tag.clm-type-tag-color-3 {
+                    background: rgba(249, 115, 22, 0.2) !important;
+                    border: 1px solid rgba(249, 115, 22, 0.4) !important;
+                    color: rgba(254, 215, 170, 0.95) !important;
+                }
+                .clm-panel-entry-content .clm-type-tag.clm-type-tag-color-4 {
+                    background: rgba(168, 85, 247, 0.2) !important;
+                    border: 1px solid rgba(168, 85, 247, 0.4) !important;
+                    color: rgba(221, 214, 254, 0.95) !important;
+                }
+                .clm-panel-entry-content .clm-type-tag.clm-type-tag-color-5 {
+                    background: rgba(236, 72, 153, 0.2) !important;
+                    border: 1px solid rgba(236, 72, 153, 0.4) !important;
+                    color: rgba(251, 207, 232, 0.95) !important;
+                }
+                .clm-panel-entry-content .clm-type-tag.clm-type-tag-color-6 {
+                    background: rgba(6, 182, 212, 0.2) !important;
+                    border: 1px solid rgba(6, 182, 212, 0.4) !important;
+                    color: rgba(165, 243, 252, 0.95) !important;
+                }
+                .clm-panel-entry-content .clm-type-tag.clm-type-tag-color-7 {
+                    background: rgba(234, 179, 8, 0.2) !important;
+                    border: 1px solid rgba(234, 179, 8, 0.4) !important;
+                    color: rgba(253, 224, 71, 0.95) !important;
+                }
+                .clm-panel-entry-content .clm-type-tag.clm-type-tag-color-8 {
+                    background: rgba(239, 68, 68, 0.2) !important;
+                    border: 1px solid rgba(239, 68, 68, 0.4) !important;
+                    color: rgba(254, 202, 202, 0.95) !important;
+                }
+                .clm-panel-entry-content .clm-type-tag.clm-type-tag-color-9 {
+                    background: rgba(99, 102, 241, 0.2) !important;
+                    border: 1px solid rgba(99, 102, 241, 0.4) !important;
+                    color: rgba(196, 181, 253, 0.95) !important;
+                }
+                .clm-panel-entry-content .clm-type-tag.clm-type-tag-color-10 {
+                    background: rgba(20, 184, 166, 0.2) !important;
+                    border: 1px solid rgba(20, 184, 166, 0.4) !important;
+                    color: rgba(153, 246, 228, 0.95) !important;
+                }
+                /* 出演者标签样式 - 复用类型标签的颜色方案 */
+                .clm-panel-entry-content .clm-performer-tag {
+                    display: inline-block;
+                    padding: 2px 8px;
+                    margin: 2px 4px 2px 0;
+                    border-radius: 4px;
+                    font-size: 11px;
+                    line-height: 1.4;
+                    cursor: pointer;
+                    user-select: none;
+                }
+                .clm-panel-entry-content .clm-performer-tag.clm-performer-tag-color-1 {
+                    background: rgba(59, 130, 246, 0.2) !important;
+                    border: 1px solid rgba(59, 130, 246, 0.4) !important;
+                    color: rgba(147, 197, 253, 0.95) !important;
+                }
+                .clm-panel-entry-content .clm-performer-tag.clm-performer-tag-color-2 {
+                    background: rgba(34, 197, 94, 0.2) !important;
+                    border: 1px solid rgba(34, 197, 94, 0.4) !important;
+                    color: rgba(134, 239, 172, 0.95) !important;
+                }
+                .clm-panel-entry-content .clm-performer-tag.clm-performer-tag-color-3 {
+                    background: rgba(249, 115, 22, 0.2) !important;
+                    border: 1px solid rgba(249, 115, 22, 0.4) !important;
+                    color: rgba(254, 215, 170, 0.95) !important;
+                }
+                .clm-panel-entry-content .clm-performer-tag.clm-performer-tag-color-4 {
+                    background: rgba(168, 85, 247, 0.2) !important;
+                    border: 1px solid rgba(168, 85, 247, 0.4) !important;
+                    color: rgba(221, 214, 254, 0.95) !important;
+                }
+                .clm-panel-entry-content .clm-performer-tag.clm-performer-tag-color-5 {
+                    background: rgba(236, 72, 153, 0.2) !important;
+                    border: 1px solid rgba(236, 72, 153, 0.4) !important;
+                    color: rgba(251, 207, 232, 0.95) !important;
+                }
+                .clm-panel-entry-content .clm-performer-tag.clm-performer-tag-color-6 {
+                    background: rgba(6, 182, 212, 0.2) !important;
+                    border: 1px solid rgba(6, 182, 212, 0.4) !important;
+                    color: rgba(165, 243, 252, 0.95) !important;
+                }
+                .clm-panel-entry-content .clm-performer-tag.clm-performer-tag-color-7 {
+                    background: rgba(234, 179, 8, 0.2) !important;
+                    border: 1px solid rgba(234, 179, 8, 0.4) !important;
+                    color: rgba(253, 224, 71, 0.95) !important;
+                }
+                .clm-panel-entry-content .clm-performer-tag.clm-performer-tag-color-8 {
+                    background: rgba(239, 68, 68, 0.2) !important;
+                    border: 1px solid rgba(239, 68, 68, 0.4) !important;
+                    color: rgba(254, 202, 202, 0.95) !important;
+                }
+                .clm-panel-entry-content .clm-performer-tag.clm-performer-tag-color-9 {
+                    background: rgba(99, 102, 241, 0.2) !important;
+                    border: 1px solid rgba(99, 102, 241, 0.4) !important;
+                    color: rgba(196, 181, 253, 0.95) !important;
+                }
+                .clm-panel-entry-content .clm-performer-tag.clm-performer-tag-color-10 {
+                    background: rgba(20, 184, 166, 0.2) !important;
+                    border: 1px solid rgba(20, 184, 166, 0.4) !important;
+                    color: rgba(153, 246, 228, 0.95) !important;
+                }
+                .clm-panel-entry-content .clm-performer-tag:hover {
+                    opacity: 0.8;
+                }
+                .clm-panel-entry-title {
+                    font-size: 16px;
+                    font-weight: 600;
+                    color: #fff;
+                    margin-bottom: 12px;
+                    line-height: 1.5;
+                }
+                .clm-panel-entry-title-tags {
+                    display: flex;
+                    flex-wrap: wrap;
+                    gap: 6px;
+                    margin-bottom: 8px;
+                }
+                .clm-panel-entry-title-tag {
+                    display: inline-block;
+                    padding: 4px 10px;
+                    border-radius: 6px;
+                    font-size: 12px;
+                    font-weight: 500;
+                    line-height: 1.4;
+                }
+                /* 清晰度标签 - 绿色 */
+                .clm-title-tag-quality {
+                    background: rgba(34, 197, 94, 0.25);
+                    border: 1px solid rgba(34, 197, 94, 0.5);
+                    color: rgba(134, 239, 172, 1);
+                }
+                /* 文件大小标签 - 橙色 */
+                .clm-title-tag-size {
+                    background: rgba(249, 115, 22, 0.25);
+                    border: 1px solid rgba(249, 115, 22, 0.5);
+                    color: rgba(254, 215, 170, 1);
+                }
+                /* 番号标签 - 紫色，嵌套结构 */
+                .clm-title-tag-code {
+                    background: rgba(168, 85, 247, 0.25);
+                    border: 1px solid rgba(168, 85, 247, 0.5);
+                    color: rgba(221, 214, 254, 1);
+                }
+                /* 番号标签前缀部分 - 更深的紫色背景 */
+                .clm-title-tag-code-prefix {
+                    display: inline-block;
+                    background: rgba(168, 85, 247, 0.5);
+                    padding: 4px 6px;
+                    margin: -4px 4px -4px -10px;
+                    border-radius: 6px 0 0 6px;
+                    font-weight: 600;
+                    cursor: pointer;
+                }
+                .clm-title-tag-code-prefix:hover {
+                    background: rgba(168, 85, 247, 0.7);
+                }
+                /* 番号标签后缀部分 - 可点击，搜索完整番号 */
+                .clm-title-tag-code-suffix {
+                    display: inline-block;
+                    padding: 4px 6px;
+                    margin: -4px -10px -4px 4px;
+                    border-radius: 0 6px 6px 0;
+                    transition: background 0.2s ease;
+                }
+                .clm-title-tag-code-suffix:hover {
+                    background: rgba(168, 85, 247, 0.4);
+                }
+                /* 搜索弹窗样式 */
+                .clm-search-dialog-mask {
+                    position: fixed;
+                    inset: 0;
+                    background: rgba(0, 0, 0, 0.5);
+                    z-index: 100003;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    padding: 20px;
+                }
+                .clm-search-dialog {
+                    background: #fff;
+                    border-radius: 8px;
+                    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+                    width: min(600px, 90vw);
+                    max-height: 85vh;
+                    display: flex;
+                    flex-direction: column;
+                    overflow: hidden;
+                }
+                .clm-search-dialog-header {
+                    padding: 14px 18px;
+                    border-bottom: 1px solid #e5e7eb;
+                    background: #f9fafb;
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                }
+                .clm-search-dialog-title {
+                    font-weight: 600;
+                    font-size: 15px;
+                    color: #111827;
+                }
+                .clm-search-dialog-close {
+                    background: none;
+                    border: none;
+                    font-size: 20px;
+                    cursor: pointer;
+                    color: #6b7280;
+                    padding: 0;
+                    width: 24px;
+                    height: 24px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    border-radius: 4px;
+                }
+                .clm-search-dialog-close:hover {
+                    background: #e5e7eb;
+                    color: #111827;
+                }
+                .clm-search-dialog-body {
+                    padding: 18px;
+                    overflow-y: auto;
+                    flex: 1;
+                }
+                .clm-search-form-row {
+                    margin-bottom: 16px;
+                }
+                .clm-search-form-row:last-child {
+                    margin-bottom: 0;
+                }
+                .clm-search-form-label {
+                    display: block;
+                    font-weight: 600;
+                    font-size: 13px;
+                    color: #374151;
+                    margin-bottom: 6px;
+                }
+                .clm-search-form-label.required::after {
+                    content: ' *';
+                    color: #dc2626;
+                }
+                .clm-search-form-select,
+                .clm-search-form-input {
+                    width: 100%;
+                    padding: 6px 10px;
+                    border: 1px solid #d1d5db;
+                    border-radius: 4px;
+                    font-size: 13px;
+                    box-sizing: border-box;
+                }
+                .clm-search-form-select:focus,
+                .clm-search-form-input:focus {
+                    outline: none;
+                    border-color: #3b82f6;
+                    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+                }
+                .clm-search-form-radio-group {
+                    display: flex;
+                    gap: 16px;
+                    flex-wrap: wrap;
+                }
+                .clm-search-form-radio {
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
+                }
+                .clm-search-form-radio input[type="radio"] {
+                    margin: 0;
+                }
+                .clm-search-form-checkbox {
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
+                }
+                .clm-search-form-checkbox input[type="checkbox"] {
+                    margin: 0;
+                }
+                .clm-search-dialog-footer {
+                    padding: 12px 18px;
+                    border-top: 1px solid #e5e7eb;
+                    background: #f9fafb;
+                    display: flex;
+                    justify-content: flex-end;
+                    gap: 10px;
+                }
+                .clm-search-btn {
+                    padding: 8px 20px;
+                    border-radius: 6px;
+                    font-size: 13px;
+                    font-weight: 500;
+                    cursor: pointer;
+                    border: none;
+                    transition: background 0.2s;
+                }
+                .clm-search-btn-primary {
+                    background: #3b82f6;
+                    color: #fff;
+                }
+                .clm-search-btn-primary:hover {
+                    background: #2563eb;
+                }
+                .clm-search-btn-secondary {
+                    background: #e5e7eb;
+                    color: #374151;
+                }
+                .clm-search-btn-secondary:hover {
+                    background: #d1d5db;
+                }
+                .clm-type-tag {
+                    cursor: pointer;
+                }
+                .clm-type-tag:hover {
+                    opacity: 0.8;
+                }
+                .clm-panel-entry-title-text {
+                    font-size: 16px;
+                    color: #fff;
+                    line-height: 1.5;
+                }
+                .clm-panel-entry-tips {
+                    margin-top: 8px;
+                    padding-top: 8px;
+                    border-top: 1px solid rgba(255, 255, 255, 0.1);
+                    color: #333;
+                    max-width: 100%;
+                    overflow: hidden;
+                    position: relative;
+                }
+                .clm-panel-entry-tips > div {
+                    color: #333;
+                    max-width: 100%;
+                    overflow: hidden;
+                }
+                .clm-panel-entry-tips-scale-wrapper {
+                    width: 100%;
+                    overflow: hidden;
+                    transform-origin: top left;
+                }
+                .clm-panel-entry-tips table {
+                    width: 100%;
+                    max-width: 100%;
+                    color: #333;
+                    background: #fff;
+                    table-layout: auto;
+                    word-break: break-word;
+                }
+                .clm-panel-entry-tips table td,
+                .clm-panel-entry-tips table th {
+                    color: #333;
+                    word-break: break-word;
+                    overflow-wrap: break-word;
+                }
+                .clm-panel-entry-tips a {
+                    color: #0b5ed7;
+                    word-break: break-all;
+                }
+                .clm-panel-empty {
+                    padding: 12px;
+                    text-align: center;
+                    color: rgba(255, 255, 255, 0.6);
+                    font-size: 13px;
+                }
+                /* 手机端评论面板中的空状态提示：白底下使用深色文字，避免看不清 */
+                body.clm-mobile-gallery .clm-gallery-panel-comments .clm-panel-empty {
+                    color: #666 !important;
+                }
+                .clm-gallery-viewer {
+                    position: relative;
+                    max-width: 100%;
+                    width: 100%;
+                    flex: 1;
+                    min-height: 0;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    gap: 16px;
+                    border-radius: 12px;
+                    background: rgba(0, 0, 0, 0.35);
+                    overflow: hidden;
+                }
+                .clm-gallery-viewer img {
+                    max-width: 100%;
+                    max-height: 100%;
+                    width: auto;
+                    height: auto;
+                    object-fit: contain;
+                    border-radius: 8px;
+                    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+                    background: #000;
+                    transition: opacity 0.2s ease;
+                    transform-origin: center center;
+                    cursor: zoom-in;
+                }
+                .clm-gallery-viewer img.clm-zoomed {
+                    cursor: move;
+                }
+                .clm-gallery-ads-slot {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 8px;
+                }
+                .clm-gallery-ads-slot-viewer-top,
+                .clm-gallery-ads-slot-viewer-bottom {
+                    width: 100%;
+                }
+                .clm-gallery-ads-title {
+                    font-size: 12px;
+                    letter-spacing: 0.08em;
+                    text-transform: uppercase;
+                    color: rgba(255, 255, 255, 0.68);
+                    margin-bottom: 4px;
+                }
+                .clm-gallery-ads {
+                    background: rgba(255, 255, 255, 0.96);
+                    color: #111;
+                    border-radius: 10px;
+                    padding: 12px;
+                    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), 0 16px 32px rgba(0, 0, 0, 0.35);
+                    overflow: hidden;
+                }
+                /* 手机端：让 clm-gallery-ads 变成透明容器，内部 ftad-ct 完全使用 mob_style.css 原生样式 */
+                body.clm-mobile-gallery .clm-gallery-ads {
+                    background: transparent !important;
+                    box-shadow: none !important;
+                    padding: 0 !important;
+                    border-radius: 0 !important;
+                }
+                .clm-gallery-ads .sptable_info {
+                    display: none;
+                }
+                .clm-viewer-loading img {
+                    opacity: 0;
+                }
+                .clm-gallery-loading-indicator {
+                    position: absolute;
+                    inset: 0;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    font-size: 14px;
+                    color: rgba(255, 255, 255, 0.9);
+                    letter-spacing: 0.08em;
+                    background: linear-gradient(135deg, rgba(0,0,0,0.35), rgba(0,0,0,0.15));
+                    opacity: 0;
+                    visibility: hidden;
+                    transition: opacity 0.2s ease;
+                    pointer-events: none;
+                }
+                .clm-viewer-loading .clm-gallery-loading-indicator {
+                    opacity: 1;
+                    visibility: visible;
+                }
+                .clm-gallery-arrow {
+                    position: absolute;
+                    top: 50%;
+                    transform: translateY(-50%);
+                    background: rgba(0, 0, 0, 0.55);
+                    color: #fff;
+                    border: 1px solid rgba(255, 255, 255, 0.25);
+                    border-radius: 50%;
+                    width: 44px;
+                    height: 44px;
+                    font-size: 22px;
+                    cursor: pointer;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    transition: background 0.2s ease;
+                }
+                .clm-gallery-arrow:hover {
+                    background: rgba(0, 0, 0, 0.85);
+                }
+                .clm-gallery-arrow-left {
+                    left: -22px;
+                }
+                .clm-gallery-arrow-right {
+                    right: -22px;
+                }
+                .clm-gallery-close {
+                    position: absolute;
+                    top: 16px;
+                    right: 24px;
+                    background: rgba(0, 0, 0, 0.55);
+                    color: #fff;
+                    border: none;
+                    font-size: 26px;
+                    cursor: pointer;
+                    padding: 4px 10px;
+                    border-radius: 6px;
+                    z-index: 100020;
+                }
+                .clm-gallery-meta {
+                    position: absolute;
+                    left: 50%;
+                    bottom: 32px;
+                    transform: translateX(-50%);
+                    color: #f5f5f5;
+                    font-size: 14px;
+                    text-align: center;
+                    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.7);
+                    pointer-events: none;
+                }
+                .clm-gallery-hint {
+                    position: absolute;
+                    left: 50%;
+                    bottom: 12px;
+                    transform: translateX(-50%);
+                    font-size: 12px;
+                    color: rgba(255, 255, 255, 0.8);
+                    text-align: center;
+                    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.7);
+                    pointer-events: none;
+                }
+                .clm-gallery-actions {
+                    position: absolute;
+                    right: 16px;
+                    bottom: 16px;
+                    display: flex;
+                    flex-direction: column;
+                    justify-content: flex-end;
+                    align-items: flex-end;
+                    gap: 12px;
+                    width: auto;
+                    max-width: 100%;
+                    z-index: 100010;
+                    pointer-events: none;
+                }
+                .clm-gallery-actions .clm-gallery-download-btn {
+                    pointer-events: auto;
+                }
+                .clm-gallery-download-preview {
+                    position: fixed;
+                    background: #fff;
+                    border-radius: 14px;
+                    box-shadow: 0 30px 60px rgba(0, 0, 0, 0.35);
+                    display: none;
+                    flex-direction: column;
+                    z-index: 100010;
+                    pointer-events: auto;
+                    overflow: hidden;
                 }
                 
-                const isExpanded = topicPanel.classList.contains('clm-topic-expanded');
+                /* 桌面端：使用边距 */
+                @media (min-width: 769px) {
+                    .clm-gallery-download-preview {
+                        inset: clamp(24px, 6vw, 64px);
+                    }
+                }
                 
-                // 展开状态：点击顶部50%区域可以关闭
-                if (isExpanded) {
-                    const rect = topicPanel.getBoundingClientRect();
-                    const clickY = e.clientY - rect.top;
-                    // 顶部50%区域（包含箭头和标题）
-                    if (clickY <= rect.height * 0.5) {
+                /* 手机端画廊模式：全屏显示 */
+                body.clm-mobile-gallery .clm-gallery-download-preview {
+                    inset: 0 !important;
+                    border-radius: 0 !important;
+                    top: 0 !important;
+                    left: 0 !important;
+                    right: 0 !important;
+                    bottom: 0 !important;
+                    width: 100vw !important;
+                    height: 100vh !important;
+                    max-width: 100vw !important;
+                    max-height: 100vh !important;
+                    margin: 0 !important;
+                    padding: 0 !important;
+                }
+                .clm-gallery-download-preview.clm-active {
+                    display: flex;
+                }
+                .clm-gallery-download-preview-subtitle {
+                    font-size: 12px;
+                    color: #6b7280;
+                    margin-top: 2px;
+                }
+                .clm-gallery-download-preview-subtitle:empty {
+                    display: none;
+                }
+                .clm-gallery-download-preview-header {
+                    display: flex;
+                    align-items: center;
+                    gap: 12px;
+                    padding: 14px 18px;
+                    border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+                    background: linear-gradient(90deg, #f7f8fb, #ffffff);
+                }
+                .clm-gallery-download-preview-title {
+                    font-weight: 600;
+                    font-size: 14px;
+                    color: #0e0f1a;
+                }
+                .clm-gallery-download-preview-link {
+                    margin-left: auto;
+                    font-size: 12px;
+                    color: #0b5ed7;
+                    text-decoration: none;
+                }
+                .clm-gallery-download-preview-close {
+                    border: none;
+                    background: #0d1117;
+                    color: #fff;
+                    font-size: 12px;
+                    border-radius: 20px;
+                    padding: 6px 14px;
+                    cursor: pointer;
+                }
+                .clm-gallery-download-preview-close:hover {
+                    background: #272c34;
+                }
+                .clm-gallery-download-preview-frame {
+                    flex: 1;
+                    border: none;
+                    width: 100%;
+                    min-height: 60vh;
+                    background: #fff;
+                }
+                .clm-gallery-download-preview-footer {
+                    padding: 10px 18px;
+                    font-size: 12px;
+                    color: rgba(0, 0, 0, 0.6);
+                    border-top: 1px solid rgba(0, 0, 0, 0.05);
+                    background: #fafafa;
+                }
+                .clm-download-window-mask {
+                    position: fixed;
+                    inset: 0;
+                    background: rgba(8, 8, 12, 0.65);
+                    display: none;
+                    align-items: center;
+                    justify-content: center;
+                    z-index: 100120;
+                    padding: clamp(16px, 4vw, 48px);
+                    transition: opacity 0.2s ease, visibility 0.2s ease;
+                }
+                
+                /* 手机端画廊模式：mask无padding，让preview全屏 */
+                body.clm-mobile-gallery .clm-download-window-mask {
+                    padding: 0 !important;
+                }
+                .clm-download-window-mask.clm-active {
+                    display: flex;
+                }
+                .clm-download-window-status {
+                    font-size: 12px;
+                    color: rgba(0, 0, 0, 0.65);
+                    line-height: 1.5;
+                }
+                .clm-download-window-status[data-variant="success"] {
+                    color: #059669;
+                }
+                .clm-download-window-status[data-variant="error"] {
+                    color: #b91c1c;
+                }
+                .clm-gallery-download-btn {
+                    padding: 10px 20px;
+                    border-radius: 999px;
+                    border: 1px solid rgba(255, 255, 255, 0.35);
+                    background: rgba(0, 0, 0, 0.45);
+                    color: #fff;
+                    font-size: 13px;
+                    letter-spacing: 0.08em;
+                    cursor: pointer;
+                    transition: background 0.2s ease, opacity 0.2s ease;
+                    min-width: 220px;
+                }
+                .clm-gallery-download-btn:hover:not(:disabled) {
+                    background: rgba(0, 0, 0, 0.75);
+                }
+                .clm-gallery-download-btn.clm-downloaded {
+                    border-color: rgba(16, 185, 129, 0.7);
+                    background: rgba(16, 185, 129, 0.22);
+                    color: #d1fae5;
+                }
+                .clm-gallery-download-btn:disabled {
+                    opacity: 0.5;
+                    cursor: not-allowed;
+                }
+                .clm-preset-picker-mask {
+                    position: fixed;
+                    inset: 0;
+                    background: transparent;
+                    z-index: 100120;
+                    display: flex;
+                    align-items: flex-end;
+                    justify-content: flex-end;
+                }
+                .clm-preset-picker {
+                    width: min(360px, 90vw);
+                    max-height: 80vh;
+                    background: #fff;
+                    border-radius: 12px;
+                    display: flex;
+                    flex-direction: column;
+                    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+                    overflow: hidden;
+                    margin: 20px;
+                }
+                .clm-preset-picker-title {
+                    padding: 14px 18px;
+                    font-weight: 600;
+                    border-bottom: 1px solid #eee;
+                }
+                .clm-preset-picker-list {
+                    padding: 12px 18px;
+                    overflow: auto;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 10px;
+                }
+                .clm-preset-picker-option {
+                    border: 1px solid #d0d0d0;
+                    border-radius: 8px;
+                    padding: 10px 12px;
+                    text-align: left;
+                    background: #fdfdfd;
+                    cursor: pointer;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 4px;
+                    transition: border-color 0.2s ease, background 0.2s ease;
+                }
+                .clm-preset-picker-option:hover {
+                    background: #f3f6ff;
+                    border-color: #8da9ff;
+                }
+                .clm-preset-picker-option strong {
+                    font-size: 13px;
+                }
+                .clm-preset-picker-option span {
+                    font-size: 12px;
+                    color: #555;
+                    word-break: break-all;
+                }
+                .clm-preset-picker-cancel {
+                    border: none;
+                    border-top: 1px solid #eee;
+                    background: #fafafa;
+                    padding: 10px 0;
+                    cursor: pointer;
+                    font-size: 13px;
+                }
+                .clm-preset-picker-cancel:hover {
+                    background: #f0f0f0;
+                }
+                /* 保持桌面端画廊始终全屏，不再缩放 overlay，只根据宽度微调布局 */
+                @media (max-width: 1800px) {
+                    .clm-gallery-overlay {
+                        transform: none;
+                    }
+                }
+                @media (max-width: 1600px) {
+                    .clm-gallery-overlay {
+                        transform: none;
+                    }
+                    .clm-gallery-layout {
+                        grid-template-columns: minmax(260px, 22vw) 1fr minmax(260px, 22vw);
+                        width: 100vw;
+                    }
+                }
+                @media (max-width: 1400px) {
+                    .clm-gallery-overlay {
+                        transform: none;
+                    }
+                    .clm-gallery-layout {
+                        grid-template-columns: minmax(240px, 24vw) 1fr minmax(240px, 24vw);
+                        width: 100vw;
+                    }
+                }
+                @media (max-width: 1200px) {
+                    .clm-gallery-overlay {
+                        transform: none;
+                    }
+                    .clm-gallery-layout {
+                        grid-template-columns: minmax(220px, 26vw) 1fr minmax(220px, 26vw);
+                        width: 100vw;
+                    }
+                }
+                @media (max-width: 1024px) {
+                    .clm-gallery-overlay {
+                        transform: none;
+                    }
+                    .clm-gallery-layout {
+                        grid-template-columns: 1fr;
+                    }
+                    .clm-gallery-download-preview {
+                        inset: clamp(14px, 4vw, 32px);
+                    }
+                }
+            `);
+
+            const overlay = document.createElement('div');
+            overlay.className = 'clm-gallery-overlay';
+
+            const closeBtn = document.createElement('button');
+            closeBtn.type = 'button';
+            closeBtn.className = 'clm-gallery-close';
+            closeBtn.textContent = '✕';
+
+            const layout = document.createElement('div');
+            layout.className = 'clm-gallery-layout';
+
+            const topicPanel = document.createElement('section');
+            topicPanel.className = 'clm-gallery-panel clm-gallery-panel-topic';
+            const topicHeader = document.createElement('div');
+            topicHeader.className = 'clm-gallery-panel-header';
+            topicHeader.textContent = '主題內容';
+            
+            // 添加复制按钮（仅手机端）
+            if (isMobilePage()) {
+                const copyBtn = document.createElement('button');
+                copyBtn.type = 'button';
+                copyBtn.className = 'clm-topic-copy-btn';
+                copyBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px;"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+                copyBtn.title = '复制主题内容';
+                copyBtn.style.cssText = 'position: absolute; right: 10px; top: 10px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: #fff; padding: 6px 8px; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; z-index: 10;';
+                
+                copyBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const text = topicBody.textContent;
+                    navigator.clipboard.writeText(text).then(() => {
+                        copyBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px;"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+                        setTimeout(() => {
+                            copyBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px;"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+                        }, 2000);
+                    }).catch(err => {
+                        console.error('复制失败:', err);
+                    });
+                });
+                
+                topicHeader.style.position = 'relative';
+                topicHeader.style.display = 'flex';
+                topicHeader.style.alignItems = 'center';
+                topicHeader.style.justifyContent = 'space-between';
+                topicHeader.appendChild(copyBtn);
+            }
+            
+            const topicBody = document.createElement('div');
+            topicBody.className = 'clm-gallery-panel-body';
+            topicPanel.appendChild(topicHeader);
+            topicPanel.appendChild(topicBody);
+            
+            let toggleTopicPanelState = null;
+
+            // 手机端主题内容伸缩功能
+            if (isMobilePage()) {
+                topicPanel.classList.add('clm-topic-collapsed');
+
+                toggleTopicPanelState = () => {
+                    const isExpanded = topicPanel.classList.contains('clm-topic-expanded');
+                    if (isExpanded) {
+                        topicPanel.classList.remove('clm-topic-expanded');
+                        topicPanel.classList.add('clm-topic-collapsed');
+                    } else {
+                        topicPanel.classList.remove('clm-topic-collapsed');
+                        topicPanel.classList.add('clm-topic-expanded');
+                    }
+                };
+
+                topicPanel.addEventListener('click', (e) => {
+                    // 如果点击的是标签或其他交互元素，不触发伸缩
+                    if (e.target.closest('.clm-performer-tag') || 
+                        e.target.closest('.clm-title-tag-code-prefix') || 
+                        e.target.closest('.clm-title-tag-code-suffix') ||
+                        e.target.closest('.clm-topic-copy-btn')) {
+                        return;
+                    }
+                    
+                    const isExpanded = topicPanel.classList.contains('clm-topic-expanded');
+                    
+                    // 展开状态：点击顶部50%区域可以关闭
+                    if (isExpanded) {
+                        const rect = topicPanel.getBoundingClientRect();
+                        const clickY = e.clientY - rect.top;
+                        // 顶部50%区域（包含箭头和标题）
+                        if (clickY <= rect.height * 0.5) {
+                            toggleTopicPanelState();
+                        }
+                        return;
+                    }
+                    
+                    // 折叠状态：点击整个抽屉区域都可以打开
+                    if (toggleTopicPanelState) {
                         toggleTopicPanelState();
                     }
-                    return;
-                }
+                });
                 
-                // 折叠状态：点击整个抽屉区域都可以打开
-                if (toggleTopicPanelState) {
-                    toggleTopicPanelState();
-                }
-            });
-            
-            // 为主题抽屉添加滑动手势支持（鼠标 + 触摸）
-            let topicMouseStartY = 0;
-            let topicIsMouseDragging = false;
-            let topicTouchStartY = 0;
-            let topicIsTouchDragging = false;
-            let topicTouchFromBody = false;
-            let topicBodyScrollStart = 0;
-            
-            // 桌面端：鼠标拖动
-            topicPanel.addEventListener('mousedown', (e) => {
-                debugLog('---------- topicPanel mousedown ----------');
-                topicMouseStartY = e.clientY;
-                topicIsMouseDragging = false;
-            });
-            
-            topicPanel.addEventListener('mousemove', (e) => {
-                if (topicMouseStartY === 0) return;
-                const moveDistance = Math.abs(e.clientY - topicMouseStartY);
-                if (moveDistance > 10) {
-                    topicIsMouseDragging = true;
-                    e.preventDefault();
-                }
-            });
-            
-            topicPanel.addEventListener('mouseup', (e) => {
-                if (topicMouseStartY === 0) return;
+                // 为主题抽屉添加滑动手势支持（鼠标 + 触摸）
+                let topicMouseStartY = 0;
+                let topicIsMouseDragging = false;
+                let topicTouchStartY = 0;
+                let topicIsTouchDragging = false;
+                let topicTouchFromBody = false;
+                let topicBodyScrollStart = 0;
                 
-                debugLog('---------- topicPanel mouseup ----------');
-                debugLog('  - topicIsMouseDragging:', topicIsMouseDragging);
+                // 桌面端：鼠标拖动
+                topicPanel.addEventListener('mousedown', (e) => {
+                    debugLog('---------- topicPanel mousedown ----------');
+                    topicMouseStartY = e.clientY;
+                    topicIsMouseDragging = false;
+                });
                 
-                if (topicIsMouseDragging && toggleTopicPanelState) {
-                    const deltaY = e.clientY - topicMouseStartY;
-                    const absDeltaY = Math.abs(deltaY);
-                    const isExpanded = topicPanel.classList.contains('clm-topic-expanded');
+                topicPanel.addEventListener('mousemove', (e) => {
+                    if (topicMouseStartY === 0) return;
+                    const moveDistance = Math.abs(e.clientY - topicMouseStartY);
+                    if (moveDistance > 10) {
+                        topicIsMouseDragging = true;
+                        e.preventDefault();
+                    }
+                });
+                
+                topicPanel.addEventListener('mouseup', (e) => {
+                    if (topicMouseStartY === 0) return;
                     
-                    debugLog('  - deltaY:', deltaY, 'absDeltaY:', absDeltaY);
-                    debugLog('  - isExpanded:', isExpanded);
+                    debugLog('---------- topicPanel mouseup ----------');
+                    debugLog('  - topicIsMouseDragging:', topicIsMouseDragging);
                     
-                    if (absDeltaY > 100) {
-                        if (deltaY < 0 && !isExpanded) {
-                            debugLog('  - 在抽屉上向上滑动，展开');
-                            toggleTopicPanelState();
-                        } else if (deltaY > 0 && isExpanded) {
-                            debugLog('  - 在抽屉上向下滑动，收起');
-                            toggleTopicPanelState();
+                    if (topicIsMouseDragging && toggleTopicPanelState) {
+                        const deltaY = e.clientY - topicMouseStartY;
+                        const absDeltaY = Math.abs(deltaY);
+                        const isExpanded = topicPanel.classList.contains('clm-topic-expanded');
+                        
+                        debugLog('  - deltaY:', deltaY, 'absDeltaY:', absDeltaY);
+                        debugLog('  - isExpanded:', isExpanded);
+                        
+                        if (absDeltaY > 100) {
+                            if (deltaY < 0 && !isExpanded) {
+                                debugLog('  - 在抽屉上向上滑动，展开');
+                                toggleTopicPanelState();
+                            } else if (deltaY > 0 && isExpanded) {
+                                debugLog('  - 在抽屉上向下滑动，收起');
+                                toggleTopicPanelState();
+                            }
                         }
                     }
-                }
-                
-                topicMouseStartY = 0;
-                topicIsMouseDragging = false;
-            });
+                    
+                    topicMouseStartY = 0;
+                    topicIsMouseDragging = false;
+                });
 
-            // 手机端：触摸滑动（上滑展开，下滑收起）
-            topicPanel.addEventListener('touchstart', (e) => {
-                if (e.touches.length !== 1) return;
-                const target = e.target;
-                topicTouchFromBody = !!target.closest('.clm-gallery-panel-body');
-                topicTouchStartY = e.touches[0].clientY;
-                topicIsTouchDragging = false;
-                topicBodyScrollStart = topicTouchFromBody ? (topicBody.scrollTop || 0) : 0;
-            }, { passive: true });
+                // 手机端：触摸滑动（上滑展开，下滑收起）
+                topicPanel.addEventListener('touchstart', (e) => {
+                    if (e.touches.length !== 1) return;
+                    const target = e.target;
+                    topicTouchFromBody = !!target.closest('.clm-gallery-panel-body');
+                    topicTouchStartY = e.touches[0].clientY;
+                    topicIsTouchDragging = false;
+                    topicBodyScrollStart = topicTouchFromBody ? (topicBody.scrollTop || 0) : 0;
+                }, { passive: true });
 
-            topicPanel.addEventListener('touchmove', (e) => {
-                if (topicTouchStartY === 0) return;
-                const currentY = e.touches[0].clientY;
-                const deltaY = currentY - topicTouchStartY;
-                const moveDistance = Math.abs(deltaY);
-                if (moveDistance > 10) {
-                    const isExpanded = topicPanel.classList.contains('clm-topic-expanded');
-                    if (topicTouchFromBody) {
-                        const atTop = (topicBody.scrollTop || 0) <= 0 && topicBodyScrollStart <= 0;
-                        if (!(isExpanded && atTop && deltaY > 0)) {
-                            return;
+                topicPanel.addEventListener('touchmove', (e) => {
+                    if (topicTouchStartY === 0) return;
+                    const currentY = e.touches[0].clientY;
+                    const deltaY = currentY - topicTouchStartY;
+                    const moveDistance = Math.abs(deltaY);
+                    if (moveDistance > 10) {
+                        const isExpanded = topicPanel.classList.contains('clm-topic-expanded');
+                        if (topicTouchFromBody) {
+                            const atTop = (topicBody.scrollTop || 0) <= 0 && topicBodyScrollStart <= 0;
+                            if (!(isExpanded && atTop && deltaY > 0)) {
+                                return;
+                            }
+                        }
+                        topicIsTouchDragging = true;
+                        // 阻止背景页面跟随滚动
+                        e.preventDefault();
+                    }
+                }, { passive: false });
+
+                topicPanel.addEventListener('touchend', (e) => {
+                    if (topicTouchStartY === 0) {
+                        topicTouchStartY = 0;
+                        topicIsTouchDragging = false;
+                        topicTouchFromBody = false;
+                        topicBodyScrollStart = 0;
+                        return;
+                    }
+
+                    if (topicIsTouchDragging && toggleTopicPanelState) {
+                        const endY = e.changedTouches[0].clientY;
+                        const deltaY = endY - topicTouchStartY;
+                        const absDeltaY = Math.abs(deltaY);
+                        const isExpanded = topicPanel.classList.contains('clm-topic-expanded');
+
+                        debugLog('---------- topicPanel touchend ----------');
+                        debugLog('  - deltaY:', deltaY, 'absDeltaY:', absDeltaY, 'isExpanded:', isExpanded);
+
+                        if (absDeltaY > 60) {
+                            if (deltaY < 0 && !isExpanded) {
+                                debugLog('  - 触摸上滑，展开抽屉');
+                                toggleTopicPanelState();
+                            } else if (deltaY > 0 && isExpanded) {
+                                debugLog('  - 触摸下滑，收起抽屉');
+                                toggleTopicPanelState();
+                            }
                         }
                     }
-                    topicIsTouchDragging = true;
-                    // 阻止背景页面跟随滚动
-                    e.preventDefault();
-                }
-            }, { passive: false });
 
-            topicPanel.addEventListener('touchend', (e) => {
-                if (topicTouchStartY === 0) {
                     topicTouchStartY = 0;
                     topicIsTouchDragging = false;
                     topicTouchFromBody = false;
                     topicBodyScrollStart = 0;
-                    return;
-                }
-
-                if (topicIsTouchDragging && toggleTopicPanelState) {
-                    const endY = e.changedTouches[0].clientY;
-                    const deltaY = endY - topicTouchStartY;
-                    const absDeltaY = Math.abs(deltaY);
-                    const isExpanded = topicPanel.classList.contains('clm-topic-expanded');
-
-                    debugLog('---------- topicPanel touchend ----------');
-                    debugLog('  - deltaY:', deltaY, 'absDeltaY:', absDeltaY, 'isExpanded:', isExpanded);
-
-                    if (absDeltaY > 60) {
-                        if (deltaY < 0 && !isExpanded) {
-                            debugLog('  - 触摸上滑，展开抽屉');
-                            toggleTopicPanelState();
-                        } else if (deltaY > 0 && isExpanded) {
-                            debugLog('  - 触摸下滑，收起抽屉');
-                            toggleTopicPanelState();
-                        }
-                    }
-                }
-
-                topicTouchStartY = 0;
-                topicIsTouchDragging = false;
-                topicTouchFromBody = false;
-                topicBodyScrollStart = 0;
-            });
-        }
-
-        const viewer = document.createElement('div');
-        viewer.className = 'clm-gallery-viewer';
-        const viewerColumn = document.createElement('div');
-        viewerColumn.className = 'clm-gallery-viewer-column';
-
-        // 创建viewer上方的广告显示区域
-        const viewerAdsTop = document.createElement('div');
-        viewerAdsTop.className = 'clm-gallery-ads-slot clm-gallery-ads-slot-viewer-top';
-        viewerAdsTop.style.display = 'none';
-        const viewerAdsTopTitle = document.createElement('div');
-        viewerAdsTopTitle.className = 'clm-gallery-ads-title';
-        viewerAdsTopTitle.textContent = '帖子內 AD';
-        const viewerAdsTopContainer = document.createElement('div');
-        viewerAdsTopContainer.className = 'clm-gallery-ads';
-        viewerAdsTop.appendChild(viewerAdsTopTitle);
-        viewerAdsTop.appendChild(viewerAdsTopContainer);
-
-        const leftBtn = document.createElement('button');
-        leftBtn.type = 'button';
-        leftBtn.className = 'clm-gallery-arrow clm-gallery-arrow-left';
-        leftBtn.textContent = '‹';
-
-        const rightBtn = document.createElement('button');
-        rightBtn.type = 'button';
-        rightBtn.className = 'clm-gallery-arrow clm-gallery-arrow-right';
-        rightBtn.textContent = '›';
-
-        const viewerImg = document.createElement('img');
-        viewerImg.alt = '';
-        const loadingIndicator = document.createElement('div');
-        loadingIndicator.className = 'clm-gallery-loading-indicator';
-        loadingIndicator.textContent = '正在載入…';
-        const galleryQualityBadge = document.createElement('div');
-        galleryQualityBadge.className = 'clm-quality-badge clm-gallery-quality';
-        galleryQualityBadge.style.display = 'none';
-
-        viewer.appendChild(leftBtn);
-        viewer.appendChild(viewerImg);
-        viewer.appendChild(rightBtn);
-        viewer.appendChild(loadingIndicator);
-        viewer.appendChild(galleryQualityBadge);
-
-        // 创建viewer下方的广告显示区域
-        const viewerAdsBottom = document.createElement('div');
-        viewerAdsBottom.className = 'clm-gallery-ads-slot clm-gallery-ads-slot-viewer-bottom';
-        viewerAdsBottom.style.display = 'none';
-        const viewerAdsBottomTitle = document.createElement('div');
-        viewerAdsBottomTitle.className = 'clm-gallery-ads-title';
-        viewerAdsBottomTitle.textContent = '帖子內 AD';
-        const viewerAdsBottomContainer = document.createElement('div');
-        viewerAdsBottomContainer.className = 'clm-gallery-ads';
-        viewerAdsBottom.appendChild(viewerAdsBottomTitle);
-        viewerAdsBottom.appendChild(viewerAdsBottomContainer);
-
-        viewerColumn.appendChild(viewerAdsTop);
-        viewerColumn.appendChild(viewer);
-        viewerColumn.appendChild(viewerAdsBottom);
-
-        const commentsPanel = document.createElement('section');
-        commentsPanel.className = 'clm-gallery-panel clm-gallery-panel-comments';
-        
-        const commentsHeader = document.createElement('div');
-        commentsHeader.className = 'clm-gallery-panel-header';
-        commentsHeader.textContent = '評論內容';
-        
-        // 手机端评论弹窗头部关闭按钮（参照手机端画廊.html）
-        let mobileCommentCloseBtn = null;
-        if (isMobilePage()) {
-            mobileCommentCloseBtn = document.createElement('span');
-            mobileCommentCloseBtn.className = 'clm-mobile-comment-close';
-            mobileCommentCloseBtn.textContent = '×';
-            commentsHeader.appendChild(mobileCommentCloseBtn);
-        }
-        
-        const commentsBody = document.createElement('div');
-        commentsBody.className = 'clm-gallery-panel-body';
-        commentsPanel.appendChild(commentsHeader);
-        commentsPanel.appendChild(commentsBody);
-        
-        // 只在手机端添加评论触发按钮（右侧圆形按钮）
-        // 注意：按钮在后面创建，事件监听器也在那里添加
-        let mobileCommentBtn = null;
-
-        layout.appendChild(topicPanel);
-        layout.appendChild(viewerColumn);
-        layout.appendChild(commentsPanel);
-        
-        // 用于区分点击和拖动的变量
-        let clickStartX = 0;
-        let clickStartY = 0;
-        let clickStartTime = 0;
-        let mouseStartX = 0;
-        let mouseStartY = 0;
-        let isMouseDragging = false;
-        
-        // 记录鼠标/触摸按下的位置
-        viewer.addEventListener('mousedown', (e) => {
-            if (!document.body.classList.contains('clm-mobile-gallery')) return;
-            debugLog('---------- mousedown触发 ----------');
-            debugLog('  - clientX:', e.clientX, 'clientY:', e.clientY);
-            clickStartX = e.clientX;
-            clickStartY = e.clientY;
-            clickStartTime = Date.now();
-            mouseStartX = e.clientX;
-            mouseStartY = e.clientY;
-            isMouseDragging = false;
-        });
-        
-        viewer.addEventListener('mousemove', (e) => {
-            if (!document.body.classList.contains('clm-mobile-gallery')) return;
-            if (mouseStartX === 0 && mouseStartY === 0) return;
-            
-            const moveDistance = Math.sqrt(
-                Math.pow(e.clientX - mouseStartX, 2) + 
-                Math.pow(e.clientY - mouseStartY, 2)
-            );
-            
-            if (moveDistance > 10) {
-                isMouseDragging = true;
-                // 阻止文字选择
-                e.preventDefault();
-            }
-        });
-        
-        viewer.addEventListener('mouseup', (e) => {
-            if (!document.body.classList.contains('clm-mobile-gallery')) return;
-            if (mouseStartX === 0 && mouseStartY === 0) return;
-            
-            debugLog('---------- mouseup触发 ----------');
-            debugLog('  - clientX:', e.clientX, 'clientY:', e.clientY);
-            debugLog('  - isMouseDragging:', isMouseDragging);
-            
-            if (isMouseDragging) {
-                // 检查是否在按钮或面板上
-                const target = e.target;
-                const onComments = target.closest('.clm-gallery-panel-comments');
-                const onCommentBtn = target.closest('.clm-mobile-comment-btn');
-                const onDownloadBtn = target.closest('.clm-gallery-download-btn');
-                const onCloseBtn = target.closest('.clm-gallery-close');
-                const onAds = target.closest('.clm-gallery-ads-slot-viewer-top');
-                
-                if (onComments || onCommentBtn || onDownloadBtn || onCloseBtn || onAds) {
-                    debugLog('  - 在按钮或面板上，跳过手势处理');
-                    mouseStartX = 0;
-                    mouseStartY = 0;
-                    isMouseDragging = false;
-                    return;
-                }
-                
-                // 处理鼠标拖动手势
-                const deltaX = e.clientX - mouseStartX;
-                const deltaY = e.clientY - mouseStartY;
-                const absDeltaX = Math.abs(deltaX);
-                const absDeltaY = Math.abs(deltaY);
-                
-                debugLog('  - deltaX:', deltaX, 'deltaY:', deltaY);
-                debugLog('  - absDeltaX:', absDeltaX, 'absDeltaY:', absDeltaY);
-                
-                const minSwipeDistance = 80;
-                const minVerticalSwipeDistance = 100;
-                const viewportHeight = window.innerHeight || document.documentElement.clientHeight || document.body.clientHeight || 0;
-                const isTopicExpanded = topicPanel.classList.contains('clm-topic-expanded');
-                
-                debugLog('  - minSwipeDistance:', minSwipeDistance);
-                debugLog('  - minVerticalSwipeDistance:', minVerticalSwipeDistance);
-                debugLog('  - viewportHeight:', viewportHeight);
-                debugLog('  - isTopicExpanded:', isTopicExpanded);
-                
-                // 判断滑动方向
-                if (absDeltaX > absDeltaY) {
-                    debugLog('  - 检测到水平滑动');
-                    // 水平滑动 - 控制图片翻页
-                    if (absDeltaX > minSwipeDistance) {
-                        if (deltaX > 0) {
-                            debugLog('  - 向右滑动，显示上一张');
-                            showPrev();
-                        } else {
-                            debugLog('  - 向左滑动，显示下一张');
-                            showNext();
-                        }
-                    } else {
-                        debugLog('  - 水平滑动距离不足，忽略');
-                    }
-                } else {
-                    debugLog('  - 检测到垂直滑动');
-                    // 垂直滑动 - 控制主题抽屉
-                    // 注意：向上滑动（deltaY < 0）打开抽屉，向下滑动（deltaY > 0）关闭抽屉
-                    if (absDeltaY > minVerticalSwipeDistance && toggleTopicPanelState) {
-                        if (deltaY < 0) {
-                            debugLog('  - 向上滑动，展开主题抽屉');
-                            if (!isTopicExpanded) {
-                                toggleTopicPanelState();
-                            }
-                        } else {
-                            debugLog('  - 向下滑动，收起主题抽屉');
-                            if (isTopicExpanded) {
-                                toggleTopicPanelState();
-                            }
-                        }
-                    } else {
-                        debugLog('  - 垂直滑动距离不足或无toggleTopicPanelState，忽略');
-                    }
-                }
-            }
-            
-            mouseStartX = 0;
-            mouseStartY = 0;
-            isMouseDragging = false;
-        });
-        
-        viewer.addEventListener('touchstart', (e) => {
-            if (!document.body.classList.contains('clm-mobile-gallery')) return;
-            if (e.touches.length === 1) {
-                clickStartX = e.touches[0].clientX;
-                clickStartY = e.touches[0].clientY;
-                clickStartTime = Date.now();
-            }
-        }, { passive: true });
-        
-        // 添加点击图片左右区域翻页 + 抽屉点击外部关闭
-        viewer.addEventListener('click', (e) => {
-            if (!document.body.classList.contains('clm-mobile-gallery')) return;
-            
-            const target = e.target;
-
-            // 评论面板、评论按钮、下载按钮、关闭按钮、上方广告区域：不处理
-            if (target.closest('.clm-gallery-panel-comments') || 
-                target.closest('.clm-mobile-comment-btn') ||
-                target.closest('.clm-gallery-download-btn') ||
-                target.closest('.clm-gallery-close') ||
-                target.closest('.clm-gallery-ads-slot-viewer-top')) {
-                console.log('草榴Manager: click - 在按钮或面板上，跳过');
-                return;
-            }
-            
-            // 检查是否是拖动而不是点击（移动距离超过50px或时间超过500ms视为拖动）
-            const moveDistance = Math.sqrt(
-                Math.pow(e.clientX - clickStartX, 2) + 
-                Math.pow(e.clientY - clickStartY, 2)
-            );
-            const clickDuration = Date.now() - clickStartTime;
-            
-            console.log('草榴Manager: click检测 - moveDistance:', moveDistance, 'clickDuration:', clickDuration);
-            
-            if (moveDistance > 50 || clickDuration > 500) {
-                console.log('草榴Manager: 检测到拖动，忽略点击事件');
-                // 不要阻止事件传播，让touchend的handleGesture处理
-                return;
-            }
-
-            const viewportHeight = window.innerHeight || document.documentElement.clientHeight || document.body.clientHeight || 0;
-            const isTopicExpanded = topicPanel.classList.contains('clm-topic-expanded');
-
-            // 展开状态：点击抽屉以外区域关闭抽屉
-            if (isTopicExpanded && !target.closest('.clm-gallery-panel-topic')) {
-                if (toggleTopicPanelState) {
-                    console.log('草榴Manager: 点击抽屉外区域，收起主题抽屉');
-                    toggleTopicPanelState();
-                }
-                return;
-            }
-
-            // 折叠状态：底部 1/4 区域点击打开抽屉
-            if (!isTopicExpanded && toggleTopicPanelState && viewportHeight > 0) {
-                const bottomThreshold = viewportHeight * 0.75; // 自上而下 75% 以上即底部 1/4
-                if (e.clientY > bottomThreshold) {
-                    console.log('草榴Manager: 底部区域点击，切换主题抽屉');
-                    toggleTopicPanelState();
-                    return;
-                }
-            }
-            
-            // 获取点击位置用于左右翻页
-            const rect = viewer.getBoundingClientRect();
-            const clickX = e.clientX - rect.left;
-            const viewerWidth = rect.width;
-            
-            console.log('草榴Manager: 点击位置', clickX, viewerWidth);
-            
-            // 左侧1/3区域 - 上一张
-            if (clickX < viewerWidth / 3) {
-                console.log('草榴Manager: 点击左侧区域，显示上一张');
-                galleryOverlay.showPrev();
-                showTapIndicator('left');
-            }
-            // 右侧1/3区域 - 下一张
-            else if (clickX > viewerWidth * 2 / 3) {
-                console.log('草榴Manager: 点击右侧区域，显示下一张');
-                galleryOverlay.showNext();
-                showTapIndicator('right');
-            }
-        }, { passive: false });
-        
-        // 点击指示器
-        function showTapIndicator(side) {
-            const indicator = document.createElement('div');
-            indicator.className = 'clm-tap-indicator';
-            indicator.style.cssText = `
-                position: fixed;
-                ${side === 'left' ? 'left: 20px' : 'right: 20px'};
-                top: 50%;
-                transform: translateY(-50%);
-                width: 60px;
-                height: 60px;
-                border-radius: 50%;
-                background: rgba(255, 255, 255, 0.3);
-                pointer-events: none;
-                z-index: 100005;
-                animation: tapFade 0.4s ease-out;
-            `;
-            indicator.innerHTML = side === 'left' ? '◀' : '▶';
-            indicator.style.display = 'flex';
-            indicator.style.alignItems = 'center';
-            indicator.style.justifyContent = 'center';
-            indicator.style.fontSize = '24px';
-            indicator.style.color = '#fff';
-            
-            document.body.appendChild(indicator);
-            setTimeout(() => {
-                if (indicator.parentNode) {
-                    indicator.parentNode.removeChild(indicator);
-                }
-            }, 400);
-        }
-
-        const meta = document.createElement('div');
-        meta.className = 'clm-gallery-meta';
-
-        const actions = document.createElement('div');
-        actions.className = 'clm-gallery-actions';
-        const downloadBtn = document.createElement('button');
-        downloadBtn.type = 'button';
-        downloadBtn.className = 'clm-gallery-download-btn';
-        // 这里不能直接使用稍后声明的全局 const isMobile，否则会触发 TDZ
-        // 改为直接调用 isMobilePage() 进行判断
-        if (isMobilePage()) {
-            downloadBtn.innerHTML = ''
-                + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
-                + 'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
-                + 'style="width: 24px; height: 24px; margin-bottom: 2px;">'
-                + '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>'
-                + '<polyline points="7 10 12 15 17 10"></polyline>'
-                + '<line x1="12" y1="15" x2="12" y2="3"></line>'
-                + '</svg>'
-                + '<span style="font-size: 11px; font-weight: 500;">下载</span>';
-        } else {
-            downloadBtn.textContent = '打開下載頁面';
-        }
-        downloadBtn.disabled = true;
-        actions.appendChild(downloadBtn);
-        
-        // 手机端：在actions容器中添加评论按钮
-        if (isMobilePage()) {
-            debugLog('创建手机端评论按钮');
-            mobileCommentBtn = document.createElement('button');
-            mobileCommentBtn.type = 'button';
-            mobileCommentBtn.className = 'clm-mobile-comment-btn clm-comment-trigger';
-            mobileCommentBtn.innerHTML = ''
-                + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
-                + 'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
-                + 'style="width: 24px; height: 24px; margin-bottom: 2px;">'
-                + '<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 '
-                + '8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 '
-                + '8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 '
-                + '0 0 1 8 8v.5z"></path></svg>'
-                + '<span style="font-size: 11px; font-weight: 500;">评论</span>';
-            mobileCommentBtn.title = '查看评论';
-            actions.appendChild(mobileCommentBtn);
-            debugLog('评论按钮已创建并添加到DOM');
-            
-            // 立即添加事件监听器
-            let commentsExpanded = false;
-            const closeComments = () => {
-                debugLog('关闭评论面板');
-                commentsExpanded = false;
-                commentsPanel.classList.remove('clm-comments-expanded');
-            };
-            const openComments = () => {
-                debugLog('打开评论面板');
-                commentsExpanded = true;
-                commentsPanel.classList.add('clm-comments-expanded');
-            };
-            
-            debugLog('为评论按钮添加click事件监听器');
-            mobileCommentBtn.addEventListener('click', (e) => {
-                debugLog('========== 评论按钮被点击 ==========');
-                debugLog('事件对象:', e);
-                debugLog('目标元素:', e.target);
-                debugLog('当前commentsExpanded:', commentsExpanded);
-                
-                // 避免点击事件冒泡到图片 viewer，导致误触翻页
-                e.stopPropagation();
-                e.preventDefault();
-                
-                if (commentsExpanded) {
-                    closeComments();
-                } else {
-                    openComments();
-                }
-                
-                debugLog('评论面板状态已切换，新状态:', commentsExpanded);
-            });
-            
-            if (mobileCommentCloseBtn) {
-                debugLog('为评论关闭按钮添加click事件监听器');
-                mobileCommentCloseBtn.addEventListener('click', (e) => {
-                    debugLog('评论关闭按钮被点击');
-                    e.stopPropagation();
-                    closeComments();
                 });
             }
+
+            const viewer = document.createElement('div');
+            viewer.className = 'clm-gallery-viewer';
+            const viewerColumn = document.createElement('div');
+            viewerColumn.className = 'clm-gallery-viewer-column';
+
+            // 创建viewer上方的广告显示区域
+            const viewerAdsTop = document.createElement('div');
+            viewerAdsTop.className = 'clm-gallery-ads-slot clm-gallery-ads-slot-viewer-top';
+            viewerAdsTop.style.display = 'none';
+            const viewerAdsTopTitle = document.createElement('div');
+            viewerAdsTopTitle.className = 'clm-gallery-ads-title';
+            viewerAdsTopTitle.textContent = '帖子內 AD';
+            const viewerAdsTopContainer = document.createElement('div');
+            viewerAdsTopContainer.className = 'clm-gallery-ads';
+            viewerAdsTop.appendChild(viewerAdsTopTitle);
+            viewerAdsTop.appendChild(viewerAdsTopContainer);
+
+            const leftBtn = document.createElement('button');
+            leftBtn.type = 'button';
+            leftBtn.className = 'clm-gallery-arrow clm-gallery-arrow-left';
+            leftBtn.textContent = '‹';
+
+            const rightBtn = document.createElement('button');
+            rightBtn.type = 'button';
+            rightBtn.className = 'clm-gallery-arrow clm-gallery-arrow-right';
+            rightBtn.textContent = '›';
+
+            const viewerImg = document.createElement('img');
+            viewerImg.alt = '';
+            const loadingIndicator = document.createElement('div');
+            loadingIndicator.className = 'clm-gallery-loading-indicator';
+            loadingIndicator.textContent = '正在載入…';
+            const galleryQualityBadge = document.createElement('div');
+            galleryQualityBadge.className = 'clm-quality-badge clm-gallery-quality';
+            galleryQualityBadge.style.display = 'none';
+
+            viewer.appendChild(leftBtn);
+            viewer.appendChild(viewerImg);
+            viewer.appendChild(rightBtn);
+            viewer.appendChild(loadingIndicator);
+            viewer.appendChild(galleryQualityBadge);
+
+            // 创建viewer下方的广告显示区域
+            const viewerAdsBottom = document.createElement('div');
+            viewerAdsBottom.className = 'clm-gallery-ads-slot clm-gallery-ads-slot-viewer-bottom';
+            viewerAdsBottom.style.display = 'none';
+            const viewerAdsBottomTitle = document.createElement('div');
+            viewerAdsBottomTitle.className = 'clm-gallery-ads-title';
+            viewerAdsBottomTitle.textContent = '帖子內 AD';
+            const viewerAdsBottomContainer = document.createElement('div');
+            viewerAdsBottomContainer.className = 'clm-gallery-ads';
+            viewerAdsBottom.appendChild(viewerAdsBottomTitle);
+            viewerAdsBottom.appendChild(viewerAdsBottomContainer);
+
+            viewerColumn.appendChild(viewerAdsTop);
+            viewerColumn.appendChild(viewer);
+            viewerColumn.appendChild(viewerAdsBottom);
+
+            const commentsPanel = document.createElement('section');
+            commentsPanel.className = 'clm-gallery-panel clm-gallery-panel-comments';
             
-            debugLog('评论按钮事件监听器添加完成');
-        }
-
-        const hint = document.createElement('div');
-        hint.className = 'clm-gallery-hint';
-        hint.textContent = '← → 切換 · Esc 關閉';
-
-        overlay.appendChild(closeBtn);
-        overlay.appendChild(layout);
-        viewer.appendChild(meta);
-        viewer.appendChild(hint);
-        viewer.appendChild(actions);
-
-        document.body.appendChild(overlay);
-
-        let items = [];
-        let currentIndex = 0;
-        let currentImageToken = 0;
-        let errorIndicatorTimer = null;
-        let currentDownloadInfo = null;
-        let currentThreadKey = null;
-        let currentQualityTag = null;
-        let galleryDownloadUnsubscribe = null;
-        let imageScale = 1;
-        let imageTranslateX = 0;
-        let imageTranslateY = 0;
-        let isDragging = false;
-        let dragStartX = 0;
-        let dragStartY = 0;
-        let dragStartTranslateX = 0;
-        let dragStartTranslateY = 0;
-        const preloadImageCache = new Map();
-
-        function formatContentWithTags(text) {
-            if (!text) return '';
+            const commentsHeader = document.createElement('div');
+            commentsHeader.className = 'clm-gallery-panel-header';
+            commentsHeader.textContent = '評論內容';
             
-            // 转义HTML特殊字符
-            const escapeHtml = (str) => {
-                const div = document.createElement('div');
-                div.textContent = str;
-                return div.innerHTML;
-            };
+            // 手机端评论弹窗头部关闭按钮（参照手机端画廊.html）
+            let mobileCommentCloseBtn = null;
+            if (isMobilePage()) {
+                mobileCommentCloseBtn = document.createElement('span');
+                mobileCommentCloseBtn.className = 'clm-mobile-comment-close';
+                mobileCommentCloseBtn.textContent = '×';
+                commentsHeader.appendChild(mobileCommentCloseBtn);
+            }
             
-            // 按行分割处理
-            const lines = text.split('\n');
-            const processedLines = lines.map(line => {
-                // 检查是否包含类型相关字段（支持多种格式）
-                // 匹配：类型、ジャンル（日文"类型"）
-                const typeMatch = line.match(/^(.*?(?:类型|ジャンル)[：:])(.+)$/);
-                if (typeMatch) {
-                    const prefix = typeMatch[1]; // "类型："之前的内容
-                    const typeContent = typeMatch[2]; // "类型："之后的内容
-                    
-                    // 按"｜"或空格分隔类型（优先使用"｜"，如果没有则用空格）
-                    let types = [];
-                    if (typeContent.includes('｜')) {
-                        types = typeContent.split('｜').map(t => t.trim()).filter(t => t);
-                    } else {
-                        // 按空格分隔，但保留多个连续空格的情况
-                        types = typeContent.split(/\s+/).map(t => t.trim()).filter(t => t);
-                    }
-                    if (types.length > 0) {
-                        // 将每个类型转换为标签，根据索引使用不同的颜色类
-                        const tags = types.map((type, index) => {
-                            // 根据索引选择颜色类（循环使用10种颜色）
-                            const colorClass = `clm-type-tag-color-${(index % 10) + 1}`;
-                            return `<span class="clm-type-tag ${colorClass}">${escapeHtml(type)}</span>`;
-                        }).join('');
-                        return escapeHtml(prefix) + tags;
-                    }
-                }
-                // 检查是否包含出演者相关字段（支持多种格式）
-                // 匹配：出演者、出演、【出演女優】（日文格式）
-                const performerMatch = line.match(/^(.*?(?:出演者|出演|【出演女優】)[：:])(.+)$/);
-                if (performerMatch) {
-                    const prefix = performerMatch[1]; // "出演者："之前的内容
-                    const performerContent = performerMatch[2]; // "出演者："之后的内容
-                    
-                    // 按"｜"或空格分隔出演者（优先使用"｜"，如果没有则用空格）
-                    let performers = [];
-                    if (performerContent.includes('｜')) {
-                        performers = performerContent.split('｜').map(p => p.trim()).filter(p => p);
-                    } else {
-                        // 按空格分隔，但保留多个连续空格的情况
-                        performers = performerContent.split(/\s+/).map(p => p.trim()).filter(p => p);
-                    }
-                    if (performers.length > 0) {
-                        // 将每个出演者转换为标签，使用独立的类名 clm-performer-tag
-                        const tags = performers.map((performer, index) => {
-                            // 根据索引选择颜色类（循环使用10种颜色）
-                            const colorClass = `clm-performer-tag-color-${(index % 10) + 1}`;
-                            return `<span class="clm-performer-tag ${colorClass}">${escapeHtml(performer)}</span>`;
-                        }).join('');
-                        return escapeHtml(prefix) + tags;
-                    }
-                }
-                // 普通行直接转义
-                return escapeHtml(line);
+            const commentsBody = document.createElement('div');
+            commentsBody.className = 'clm-gallery-panel-body';
+            commentsPanel.appendChild(commentsHeader);
+            commentsPanel.appendChild(commentsBody);
+
+            // 手机端：为评论内容区域单独绑定触摸滚动逻辑，避免被画廊左右翻页手势“吃掉”
+            if (isMobilePage()) {
+                let commentsTouchStartY = 0;
+                let commentsScrollStart = 0;
+                commentsBody.addEventListener('touchstart', (e) => {
+                    if (!document.body.classList.contains('clm-mobile-gallery')) return;
+                    if (e.touches.length !== 1) return;
+                    commentsTouchStartY = e.touches[0].clientY;
+                    commentsScrollStart = commentsBody.scrollTop || 0;
+                }, { passive: true });
+
+                commentsBody.addEventListener('touchmove', (e) => {
+                    if (!document.body.classList.contains('clm-mobile-gallery')) return;
+                    if (e.touches.length !== 1) return;
+                    const currentY = e.touches[0].clientY;
+                    const deltaY = currentY - commentsTouchStartY;
+                    // 反向偏移，实现手指向上滑内容向上滚动
+                    commentsBody.scrollTop = commentsScrollStart - deltaY;
+                    // 阻止事件冒泡到 viewer，避免被当作左右翻页手势
+                    e.stopPropagation();
+                    e.preventDefault();
+                }, { passive: false });
+            }
+            
+            // 只在手机端添加评论触发按钮（右侧圆形按钮）
+            // 注意：按钮在后面创建，事件监听器也在那里添加
+            let mobileCommentBtn = null;
+
+            layout.appendChild(topicPanel);
+            layout.appendChild(viewerColumn);
+            layout.appendChild(commentsPanel);
+            
+            // 用于区分点击和拖动的变量
+            let clickStartX = 0;
+            let clickStartY = 0;
+            let clickStartTime = 0;
+            let mouseStartX = 0;
+            let mouseStartY = 0;
+            let isMouseDragging = false;
+            
+            // 记录鼠标/触摸按下的位置
+            viewer.addEventListener('mousedown', (e) => {
+                if (!document.body.classList.contains('clm-mobile-gallery')) return;
+                debugLog('---------- mousedown触发 ----------');
+                debugLog('  - clientX:', e.clientX, 'clientY:', e.clientY);
+                clickStartX = e.clientX;
+                clickStartY = e.clientY;
+                clickStartTime = Date.now();
+                mouseStartX = e.clientX;
+                mouseStartY = e.clientY;
+                isMouseDragging = false;
             });
             
-            // 用<br>连接所有行
-            return processedLines.join('<br>');
-        }
+            viewer.addEventListener('mousemove', (e) => {
+                if (!document.body.classList.contains('clm-mobile-gallery')) return;
+                if (mouseStartX === 0 && mouseStartY === 0) return;
+                
+                const moveDistance = Math.sqrt(
+                    Math.pow(e.clientX - mouseStartX, 2) + 
+                    Math.pow(e.clientY - mouseStartY, 2)
+                );
+                
+                if (moveDistance > 10) {
+                    isMouseDragging = true;
+                    // 阻止文字选择
+                    e.preventDefault();
+                }
+            });
+            
+            viewer.addEventListener('mouseup', (e) => {
+                if (!document.body.classList.contains('clm-mobile-gallery')) return;
+                if (mouseStartX === 0 && mouseStartY === 0) return;
+                
+                debugLog('---------- mouseup触发 ----------');
+                debugLog('  - clientX:', e.clientX, 'clientY:', e.clientY);
+                debugLog('  - isMouseDragging:', isMouseDragging);
+                
+                if (isMouseDragging) {
+                    // 检查是否在按钮或面板上
+                    const target = e.target;
+                    const onComments = target.closest('.clm-gallery-panel-comments');
+                    const onCommentBtn = target.closest('.clm-mobile-comment-btn');
+                    const onDownloadBtn = target.closest('.clm-gallery-download-btn');
+                    const onCloseBtn = target.closest('.clm-gallery-close');
+                    const onAds = target.closest('.clm-gallery-ads-slot-viewer-top');
+                    
+                    if (onComments || onCommentBtn || onDownloadBtn || onCloseBtn || onAds) {
+                        debugLog('  - 在按钮或面板上，跳过手势处理');
+                        mouseStartX = 0;
+                        mouseStartY = 0;
+                        isMouseDragging = false;
+                        return;
+                    }
+                    
+                    // 处理鼠标拖动手势
+                    const deltaX = e.clientX - mouseStartX;
+                    const deltaY = e.clientY - mouseStartY;
+                    const absDeltaX = Math.abs(deltaX);
+                    const absDeltaY = Math.abs(deltaY);
+                    
+                    debugLog('  - deltaX:', deltaX, 'deltaY:', deltaY);
+                    debugLog('  - absDeltaX:', absDeltaX, 'absDeltaY:', absDeltaY);
+                    
+                    const minSwipeDistance = 80;
+                    const minVerticalSwipeDistance = 100;
+                    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || document.body.clientHeight || 0;
+                    const isTopicExpanded = topicPanel.classList.contains('clm-topic-expanded');
+                    
+                    debugLog('  - minSwipeDistance:', minSwipeDistance);
+                    debugLog('  - minVerticalSwipeDistance:', minVerticalSwipeDistance);
+                    debugLog('  - viewportHeight:', viewportHeight);
+                    debugLog('  - isTopicExpanded:', isTopicExpanded);
+                    
+                    // 判断滑动方向
+                    if (absDeltaX > absDeltaY) {
+                        debugLog('  - 检测到水平滑动');
+                        // 水平滑动 - 控制图片翻页
+                        if (absDeltaX > minSwipeDistance) {
+                            if (deltaX > 0) {
+                                debugLog('  - 向右滑动，显示上一张');
+                                showPrev();
+                            } else {
+                                debugLog('  - 向左滑动，显示下一张');
+                                showNext();
+                            }
+                        } else {
+                            debugLog('  - 水平滑动距离不足，忽略');
+                        }
+                    } else {
+                        debugLog('  - 检测到垂直滑动');
+                        // 垂直滑动 - 控制主题抽屉
+                        // 注意：向上滑动（deltaY < 0）打开抽屉，向下滑动（deltaY > 0）关闭抽屉
+                        if (absDeltaY > minVerticalSwipeDistance && toggleTopicPanelState) {
+                            if (deltaY < 0) {
+                                debugLog('  - 向上滑动，展开主题抽屉');
+                                if (!isTopicExpanded) {
+                                    toggleTopicPanelState();
+                                }
+                            } else {
+                                debugLog('  - 向下滑动，收起主题抽屉');
+                                if (isTopicExpanded) {
+                                    toggleTopicPanelState();
+                                }
+                            }
+                        } else {
+                            debugLog('  - 垂直滑动距离不足或无toggleTopicPanelState，忽略');
+                        }
+                    }
+                }
+                
+                mouseStartX = 0;
+                mouseStartY = 0;
+                isMouseDragging = false;
+            });
+            
+            viewer.addEventListener('touchstart', (e) => {
+                if (!document.body.classList.contains('clm-mobile-gallery')) return;
+                if (e.touches.length === 1) {
+                    clickStartX = e.touches[0].clientX;
+                    clickStartY = e.touches[0].clientY;
+                    clickStartTime = Date.now();
+                }
+            }, { passive: true });
+            
+            // 添加点击图片左右区域翻页 + 抽屉点击外部关闭
+            viewer.addEventListener('click', (e) => {
+                if (!document.body.classList.contains('clm-mobile-gallery')) return;
+                
+                const target = e.target;
 
-        function renderPanelEntries(container, entries, emptyText) {
-            container.innerHTML = '';
-            if (!entries || !entries.length) {
-                const empty = document.createElement('div');
-                empty.className = 'clm-panel-empty';
-                empty.textContent = emptyText;
-                container.appendChild(empty);
-                return;
+                // 评论面板、评论按钮、下载按钮、关闭按钮、上方广告区域：不处理
+                if (target.closest('.clm-gallery-panel-comments') || 
+                    target.closest('.clm-mobile-comment-btn') ||
+                    target.closest('.clm-gallery-download-btn') ||
+                    target.closest('.clm-gallery-close') ||
+                    target.closest('.clm-gallery-ads-slot-viewer-top')) {
+                    console.log('草榴Manager: click - 在按钮或面板上，跳过');
+                    return;
+                }
+                
+                // 检查是否是拖动而不是点击（移动距离超过50px或时间超过500ms视为拖动）
+                const moveDistance = Math.sqrt(
+                    Math.pow(e.clientX - clickStartX, 2) + 
+                    Math.pow(e.clientY - clickStartY, 2)
+                );
+                const clickDuration = Date.now() - clickStartTime;
+                
+                console.log('草榴Manager: click检测 - moveDistance:', moveDistance, 'clickDuration:', clickDuration);
+                
+                if (moveDistance > 50 || clickDuration > 500) {
+                    console.log('草榴Manager: 检测到拖动，忽略点击事件');
+                    // 不要阻止事件传播，让touchend的handleGesture处理
+                    return;
+                }
+
+                const viewportHeight = window.innerHeight || document.documentElement.clientHeight || document.body.clientHeight || 0;
+                const isTopicExpanded = topicPanel.classList.contains('clm-topic-expanded');
+
+                // 展开状态：点击抽屉以外区域关闭抽屉
+                if (isTopicExpanded && !target.closest('.clm-gallery-panel-topic')) {
+                    if (toggleTopicPanelState) {
+                        console.log('草榴Manager: 点击抽屉外区域，收起主题抽屉');
+                        toggleTopicPanelState();
+                    }
+                    return;
+                }
+
+                // 折叠状态：底部 1/4 区域点击打开抽屉
+                if (!isTopicExpanded && toggleTopicPanelState && viewportHeight > 0) {
+                    const bottomThreshold = viewportHeight * 0.75; // 自上而下 75% 以上即底部 1/4
+                    if (e.clientY > bottomThreshold) {
+                        console.log('草榴Manager: 底部区域点击，切换主题抽屉');
+                        toggleTopicPanelState();
+                        return;
+                    }
+                }
+                
+                // 获取点击位置用于左右翻页
+                const rect = viewer.getBoundingClientRect();
+                const clickX = e.clientX - rect.left;
+                const viewerWidth = rect.width;
+                
+                console.log('草榴Manager: 点击位置', clickX, viewerWidth);
+                
+                // 左侧1/3区域 - 上一张
+                if (clickX < viewerWidth / 3) {
+                    console.log('草榴Manager: 点击左侧区域，显示上一张');
+                    galleryOverlay.showPrev();
+                    showTapIndicator('left');
+                }
+                // 右侧1/3区域 - 下一张
+                else if (clickX > viewerWidth * 2 / 3) {
+                    console.log('草榴Manager: 点击右侧区域，显示下一张');
+                    galleryOverlay.showNext();
+                    showTapIndicator('right');
+                }
+            }, { passive: false });
+            
+            // 点击指示器
+            function showTapIndicator(side) {
+                const indicator = document.createElement('div');
+                indicator.className = 'clm-tap-indicator';
+                indicator.style.cssText = `
+                    position: fixed;
+                    ${side === 'left' ? 'left: 20px' : 'right: 20px'};
+                    top: 50%;
+                    transform: translateY(-50%);
+                    width: 60px;
+                    height: 60px;
+                    border-radius: 50%;
+                    background: rgba(255, 255, 255, 0.3);
+                    pointer-events: none;
+                    z-index: 100005;
+                    animation: tapFade 0.4s ease-out;
+                `;
+                indicator.innerHTML = side === 'left' ? '◀' : '▶';
+                indicator.style.display = 'flex';
+                indicator.style.alignItems = 'center';
+                indicator.style.justifyContent = 'center';
+                indicator.style.fontSize = '24px';
+                indicator.style.color = '#fff';
+                
+                document.body.appendChild(indicator);
+                setTimeout(() => {
+                    if (indicator.parentNode) {
+                        indicator.parentNode.removeChild(indicator);
+                    }
+                }, 400);
             }
-            entries.forEach(entry => {
+
+            const meta = document.createElement('div');
+            meta.className = 'clm-gallery-meta';
+
+            const actions = document.createElement('div');
+            actions.className = 'clm-gallery-actions';
+            const downloadBtn = document.createElement('button');
+            downloadBtn.type = 'button';
+            downloadBtn.className = 'clm-gallery-download-btn';
+            // 这里不能直接使用稍后声明的全局 const isMobile，否则会触发 TDZ
+            // 改为直接调用 isMobilePage() 进行判断
+            if (isMobilePage()) {
+                downloadBtn.innerHTML = ''
+                    + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+                    + 'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
+                    + 'style="width: 24px; height: 24px; margin-bottom: 2px;">'
+                    + '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>'
+                    + '<polyline points="7 10 12 15 17 10"></polyline>'
+                    + '<line x1="12" y1="15" x2="12" y2="3"></line>'
+                    + '</svg>'
+                    + '<span style="font-size: 11px; font-weight: 500;">下载</span>';
+            } else {
+                downloadBtn.textContent = '打開下載頁面';
+            }
+            downloadBtn.disabled = true;
+            actions.appendChild(downloadBtn);
+
+            const smallDownloadBtn = document.createElement('button');
+            smallDownloadBtn.type = 'button';
+            smallDownloadBtn.className = 'clm-gallery-download-btn';
+            if (isMobilePage()) {
+                smallDownloadBtn.innerHTML = ''
+                    + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+                    + 'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
+                    + 'style="width: 24px; height: 24px; margin-bottom: 2px;">'
+                    + '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>'
+                    + '<polyline points="7 10 12 15 17 10"></polyline>'
+                    + '<line x1="12" y1="15" x2="12" y2="3"></line>'
+                    + '</svg>'
+                    + '<span style="font-size: 11px; font-weight: 500;">小格式</span>';
+            } else {
+                smallDownloadBtn.textContent = '下載小格式版';
+            }
+            smallDownloadBtn.disabled = true;
+            actions.appendChild(smallDownloadBtn);
+            
+            // 手机端：在actions容器中添加评论按钮
+            if (isMobilePage()) {
+                debugLog('创建手机端评论按钮');
+                mobileCommentBtn = document.createElement('button');
+                mobileCommentBtn.type = 'button';
+                mobileCommentBtn.className = 'clm-mobile-comment-btn clm-comment-trigger';
+                mobileCommentBtn.innerHTML = ''
+                    + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+                    + 'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
+                    + 'style="width: 24px; height: 24px; margin-bottom: 2px;">'
+                    + '<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 '
+                    + '8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 '
+                    + '8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 '
+                    + '0 0 1 8 8v.5z"></path></svg>'
+                    + '<span style="font-size: 11px; font-weight: 500;">评论</span>';
+                mobileCommentBtn.title = '查看评论';
+                actions.appendChild(mobileCommentBtn);
+                debugLog('评论按钮已创建并添加到DOM');
+                
+                // 立即添加事件监听器
+                const closeComments = () => {
+                    debugLog('关闭评论面板');
+                    commentsPanel.classList.remove('clm-comments-expanded');
+                };
+                const openComments = () => {
+                    debugLog('打开评论面板');
+                    commentsPanel.classList.add('clm-comments-expanded');
+                };
+                
+                debugLog('为评论按钮添加click事件监听器');
+                mobileCommentBtn.addEventListener('click', (e) => {
+                    debugLog('========== 评论按钮被点击 ==========');
+                    debugLog('事件对象:', e);
+                    debugLog('目标元素:', e.target);
+                    
+                    // 避免点击事件冒泡到图片 viewer，导致误触翻页
+                    e.stopPropagation();
+                    e.preventDefault();
+                    
+                    const isExpanded = commentsPanel.classList.contains('clm-comments-expanded');
+                    if (isExpanded) {
+                        closeComments();
+                    } else {
+                        openComments();
+                    }
+                    
+                    debugLog('评论面板状态已切换，新状态:', commentsPanel.classList.contains('clm-comments-expanded'));
+                });
+                
+                if (mobileCommentCloseBtn) {
+                    debugLog('为评论关闭按钮添加click事件监听器');
+                    mobileCommentCloseBtn.addEventListener('click', (e) => {
+                        debugLog('评论关闭按钮被点击');
+                        e.stopPropagation();
+                        closeComments();
+                    });
+                }
+                
+                debugLog('评论按钮事件监听器添加完成');
+            }
+
+            const hint = document.createElement('div');
+            hint.className = 'clm-gallery-hint';
+            hint.textContent = '← → 切換 · Esc 關閉';
+
+            overlay.appendChild(closeBtn);
+            overlay.appendChild(layout);
+            viewer.appendChild(meta);
+            viewer.appendChild(hint);
+            viewer.appendChild(actions);
+
+            document.body.appendChild(overlay);
+
+            let items = [];
+            let currentIndex = 0;
+            let currentImageToken = 0;
+            let errorIndicatorTimer = null;
+            let currentDownloadInfo = null;
+            let currentSmallDownloadInfo = null;
+            let currentThreadKey = null;
+            let currentQualityTag = null;
+            let galleryDownloadUnsubscribe = null;
+            let imageScale = 1;
+            let imageTranslateX = 0;
+            let imageTranslateY = 0;
+            let isDragging = false;
+            let dragStartX = 0;
+            let dragStartY = 0;
+            let dragStartTranslateX = 0;
+            let dragStartTranslateY = 0;
+            const preloadImageCache = new Map();
+            let previousScrollY = null;
+
+            function formatContentWithTags(text) {
+                if (!text) return '';
+                
+                // 转义HTML特殊字符
+                const escapeHtml = (str) => {
+                    const div = document.createElement('div');
+                    div.textContent = str;
+                    return div.innerHTML;
+                };
+                
+                // 按行分割处理
+                const lines = text.split('\n');
+                const processedLines = lines.map(line => {
+                    // 检查是否包含类型相关字段（支持多种格式）
+                    // 匹配：类型、ジャンル（日文"类型"）
+                    const typeMatch = line.match(/^(.*?(?:类型|ジャンル)[：:])(.+)$/);
+                    if (typeMatch) {
+                        const prefix = typeMatch[1]; // "类型："之前的内容
+                        const typeContent = typeMatch[2]; // "类型："之后的内容
+                        
+                        // 按"｜"或空格分隔类型（优先使用"｜"，如果没有则用空格）
+                        let types = [];
+                        if (typeContent.includes('｜')) {
+                            types = typeContent.split('｜').map(t => t.trim()).filter(t => t);
+                        } else {
+                            // 按空格分隔，但保留多个连续空格的情况
+                            types = typeContent.split(/\s+/).map(t => t.trim()).filter(t => t);
+                        }
+                        if (types.length > 0) {
+                            // 将每个类型转换为标签，根据索引使用不同的颜色类
+                            const tags = types.map((type, index) => {
+                                // 根据索引选择颜色类（循环使用10种颜色）
+                                const colorClass = `clm-type-tag-color-${(index % 10) + 1}`;
+                                return `<span class="clm-type-tag ${colorClass}">${escapeHtml(type)}</span>`;
+                            }).join('');
+                            return escapeHtml(prefix) + tags;
+                        }
+                    }
+                    // 检查是否包含出演者相关字段（支持多种格式）
+                    // 匹配：出演者、出演、【出演女優】（日文格式）
+                    const performerMatch = line.match(/^(.*?(?:出演者|出演|【出演女優】)[：:])(.+)$/);
+                    if (performerMatch) {
+                        const prefix = performerMatch[1]; // "出演者："之前的内容
+                        const performerContent = performerMatch[2]; // "出演者："之后的内容
+                        
+                        // 按"｜"或空格分隔出演者（优先使用"｜"，如果没有则用空格）
+                        let performers = [];
+                        if (performerContent.includes('｜')) {
+                            performers = performerContent.split('｜').map(p => p.trim()).filter(p => p);
+                        } else {
+                            // 按空格分隔，但保留多个连续空格的情况
+                            performers = performerContent.split(/\s+/).map(p => p.trim()).filter(p => p);
+                        }
+                        if (performers.length > 0) {
+                            // 将每个出演者转换为标签，使用独立的类名 clm-performer-tag
+                            const tags = performers.map((performer, index) => {
+                                // 根据索引选择颜色类（循环使用10种颜色）
+                                const colorClass = `clm-performer-tag-color-${(index % 10) + 1}`;
+                                return `<span class="clm-performer-tag ${colorClass}">${escapeHtml(performer)}</span>`;
+                            }).join('');
+                            return escapeHtml(prefix) + tags;
+                        }
+                    }
+                    // 普通行：转义后再做 FC2-PPV 番号识别（例如 FC2-PPV-4806394）
+                    let escaped = escapeHtml(line);
+                    escaped = escaped.replace(/\b(FC2-PPV-[0-9]{5,8})\b/gi, (m, code) => {
+                        const upper = code.toUpperCase();
+                        return `<span class="clm-panel-entry-title-tag clm-title-tag-code clm-inline-code-tag" data-clm-code="${upper}">${upper}</span>`;
+                    });
+                    return escaped;
+                });
+                
+                // 用<br>连接所有行
+                let html = processedLines.join('<br>');
+
+                // 优化：连续的 FC2-PPV 番号标签不要强制每个占一整行
+                // 把「标签 + <br> + 标签」压缩成「标签 + 空格 + 标签」，一行可以多个
+                html = html.replace(
+                    /<\/span><br>(\s*<span class="clm-panel-entry-title-tag clm-title-tag-code clm-inline-code-tag"[^>]*>FC2-PPV-[0-9]{5,8}<\/span>)/gi,
+                    '</span> $1'
+                );
+
+                return html;
+            }
+
+            /**
+             * 将点评(postComms)作为嵌套回复追加到正文内容后面
+             * @param {HTMLElement} contentElement - 正文容器元素
+             * @param {Array<{user: string, content: string}>} postComms - 点评列表
+             */
+            function appendPostCommsToContent(contentElement, postComms) {
+                if (!contentElement || !postComms || !postComms.length) return;
+
+                const repliesContainer = document.createElement('div');
+                repliesContainer.className = 'clm-panel-entry-replies';
+
+                postComms.forEach(replyEntry => {
+                    const replyItem = document.createElement('div');
+                    replyItem.className = 'clm-panel-entry-reply';
+
+                    const replyUser = document.createElement('div');
+                    replyUser.className = 'clm-panel-entry-reply-user';
+                    replyUser.textContent = replyEntry.user || '点评';
+
+                    const replyContent = document.createElement('div');
+                    replyContent.className = 'clm-panel-entry-reply-content';
+                    replyContent.innerHTML = formatContentWithTags(replyEntry.content || '');
+
+                    replyItem.appendChild(replyUser);
+                    replyItem.appendChild(replyContent);
+                    repliesContainer.appendChild(replyItem);
+                });
+
+                contentElement.appendChild(repliesContainer);
+            }
+
+            function renderPanelEntries(container, entries, emptyText) {
+                container.innerHTML = '';
+                if (!entries || !entries.length) {
+                    const empty = document.createElement('div');
+                    empty.className = 'clm-panel-empty';
+                    empty.textContent = emptyText;
+                    container.appendChild(empty);
+                    return;
+                }
+                entries.forEach(entry => {
+                    const item = document.createElement('div');
+                    item.className = 'clm-panel-entry';
+                    const user = document.createElement('div');
+                    user.className = 'clm-panel-entry-user';
+                    user.textContent = entry.user || '匿名';
+                    const content = document.createElement('div');
+                    content.className = 'clm-panel-entry-content';
+                    // 使用 innerHTML 来支持标签和换行
+                    content.innerHTML = formatContentWithTags(entry.content || '（無內容）');
+                    
+                    // 为出演者标签和内联番号标签添加点击事件
+                    // 等待DOM更新后直接为每个标签绑定事件
+                    setTimeout(() => {
+                        content.querySelectorAll('.clm-performer-tag').forEach(tag => {
+                            // 设置样式，确保可以点击
+                            tag.style.pointerEvents = 'auto';
+                            tag.style.cursor = 'pointer';
+                            tag.style.position = 'relative';
+                            tag.style.zIndex = '10';
+                            
+                            // 添加点击事件（使用捕获阶段确保事件被处理）
+                            const clickHandler = (e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                e.stopImmediatePropagation(); // 阻止其他事件监听器
+                                const keyword = tag.textContent.trim();
+                                console.log('草榴Manager: 点击出演者标签:', keyword);
+                                if (keyword) {
+                                    // 通过全局变量访问searchDialog
+                                    const dialog = window.clmSearchDialog;
+                                    console.log('草榴Manager: searchDialog:', dialog);
+                                    if (dialog && typeof dialog.open === 'function') {
+                                        console.log('草榴Manager: 调用 dialog.open:', keyword);
+                                        dialog.open(keyword);
+                                    } else {
+                                        console.warn('草榴Manager: searchDialog 未初始化或 open 方法不存在', dialog);
+                                    }
+                                }
+                            };
+                            tag.addEventListener('click', clickHandler, true); // 使用捕获阶段确保事件被处理
+                            tag.addEventListener('mousedown', (e) => {
+                                e.stopPropagation();
+                            }, true);
+                        });
+
+                        // 为内联番号标签（如 FC2-PPV-xxxxxxx）添加点击搜索事件
+                        content.querySelectorAll('.clm-inline-code-tag').forEach(tag => {
+                            tag.style.pointerEvents = 'auto';
+                            tag.style.cursor = 'pointer';
+                            tag.style.position = 'relative';
+                            tag.style.zIndex = '10';
+
+                            const clickHandler = (e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                e.stopImmediatePropagation();
+                                const code = (tag.dataset.clmCode || tag.textContent || '').trim();
+                                console.log('草榴Manager: 点击番号标签:', code);
+                                if (!code) return;
+                                const dialog = window.clmSearchDialog;
+                                if (dialog && typeof dialog.open === 'function') {
+                                    dialog.open(code);
+                                } else {
+                                    console.warn('草榴Manager: searchDialog 未初始化或 open 方法不存在', dialog);
+                                }
+                            };
+                            tag.addEventListener('click', clickHandler, true);
+                            tag.addEventListener('mousedown', (e) => {
+                                e.stopPropagation();
+                            }, true);
+                        });
+                    }, 0);
+
+                    // 如果有 postComms 点评，作为嵌套回复显示在正文下面
+                    if (entry.postComms && entry.postComms.length > 0) {
+                        appendPostCommsToContent(content, entry.postComms);
+                    }
+                    
+                    // 如果有 tips 元素，添加到内容中
+                    if (entry.tips && entry.tips.length > 0) {
+                        const tipsContainer = document.createElement('div');
+                        tipsContainer.className = 'clm-panel-entry-tips';
+                        const scaleWrapper = document.createElement('div');
+                        scaleWrapper.className = 'clm-panel-entry-tips-scale-wrapper';
+                        entry.tips.forEach(tipHtml => {
+                            const tipDiv = document.createElement('div');
+                            tipDiv.innerHTML = tipHtml;
+                            scaleWrapper.appendChild(tipDiv);
+                        });
+                        tipsContainer.appendChild(scaleWrapper);
+                        content.appendChild(tipsContainer);
+                        
+                        // 等比例缩放tips以适应容器宽度
+                        setTimeout(() => {
+                            const containerWidth = tipsContainer.offsetWidth;
+                            const contentWidth = scaleWrapper.scrollWidth;
+                            if (contentWidth > containerWidth && containerWidth > 0) {
+                                const scale = containerWidth / contentWidth;
+                                scaleWrapper.style.transform = `scale(${scale})`;
+                                scaleWrapper.style.width = `${100 / scale}%`;
+                                // 调整容器高度以适应缩放后的内容
+                                requestAnimationFrame(() => {
+                                    const rect = scaleWrapper.getBoundingClientRect();
+                                    tipsContainer.style.height = `${rect.height}px`;
+                                });
+                            } else {
+                                tipsContainer.style.height = '';
+                            }
+                        }, 50);
+                    }
+                    
+                    item.appendChild(user);
+                    item.appendChild(content);
+                    container.appendChild(item);
+                });
+            }
+
+
+            function renderTopicPanel(topic) {
+                topicBody.innerHTML = '';
+                
+                // 电脑端在header显示"主題內容"，手机端隐藏header
+                topicHeader.textContent = '主題內容';
+                
+                console.log('草榴Manager: renderTopicPanel', topic);
+                
+                if (!topic) {
+                    const empty = document.createElement('div');
+                    empty.className = 'clm-panel-empty';
+                    empty.textContent = '暫無主題內容';
+                    topicBody.appendChild(empty);
+                    return;
+                }
+                
                 const item = document.createElement('div');
                 item.className = 'clm-panel-entry';
+                
+                // 显示标题和标签（在body中显示，电脑端和手机端都一样）
+                const titleContainer = document.createElement('div');
+                titleContainer.className = 'clm-panel-entry-title';
+                
+                if (topic.titleInfo && (topic.titleInfo.quality || topic.titleInfo.size || topic.titleInfo.code || topic.titleInfo.title)) {
+                    // 显示标签（清晰度、文件大小、番号）
+                    const tagsContainer = document.createElement('div');
+                    tagsContainer.className = 'clm-panel-entry-title-tags';
+                    let hasTags = false;
+                    
+                    // 清晰度标签
+                    if (topic.titleInfo.quality) {
+                        const qualityTag = document.createElement('span');
+                        qualityTag.className = 'clm-panel-entry-title-tag clm-title-tag-quality';
+                        qualityTag.textContent = topic.titleInfo.quality;
+                        tagsContainer.appendChild(qualityTag);
+                        hasTags = true;
+                    }
+                    
+                    // 文件大小标签
+                    if (topic.titleInfo.size) {
+                        const sizeTag = document.createElement('span');
+                        sizeTag.className = 'clm-panel-entry-title-tag clm-title-tag-size';
+                        sizeTag.textContent = topic.titleInfo.size;
+                        tagsContainer.appendChild(sizeTag);
+                        hasTags = true;
+                    }
+                    
+                    // 番号标签 - 嵌套结构：外层包裹完整番号，内层包裹前缀
+                    if (topic.titleInfo.code) {
+                        const codeTag = document.createElement('span');
+                        codeTag.className = 'clm-panel-entry-title-tag clm-title-tag-code';
+                        
+                        // 解析番号，分离前缀和后缀（如 UMSO-618 -> UMSO 和 -618）
+                        const code = topic.titleInfo.code;
+                        const separatorMatch = code.match(/^([A-Z0-9]+)([-_])([0-9]+)$/i);
+                        
+                        if (separatorMatch) {
+                            // 有分隔符的情况：创建嵌套结构
+                            const prefix = separatorMatch[1]; // UMSO
+                            const separator = separatorMatch[2]; // -
+                            const suffix = separatorMatch[3]; // 618
+                            
+                            const prefixTag = document.createElement('span');
+                            prefixTag.className = 'clm-title-tag-code-prefix';
+                            prefixTag.textContent = prefix;
+                            prefixTag.style.cursor = 'pointer';
+                            prefixTag.addEventListener('click', (e) => {
+                                e.stopPropagation();
+                                // 通过全局变量访问searchDialog
+                                const dialog = window.clmSearchDialog;
+                                if (dialog) {
+                                    dialog.open(prefix);
+                                }
+                            });
+                            
+                            // 创建后缀标签（可点击，搜索完整番号）
+                            const suffixTag = document.createElement('span');
+                            suffixTag.className = 'clm-title-tag-code-suffix';
+                            suffixTag.textContent = separator + suffix;
+                            suffixTag.style.cursor = 'pointer';
+                            suffixTag.addEventListener('click', (e) => {
+                                e.stopPropagation();
+                                // 通过全局变量访问searchDialog
+                                const dialog = window.clmSearchDialog;
+                                if (dialog && typeof dialog.open === 'function') {
+                                    dialog.open(code); // 搜索完整番号
+                                }
+                            });
+                            
+                            codeTag.appendChild(prefixTag);
+                            codeTag.appendChild(suffixTag);
+                        } else {
+                            // 没有分隔符的情况：直接显示完整番号，并绑定点击搜索
+                            codeTag.textContent = code;
+                            codeTag.style.cursor = 'pointer';
+                            codeTag.addEventListener('click', (e) => {
+                                e.stopPropagation();
+                                const dialog = window.clmSearchDialog;
+                                if (dialog && typeof dialog.open === 'function') {
+                                    dialog.open(code);
+                                }
+                            });
+                        }
+                        
+                        tagsContainer.appendChild(codeTag);
+                        hasTags = true;
+                    }
+                    
+                    if (hasTags) {
+                        titleContainer.appendChild(tagsContainer);
+                    }
+                    
+                    // 显示标题文本（片名）
+                    if (topic.titleInfo.title) {
+                        const titleText = document.createElement('div');
+                        titleText.className = 'clm-panel-entry-title-text';
+                        titleText.textContent = topic.titleInfo.title;
+                        titleContainer.appendChild(titleText);
+                    }
+                } else if (topic.rawTitle) {
+                    // 如果没有 titleInfo，显示原始标题
+                    const titleText = document.createElement('div');
+                    titleText.className = 'clm-panel-entry-title-text';
+                    titleText.textContent = topic.rawTitle;
+                    titleContainer.appendChild(titleText);
+                }
+                
+                // 只有当有标题内容时才添加到 item
+                if (titleContainer.children.length > 0) {
+                    item.appendChild(titleContainer);
+                }
+                
+                // 显示用户
                 const user = document.createElement('div');
                 user.className = 'clm-panel-entry-user';
-                user.textContent = entry.user || '匿名';
+                user.textContent = topic.user || '匿名';
+                item.appendChild(user);
+                
+                // 显示内容
                 const content = document.createElement('div');
                 content.className = 'clm-panel-entry-content';
-                // 使用 innerHTML 来支持标签和换行
-                content.innerHTML = formatContentWithTags(entry.content || '（無內容）');
+                content.innerHTML = formatContentWithTags(topic.content || '（無內容）');
+
+                // 如果楼主帖子本身也有点评(postComms)，在主题内容下方一并展示
+                if (topic.postComms && topic.postComms.length > 0) {
+                    appendPostCommsToContent(content, topic.postComms);
+                }
                 
                 // 为出演者标签添加点击事件（只绑定到出演者标签，不包括类型标签）
                 // 等待DOM更新后直接为每个出演者标签绑定事件
@@ -3990,12 +4509,12 @@
                 }, 0);
                 
                 // 如果有 tips 元素，添加到内容中
-                if (entry.tips && entry.tips.length > 0) {
+                if (topic.tips && topic.tips.length > 0) {
                     const tipsContainer = document.createElement('div');
                     tipsContainer.className = 'clm-panel-entry-tips';
                     const scaleWrapper = document.createElement('div');
                     scaleWrapper.className = 'clm-panel-entry-tips-scale-wrapper';
-                    entry.tips.forEach(tipHtml => {
+                    topic.tips.forEach(tipHtml => {
                         const tipDiv = document.createElement('div');
                         tipDiv.innerHTML = tipHtml;
                         scaleWrapper.appendChild(tipDiv);
@@ -4022,5572 +4541,5580 @@
                     }, 50);
                 }
                 
-                item.appendChild(user);
                 item.appendChild(content);
-                container.appendChild(item);
-            });
-        }
+                topicBody.appendChild(item);
+            }
 
+            function renderCommentsPanel(comments) {
+                renderPanelEntries(commentsBody, comments || [], '暫無評論內容');
+            }
 
-        function renderTopicPanel(topic) {
-            topicBody.innerHTML = '';
-            
-            // 电脑端在header显示"主題內容"，手机端隐藏header
-            topicHeader.textContent = '主題內容';
-            
-            console.log('草榴Manager: renderTopicPanel', topic);
-            
-            if (!topic) {
-                const empty = document.createElement('div');
-                empty.className = 'clm-panel-empty';
-                empty.textContent = '暫無主題內容';
-                topicBody.appendChild(empty);
-                return;
-            }
-            
-            const item = document.createElement('div');
-            item.className = 'clm-panel-entry';
-            
-            // 显示标题和标签（在body中显示，电脑端和手机端都一样）
-            const titleContainer = document.createElement('div');
-            titleContainer.className = 'clm-panel-entry-title';
-            
-            if (topic.titleInfo && (topic.titleInfo.quality || topic.titleInfo.size || topic.titleInfo.code || topic.titleInfo.title)) {
-                // 显示标签（清晰度、文件大小、番号）
-                const tagsContainer = document.createElement('div');
-                tagsContainer.className = 'clm-panel-entry-title-tags';
-                let hasTags = false;
-                
-                // 清晰度标签
-                if (topic.titleInfo.quality) {
-                    const qualityTag = document.createElement('span');
-                    qualityTag.className = 'clm-panel-entry-title-tag clm-title-tag-quality';
-                    qualityTag.textContent = topic.titleInfo.quality;
-                    tagsContainer.appendChild(qualityTag);
-                    hasTags = true;
+            function renderViewerAds(ads) {
+                if (!ads || !ads.length) {
+                    viewerAdsTop.style.display = 'none';
+                    viewerAdsBottom.style.display = 'none';
+                    return;
+                }
+
+                // 调试：输出要渲染的广告
+                console.log('clm 渲染广告:', ads.length, ads);
+
+                // 如果有两个或更多广告，第一个显示在上方，第二个显示在下方
+                // 如果只有一个广告，显示在上方
+                if (ads.length >= 2) {
+                    viewerAdsTopContainer.innerHTML = ads[0];
+                    viewerAdsTop.style.display = 'flex';
+                    viewerAdsBottomContainer.innerHTML = ads[1];
+                    viewerAdsBottom.style.display = 'flex';
+                } else if (ads.length === 1) {
+                    viewerAdsTopContainer.innerHTML = ads[0];
+                    viewerAdsTop.style.display = 'flex';
+                    viewerAdsBottom.style.display = 'none';
+                } else {
+                    viewerAdsTop.style.display = 'none';
+                    viewerAdsBottom.style.display = 'none';
                 }
                 
-                // 文件大小标签
-                if (topic.titleInfo.size) {
-                    const sizeTag = document.createElement('span');
-                    sizeTag.className = 'clm-panel-entry-title-tag clm-title-tag-size';
-                    sizeTag.textContent = topic.titleInfo.size;
-                    tagsContainer.appendChild(sizeTag);
-                    hasTags = true;
-                }
-                
-                // 番号标签 - 嵌套结构：外层包裹完整番号，内层包裹前缀
-                if (topic.titleInfo.code) {
-                    const codeTag = document.createElement('span');
-                    codeTag.className = 'clm-panel-entry-title-tag clm-title-tag-code';
-                    
-                    // 解析番号，分离前缀和后缀（如 UMSO-618 -> UMSO 和 -618）
-                    const code = topic.titleInfo.code;
-                    const separatorMatch = code.match(/^([A-Z0-9]+)([-_])([0-9]+)$/i);
-                    
-                    if (separatorMatch) {
-                        // 有分隔符的情况：创建嵌套结构
-                        const prefix = separatorMatch[1]; // UMSO
-                        const separator = separatorMatch[2]; // -
-                        const suffix = separatorMatch[3]; // 618
-                        
-                        const prefixTag = document.createElement('span');
-                        prefixTag.className = 'clm-title-tag-code-prefix';
-                        prefixTag.textContent = prefix;
-                        prefixTag.style.cursor = 'pointer';
-                        prefixTag.addEventListener('click', (e) => {
-                            e.stopPropagation();
-                            // 通过全局变量访问searchDialog
-                            const dialog = window.clmSearchDialog;
-                            if (dialog) {
-                                dialog.open(prefix);
-                            }
-                        });
-                        
-                        // 创建后缀标签（可点击，搜索完整番号）
-                        const suffixTag = document.createElement('span');
-                        suffixTag.className = 'clm-title-tag-code-suffix';
-                        suffixTag.textContent = separator + suffix;
-                        suffixTag.style.cursor = 'pointer';
-                        suffixTag.addEventListener('click', (e) => {
-                            e.stopPropagation();
-                            // 通过全局变量访问searchDialog
-                            const dialog = window.clmSearchDialog;
-                            if (dialog && typeof dialog.open === 'function') {
-                                dialog.open(code); // 搜索完整番号
-                            }
-                        });
-                        
-                        codeTag.appendChild(prefixTag);
-                        codeTag.appendChild(suffixTag);
-                    } else {
-                        // 没有分隔符的情况：直接显示完整番号
-                        codeTag.textContent = code;
-                    }
-                    
-                    tagsContainer.appendChild(codeTag);
-                    hasTags = true;
-                }
-                
-                if (hasTags) {
-                    titleContainer.appendChild(tagsContainer);
-                }
-                
-                // 显示标题文本（片名）
-                if (topic.titleInfo.title) {
-                    const titleText = document.createElement('div');
-                    titleText.className = 'clm-panel-entry-title-text';
-                    titleText.textContent = topic.titleInfo.title;
-                    titleContainer.appendChild(titleText);
-                }
-            } else if (topic.rawTitle) {
-                // 如果没有 titleInfo，显示原始标题
-                const titleText = document.createElement('div');
-                titleText.className = 'clm-panel-entry-title-text';
-                titleText.textContent = topic.rawTitle;
-                titleContainer.appendChild(titleText);
-            }
-            
-            // 只有当有标题内容时才添加到 item
-            if (titleContainer.children.length > 0) {
-                item.appendChild(titleContainer);
-            }
-            
-            // 显示用户
-            const user = document.createElement('div');
-            user.className = 'clm-panel-entry-user';
-            user.textContent = topic.user || '匿名';
-            item.appendChild(user);
-            
-            // 显示内容
-            const content = document.createElement('div');
-            content.className = 'clm-panel-entry-content';
-            content.innerHTML = formatContentWithTags(topic.content || '（無內容）');
-            
-            // 为出演者标签添加点击事件（只绑定到出演者标签，不包括类型标签）
-            // 等待DOM更新后直接为每个出演者标签绑定事件
-            setTimeout(() => {
-                content.querySelectorAll('.clm-performer-tag').forEach(tag => {
-                    // 设置样式，确保可以点击
-                    tag.style.pointerEvents = 'auto';
-                    tag.style.cursor = 'pointer';
-                    tag.style.position = 'relative';
-                    tag.style.zIndex = '10';
-                    
-                    // 添加点击事件（使用捕获阶段确保事件被处理）
-                    const clickHandler = (e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        e.stopImmediatePropagation(); // 阻止其他事件监听器
-                        const keyword = tag.textContent.trim();
-                        console.log('草榴Manager: 点击出演者标签:', keyword);
-                        if (keyword) {
-                            // 通过全局变量访问searchDialog
-                            const dialog = window.clmSearchDialog;
-                            console.log('草榴Manager: searchDialog:', dialog);
-                            if (dialog && typeof dialog.open === 'function') {
-                                console.log('草榴Manager: 调用 dialog.open:', keyword);
-                                dialog.open(keyword);
-                            } else {
-                                console.warn('草榴Manager: searchDialog 未初始化或 open 方法不存在', dialog);
-                            }
-                        }
-                    };
-                    tag.addEventListener('click', clickHandler, true); // 使用捕获阶段确保事件被处理
-                    tag.addEventListener('mousedown', (e) => {
-                        e.stopPropagation();
-                    }, true);
-                });
-            }, 0);
-            
-            // 如果有 tips 元素，添加到内容中
-            if (topic.tips && topic.tips.length > 0) {
-                const tipsContainer = document.createElement('div');
-                tipsContainer.className = 'clm-panel-entry-tips';
-                const scaleWrapper = document.createElement('div');
-                scaleWrapper.className = 'clm-panel-entry-tips-scale-wrapper';
-                topic.tips.forEach(tipHtml => {
-                    const tipDiv = document.createElement('div');
-                    tipDiv.innerHTML = tipHtml;
-                    scaleWrapper.appendChild(tipDiv);
-                });
-                tipsContainer.appendChild(scaleWrapper);
-                content.appendChild(tipsContainer);
-                
-                // 等比例缩放tips以适应容器宽度
+                // 调试：检查渲染后的元素
                 setTimeout(() => {
-                    const containerWidth = tipsContainer.offsetWidth;
-                    const contentWidth = scaleWrapper.scrollWidth;
-                    if (contentWidth > containerWidth && containerWidth > 0) {
-                        const scale = containerWidth / contentWidth;
-                        scaleWrapper.style.transform = `scale(${scale})`;
-                        scaleWrapper.style.width = `${100 / scale}%`;
-                        // 调整容器高度以适应缩放后的内容
-                        requestAnimationFrame(() => {
-                            const rect = scaleWrapper.getBoundingClientRect();
-                            tipsContainer.style.height = `${rect.height}px`;
-                        });
-                    } else {
-                        tipsContainer.style.height = '';
-                    }
-                }, 50);
-            }
-            
-            item.appendChild(content);
-            topicBody.appendChild(item);
-        }
-
-        function renderCommentsPanel(comments) {
-            renderPanelEntries(commentsBody, comments || [], '暫無評論內容');
-        }
-
-        function renderViewerAds(ads) {
-            if (!ads || !ads.length) {
-                viewerAdsTop.style.display = 'none';
-                viewerAdsBottom.style.display = 'none';
-                return;
+                    const topFtad = viewerAdsTopContainer.querySelector('.ftad-ct');
+                    const bottomFtad = viewerAdsBottomContainer.querySelector('.ftad-ct');
+                    console.log('clm 渲染后检查:', {
+                        topVisible: viewerAdsTop.style.display,
+                        topHasFtad: !!topFtad,
+                        bottomVisible: viewerAdsBottom.style.display,
+                        bottomHasFtad: !!bottomFtad
+                    });
+                }, 100);
             }
 
-            // 调试：输出要渲染的广告
-            console.log('clm 渲染广告:', ads.length, ads);
-
-            // 如果有两个或更多广告，第一个显示在上方，第二个显示在下方
-            // 如果只有一个广告，显示在上方
-            if (ads.length >= 2) {
-                viewerAdsTopContainer.innerHTML = ads[0];
-                viewerAdsTop.style.display = 'flex';
-                viewerAdsBottomContainer.innerHTML = ads[1];
-                viewerAdsBottom.style.display = 'flex';
-            } else if (ads.length === 1) {
-                viewerAdsTopContainer.innerHTML = ads[0];
-                viewerAdsTop.style.display = 'flex';
-                viewerAdsBottom.style.display = 'none';
-            } else {
-                viewerAdsTop.style.display = 'none';
-                viewerAdsBottom.style.display = 'none';
+            function updateGalleryQuality(tag) {
+                currentQualityTag = tag || null;
+                updateQualityBadgeElement(galleryQualityBadge, currentQualityTag);
             }
-            
-            // 调试：检查渲染后的元素
-            setTimeout(() => {
-                const topFtad = viewerAdsTopContainer.querySelector('.ftad-ct');
-                const bottomFtad = viewerAdsBottomContainer.querySelector('.ftad-ct');
-                console.log('clm 渲染后检查:', {
-                    topVisible: viewerAdsTop.style.display,
-                    topHasFtad: !!topFtad,
-                    bottomVisible: viewerAdsBottom.style.display,
-                    bottomHasFtad: !!bottomFtad
-                });
-            }, 100);
-        }
 
-        function updateGalleryQuality(tag) {
-            currentQualityTag = tag || null;
-            updateQualityBadgeElement(galleryQualityBadge, currentQualityTag);
-        }
-
-        function beginImageLoad(message) {
-            if (errorIndicatorTimer) {
-                clearTimeout(errorIndicatorTimer);
-                errorIndicatorTimer = null;
+            function beginImageLoad(message) {
+                if (errorIndicatorTimer) {
+                    clearTimeout(errorIndicatorTimer);
+                    errorIndicatorTimer = null;
+                }
+                loadingIndicator.textContent = message || '正在載入…';
+                viewer.classList.add('clm-viewer-loading');
+                updateGalleryQuality(currentQualityTag);
             }
-            loadingIndicator.textContent = message || '正在載入…';
-            viewer.classList.add('clm-viewer-loading');
-            updateGalleryQuality(currentQualityTag);
-        }
 
-        function finishImageLoad() {
-            if (errorIndicatorTimer) {
-                clearTimeout(errorIndicatorTimer);
-                errorIndicatorTimer = null;
-            }
-            viewer.classList.remove('clm-viewer-loading');
-            loadingIndicator.textContent = '正在載入…';
-        }
-
-        function handleImageError() {
-            if (errorIndicatorTimer) {
-                clearTimeout(errorIndicatorTimer);
-            }
-            loadingIndicator.textContent = '載入失敗，請稍後重試';
-            viewer.classList.add('clm-viewer-loading');
-            errorIndicatorTimer = setTimeout(() => {
+            function finishImageLoad() {
+                if (errorIndicatorTimer) {
+                    clearTimeout(errorIndicatorTimer);
+                    errorIndicatorTimer = null;
+                }
                 viewer.classList.remove('clm-viewer-loading');
                 loadingIndicator.textContent = '正在載入…';
-                errorIndicatorTimer = null;
-            }, 1600);
-        }
-
-        function updateMeta() {
-            if (!items.length) {
-                meta.textContent = '';
-                return;
             }
-            meta.textContent = `${currentIndex + 1} / ${items.length}　${items[currentIndex]?.label || ''}`;
-        }
 
-        function cleanupGalleryDownloadWatcher() {
-            if (galleryDownloadUnsubscribe) {
-                galleryDownloadUnsubscribe();
-                galleryDownloadUnsubscribe = null;
-            }
-        }
-
-        function preloadImage(index) {
-            if (!items.length) return;
-            const item = items[index];
-            if (!item) return;
-            const src = item.url;
-            if (!src || preloadImageCache.has(src)) return;
-            const img = new Image();
-            img.src = src;
-            preloadImageCache.set(src, img);
-        }
-
-        function refreshOverlayDownloadButton() {
-            const hasDownload = currentThreadKey && currentDownloadInfo && currentDownloadInfo.pageUrl;
-            const isMobile = isMobilePage();
-            
-            if (!hasDownload) {
-                downloadBtn.classList.remove('clm-downloaded');
-                downloadBtn.disabled = true;
-                if (isMobile) {
-                    downloadBtn.innerHTML = ''
-                        + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
-                        + 'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
-                        + 'style="width: 24px; height: 24px; margin-bottom: 2px;">'
-                        + '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>'
-                        + '<polyline points="7 10 12 15 17 10"></polyline>'
-                        + '<line x1="12" y1="15" x2="12" y2="3"></line>'
-                        + '</svg>'
-                        + '<span style="font-size: 11px; font-weight: 500;">暂无</span>';
-                } else {
-                    downloadBtn.textContent = '暫無可下載資源';
+            function handleImageError() {
+                if (errorIndicatorTimer) {
+                    clearTimeout(errorIndicatorTimer);
                 }
-                delete downloadBtn.dataset.clmThreadKey;
-                downloadBtn.__clmRefreshDownloadState = null;
-                return;
+                loadingIndicator.textContent = '載入失敗，請稍後重試';
+                viewer.classList.add('clm-viewer-loading');
+                errorIndicatorTimer = setTimeout(() => {
+                    viewer.classList.remove('clm-viewer-loading');
+                    loadingIndicator.textContent = '正在載入…';
+                    errorIndicatorTimer = null;
+                }, 1600);
             }
-            downloadBtn.dataset.clmThreadKey = currentThreadKey;
-            downloadBtn.__clmRefreshDownloadState = refreshOverlayDownloadButton;
-            const downloaded = hasDownloadedThread(currentThreadKey);
-            downloadBtn.classList.toggle('clm-downloaded', downloaded);
-            downloadBtn.disabled = false;
-            
-            if (isMobile) {
-                downloadBtn.innerHTML = ''
-                    + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
-                    + 'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
-                    + 'style="width: 24px; height: 24px; margin-bottom: 2px;">'
-                    + '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>'
-                    + '<polyline points="7 10 12 15 17 10"></polyline>'
-                    + '<line x1="12" y1="15" x2="12" y2="3"></line>'
-                    + '</svg>'
-                    + '<span style="font-size: 11px; font-weight: 500;">' + (downloaded ? '已下载' : '下载') + '</span>';
-            } else {
-                downloadBtn.textContent = downloaded ? '已下載' : '打開下載頁面';
+
+            function updateMeta() {
+                if (!items.length) {
+                    meta.textContent = '';
+                    return;
+                }
+                meta.textContent = `${currentIndex + 1} / ${items.length}　${items[currentIndex]?.label || ''}`;
             }
-        }
 
-        function updateDownloadAction(downloadInfo) {
-            currentDownloadInfo = downloadInfo || null;
-            cleanupGalleryDownloadWatcher();
-            if (currentThreadKey && currentDownloadInfo && currentDownloadInfo.pageUrl) {
-                galleryDownloadUnsubscribe = subscribeDownloadStatus(currentThreadKey, () => refreshOverlayDownloadButton());
+            function cleanupGalleryDownloadWatcher() {
+                if (galleryDownloadUnsubscribe) {
+                    galleryDownloadUnsubscribe();
+                    galleryDownloadUnsubscribe = null;
+                }
             }
-            refreshOverlayDownloadButton();
-        }
 
-        function handleDownloadClick() {
-            if (!downloadBtn.dataset.clmThreadKey) return;
-            handleThreadDownloadButtonClick(downloadBtn);
-        }
+            function preloadImage(index) {
+                if (!items.length) return;
+                const item = items[index];
+                if (!item) return;
+                const src = item.url;
+                if (!src || preloadImageCache.has(src)) return;
+                const img = new Image();
+                img.src = src;
+                preloadImageCache.set(src, img);
+            }
 
-        function resetImageTransform() {
-            imageScale = 1;
-            imageTranslateX = 0;
-            imageTranslateY = 0;
-            applyImageTransform();
-        }
+            function refreshOverlayDownloadButton() {
+                const hasDownload = currentThreadKey && currentDownloadInfo && currentDownloadInfo.pageUrl;
+                const isMobile = isMobilePage();
+                
+                if (!hasDownload) {
+                    downloadBtn.classList.remove('clm-downloaded');
+                    downloadBtn.disabled = true;
+                    if (isMobile) {
+                        downloadBtn.innerHTML = ''
+                            + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+                            + 'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
+                            + 'style="width: 24px; height: 24px; margin-bottom: 2px;">'
+                            + '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>'
+                            + '<polyline points="7 10 12 15 17 10"></polyline>'
+                            + '<line x1="12" y1="15" x2="12" y2="3"></line>'
+                            + '</svg>'
+                            + '<span style="font-size: 11px; font-weight: 500;">暂无</span>';
+                    } else {
+                        downloadBtn.textContent = '暫無可下載資源';
+                    }
+                    delete downloadBtn.dataset.clmThreadKey;
+                    downloadBtn.__clmRefreshDownloadState = null;
+                } else {
+                    downloadBtn.dataset.clmThreadKey = currentThreadKey;
+                    downloadBtn.__clmRefreshDownloadState = refreshOverlayDownloadButton;
+                    const downloaded = hasDownloadedThread(currentThreadKey);
+                    downloadBtn.classList.toggle('clm-downloaded', downloaded);
+                    downloadBtn.disabled = false;
+                    
+                    if (isMobile) {
+                        downloadBtn.innerHTML = ''
+                            + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+                            + 'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
+                            + 'style="width: 24px; height: 24px; margin-bottom: 2px;">'
+                            + '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>'
+                            + '<polyline points="7 10 12 15 17 10"></polyline>'
+                            + '<line x1="12" y1="15" x2="12" y2="3"></line>'
+                            + '</svg>'
+                            + '<span style="font-size: 11px; font-weight: 500;">' + (downloaded ? '已下载' : '下载') + '</span>';
+                    } else {
+                        downloadBtn.textContent = downloaded ? '已下載' : '打開下載頁面';
+                    }
+                }
+            }
 
-        function applyImageTransform() {
-            viewerImg.style.transform = `translate(${imageTranslateX}px, ${imageTranslateY}px) scale(${imageScale})`;
-            viewerImg.classList.toggle('clm-zoomed', imageScale > 1);
-        }
+            function refreshOverlaySmallDownloadButton() {
+                const hasSmallDownload = currentThreadKey && currentSmallDownloadInfo && currentSmallDownloadInfo.pageUrl;
+                const isMobile = isMobilePage();
 
-        function zoomImage(delta, clientX, clientY) {
-            const rect = viewerImg.getBoundingClientRect();
-            const imgCenterX = rect.left + rect.width / 2;
-            const imgCenterY = rect.top + rect.height / 2;
-            
-            // 计算鼠标相对于图片中心的位置
-            const mouseX = clientX - imgCenterX;
-            const mouseY = clientY - imgCenterY;
-            
-            // 缩放因子：向下滚动（delta > 0）缩小，向上滚动（delta < 0）放大
-            const zoomFactor = delta > 0 ? 0.9 : 1.1;
-            const newScale = Math.max(1, Math.min(5, imageScale * zoomFactor));
-            
-            if (newScale === imageScale) return;
-            
-            // 计算缩放后的偏移，使鼠标位置保持相对不变
-            const scaleChange = newScale / imageScale;
-            imageTranslateX = mouseX - (mouseX - imageTranslateX) * scaleChange;
-            imageTranslateY = mouseY - (mouseY - imageTranslateY) * scaleChange;
-            imageScale = newScale;
-            
-            applyImageTransform();
-        }
+                if (!hasSmallDownload) {
+                    smallDownloadBtn.classList.remove('clm-downloaded');
+                    smallDownloadBtn.disabled = true;
+                    if (isMobile) {
+                        smallDownloadBtn.innerHTML = ''
+                            + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+                            + 'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
+                            + 'style="width: 24px; height: 24px; margin-bottom: 2px;">'
+                            + '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>'
+                            + '<polyline points="7 10 12 15 17 10"></polyline>'
+                            + '<line x1="12" y1="15" x2="12" y2="3"></line>'
+                            + '</svg>'
+                            + '<span style="font-size: 11px; font-weight: 500;">小格式</span>';
+                    } else {
+                        smallDownloadBtn.textContent = '下載小格式版';
+                    }
+                    delete smallDownloadBtn.dataset.clmThreadKey;
+                    smallDownloadBtn.__clmRefreshDownloadState = null;
+                } else {
+                    smallDownloadBtn.dataset.clmThreadKey = currentThreadKey;
+                    smallDownloadBtn.__clmRefreshDownloadState = refreshOverlaySmallDownloadButton;
+                    const downloaded = hasDownloadedThread(currentThreadKey);
+                    smallDownloadBtn.classList.toggle('clm-downloaded', downloaded);
+                    smallDownloadBtn.disabled = false;
 
-        function showImage(index) {
-            const item = items[index];
-            if (!item) return;
-            const token = ++currentImageToken;
-            resetImageTransform();
-            
-            // 添加淡出动画
-            viewerImg.style.opacity = '0';
-            viewerImg.style.transition = 'opacity 0.2s ease';
-            
-            beginImageLoad();
-            const targetSrc = item.url;
-            viewerImg.onload = () => {
-                if (token !== currentImageToken) return;
-                finishImageLoad();
+                    if (isMobile) {
+                        smallDownloadBtn.innerHTML = ''
+                            + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+                            + 'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
+                            + 'style="width: 24px; height: 24px; margin-bottom: 2px;">'
+                            + '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>'
+                            + '<polyline points="7 10 12 15 17 10"></polyline>'
+                            + '<line x1="12" y1="15" x2="12" y2="3"></line>'
+                            + '</svg>'
+                            + '<span style="font-size: 11px; font-weight: 500;">' + (downloaded ? '已下载' : '小格式') + '</span>';
+                    } else {
+                        smallDownloadBtn.textContent = downloaded ? '已下載(小格式)' : '下載小格式版';
+                    }
+                }
+            }
+
+            function updateDownloadAction(downloadInfo, smallDownloadInfo) {
+                currentDownloadInfo = downloadInfo || null;
+                currentSmallDownloadInfo = smallDownloadInfo || null;
+                cleanupGalleryDownloadWatcher();
+                if (currentThreadKey && ((currentDownloadInfo && currentDownloadInfo.pageUrl) || (currentSmallDownloadInfo && currentSmallDownloadInfo.pageUrl))) {
+                    galleryDownloadUnsubscribe = subscribeDownloadStatus(currentThreadKey, () => {
+                        refreshOverlayDownloadButton();
+                        refreshOverlaySmallDownloadButton();
+                    });
+                }
+                refreshOverlayDownloadButton();
+                refreshOverlaySmallDownloadButton();
+            }
+
+            function handleDownloadClick() {
+                if (!downloadBtn.dataset.clmThreadKey) return;
+                handleThreadDownloadButtonClick(downloadBtn);
+            }
+
+            function handleSmallDownloadClick() {
+                if (!smallDownloadBtn.dataset.clmThreadKey) return;
+                handleThreadSmallDownloadButtonClick(smallDownloadBtn, currentSmallDownloadInfo);
+            }
+
+            function resetImageTransform() {
+                imageScale = 1;
+                imageTranslateX = 0;
+                imageTranslateY = 0;
+                applyImageTransform();
+            }
+
+            function applyImageTransform() {
+                viewerImg.style.transform = `translate(${imageTranslateX}px, ${imageTranslateY}px) scale(${imageScale})`;
+                viewerImg.classList.toggle('clm-zoomed', imageScale > 1);
+            }
+
+            function zoomImage(delta, clientX, clientY) {
+                const rect = viewerImg.getBoundingClientRect();
+                const imgCenterX = rect.left + rect.width / 2;
+                const imgCenterY = rect.top + rect.height / 2;
+                
+                // 计算鼠标相对于图片中心的位置
+                const mouseX = clientX - imgCenterX;
+                const mouseY = clientY - imgCenterY;
+                
+                // 缩放因子：向下滚动（delta > 0）缩小，向上滚动（delta < 0）放大
+                const zoomFactor = delta > 0 ? 0.9 : 1.1;
+                const newScale = Math.max(1, Math.min(5, imageScale * zoomFactor));
+                
+                if (newScale === imageScale) return;
+                
+                // 计算缩放后的偏移，使鼠标位置保持相对不变
+                const scaleChange = newScale / imageScale;
+                imageTranslateX = mouseX - (mouseX - imageTranslateX) * scaleChange;
+                imageTranslateY = mouseY - (mouseY - imageTranslateY) * scaleChange;
+                imageScale = newScale;
+                
+                applyImageTransform();
+            }
+
+            function showImage(index) {
+                const item = items[index];
+                if (!item) return;
+                const token = ++currentImageToken;
                 resetImageTransform();
-                // 淡入动画
-                requestAnimationFrame(() => {
-                    viewerImg.style.opacity = '1';
-                });
-            };
-            viewerImg.onerror = () => {
-                if (token !== currentImageToken) return;
-                handleImageError();
-                viewerImg.style.opacity = '1';
-            };
-            
-            // 延迟加载新图片，等待淡出完成
-            setTimeout(() => {
-                if (token !== currentImageToken) return;
-                viewerImg.removeAttribute('src');
-                requestAnimationFrame(() => {
+                
+                // 添加淡出动画
+                viewerImg.style.opacity = '0';
+                viewerImg.style.transition = 'opacity 0.2s ease';
+                
+                beginImageLoad();
+                const targetSrc = item.url;
+                viewerImg.onload = () => {
                     if (token !== currentImageToken) return;
-                    viewerImg.src = targetSrc;
-                    viewerImg.alt = item.label || '';
-                });
-            }, 150);
-            
-            currentIndex = index;
-            updateMeta();
+                    finishImageLoad();
+                    resetImageTransform();
+                    // 淡入动画
+                    requestAnimationFrame(() => {
+                        viewerImg.style.opacity = '1';
+                    });
+                };
+                viewerImg.onerror = () => {
+                    if (token !== currentImageToken) return;
+                    handleImageError();
+                    viewerImg.style.opacity = '1';
+                };
+                
+                // 延迟加载新图片，等待淡出完成
+                setTimeout(() => {
+                    if (token !== currentImageToken) return;
+                    viewerImg.removeAttribute('src');
+                    requestAnimationFrame(() => {
+                        if (token !== currentImageToken) return;
+                        viewerImg.src = targetSrc;
+                        viewerImg.alt = item.label || '';
+                    });
+                }, 150);
+                
+                currentIndex = index;
+                updateMeta();
 
-            if (items.length > 1) {
-                const nextIndex = (index + 1) % items.length;
-                if (nextIndex !== index) {
-                    preloadImage(nextIndex);
+                if (items.length > 1) {
+                    const nextIndex = (index + 1) % items.length;
+                    if (nextIndex !== index) {
+                        preloadImage(nextIndex);
+                    }
                 }
             }
-        }
 
-        function showNext() {
-            debugLog('========== showNext被调用 ==========');
-            debugLog('items.length:', items.length);
-            debugLog('currentIndex:', currentIndex);
-            if (items.length <= 1) {
-                debugLog('只有一张图片，不翻页');
-                return;
+            function showNext() {
+                debugLog('========== showNext被调用 ==========');
+                debugLog('items.length:', items.length);
+                debugLog('currentIndex:', currentIndex);
+                if (items.length <= 1) {
+                    debugLog('只有一张图片，不翻页');
+                    return;
+                }
+                const nextIndex = (currentIndex + 1) % items.length;
+                debugLog('nextIndex:', nextIndex);
+                showImage(nextIndex);
             }
-            const nextIndex = (currentIndex + 1) % items.length;
-            debugLog('nextIndex:', nextIndex);
-            showImage(nextIndex);
-        }
 
-        function showPrev() {
-            debugLog('========== showPrev被调用 ==========');
-            debugLog('items.length:', items.length);
-            debugLog('currentIndex:', currentIndex);
-            if (items.length <= 1) {
-                debugLog('只有一张图片，不翻页');
-                return;
+            function showPrev() {
+                debugLog('========== showPrev被调用 ==========');
+                debugLog('items.length:', items.length);
+                debugLog('currentIndex:', currentIndex);
+                if (items.length <= 1) {
+                    debugLog('只有一张图片，不翻页');
+                    return;
+                }
+                const prevIndex = (currentIndex - 1 + items.length) % items.length;
+                debugLog('prevIndex:', prevIndex);
+                showImage(prevIndex);
             }
-            const prevIndex = (currentIndex - 1 + items.length) % items.length;
-            debugLog('prevIndex:', prevIndex);
-            showImage(prevIndex);
-        }
 
-        function closeOverlay() {
-            overlay.classList.remove('clm-active');
-            // 移除手机端特殊class
-            document.body.classList.remove('clm-mobile-gallery');
-            document.documentElement.classList.remove('clm-mobile-gallery-root');
-            viewerImg.removeAttribute('src');
-            resetImageTransform();
-            currentThreadKey = null;
-            updateDownloadAction(null);
-            updateGalleryQuality(null);
-            clearGallerySourceHighlight();
-            preloadImageCache.clear();
-            closeInlineDownloadWindowIfOpen();
-        }
+            function closeOverlay() {
+                overlay.classList.remove('clm-active');
+                // 移除手机端特殊class
+                document.body.classList.remove('clm-mobile-gallery');
+                document.documentElement.classList.remove('clm-mobile-gallery-root');
 
-        function openLoadingState(message = '正在載入畫廊…') {
-            overlay.classList.add('clm-active');
-            // 手机端添加特殊class以应用抖音风格样式：
-            // 只要是手机版页面，或视口宽度较窄（<=768px），都按手机画廊布局处理
-            const isMobileLayout = isMobilePage() || window.innerWidth <= 768;
-            if (isMobileLayout) {
-                document.body.classList.add('clm-mobile-gallery');
-                document.documentElement.classList.add('clm-mobile-gallery-root');
+                // 确保手机端评论面板在关闭画廊时一并关闭
+                if (commentsPanel) {
+                    commentsPanel.classList.remove('clm-comments-expanded');
+                }
+
+                viewerImg.removeAttribute('src');
+                resetImageTransform();
+                currentThreadKey = null;
+                updateDownloadAction(null, null);
+                updateGalleryQuality(null);
+                clearGallerySourceHighlight();
+                preloadImageCache.clear();
+                closeInlineDownloadWindowIfOpen();
+
+                // 恢复手机端页面原本的滚动位置
+                if (previousScrollY !== null) {
+                    try {
+                        window.scrollTo(0, previousScrollY);
+                    } catch (e) {
+                        console.warn('草榴Manager: 恢复滚动位置失败', e);
+                    }
+                    previousScrollY = null;
+                }
             }
-            items = [];
-            currentIndex = 0;
-            currentImageToken += 1;
-            viewerImg.removeAttribute('src');
-            viewerImg.alt = '';
-            renderTopicPanel(null);
-            renderCommentsPanel([]);
-            renderViewerAds([]);
-            meta.textContent = '';
-            updateGalleryQuality(null);
-            currentThreadKey = null;
-            updateDownloadAction(null);
-            beginImageLoad(message);
-            preloadImageCache.clear();
-            closeInlineDownloadWindowIfOpen();
-        }
 
-        function openOverlay(newItems, options = {}) {
-            debugLog('========== 打开画廊覆盖层 ==========');
-            debugLog('newItems数量:', newItems ? newItems.length : 0);
-            debugLog('options:', options);
-            
-            if (!newItems || !newItems.length) {
-                debugLog('没有图片项，退出');
-                return;
+            function openLoadingState(message = '正在載入畫廊…') {
+                overlay.classList.add('clm-active');
+                // 手机端添加特殊class以应用抖音风格样式：
+                // 只要是手机版页面，或视口宽度较窄（<=768px），都按手机画廊布局处理
+                const isMobileLayout = isMobilePage() || window.innerWidth <= 768;
+                if (isMobileLayout) {
+                    // 记录当前页面滚动位置，稍后关闭画廊时恢复
+                    previousScrollY = window.scrollY || window.pageYOffset || document.documentElement.scrollTop || 0;
+                    document.body.classList.add('clm-mobile-gallery');
+                    document.documentElement.classList.add('clm-mobile-gallery-root');
+                }
+                items = [];
+                currentIndex = 0;
+                currentImageToken += 1;
+                viewerImg.removeAttribute('src');
+                viewerImg.alt = '';
+                renderTopicPanel(null);
+                renderCommentsPanel([]);
+                if (commentsPanel) {
+                    commentsPanel.classList.remove('clm-comments-expanded');
+                }
+                renderViewerAds([]);
+                meta.textContent = '';
+                updateGalleryQuality(null);
+                currentThreadKey = null;
+                updateDownloadAction(null, null);
+                beginImageLoad(message);
+                preloadImageCache.clear();
+                closeInlineDownloadWindowIfOpen();
             }
-            const {
-                startIndex = 0,
-                topic = null,
-                comments = [],
-                download = null,
-                threadUrl = null,
-                qualityTag = null,
-                ads = []
-            } = options;
-            items = newItems;
-            currentIndex = Math.min(Math.max(startIndex, 0), items.length - 1);
-            
-            debugLog('添加clm-active类到overlay');
-            overlay.classList.add('clm-active');
-            
-            // 手机端添加特殊class以应用抖音风格样式
-            const isMobile = isMobilePage();
-            const isMobileLayout = isMobile || window.innerWidth <= 768;
-            debugLog('isMobilePage()返回:', isMobile, '窗口宽度:', window.innerWidth);
-            if (isMobileLayout) {
-                debugLog('添加clm-mobile-gallery类到body');
-                document.body.classList.add('clm-mobile-gallery');
-                document.documentElement.classList.add('clm-mobile-gallery-root');
-                debugLog('body.classList:', Array.from(document.body.classList));
-            } else {
-                debugLog('不是手机端，不添加clm-mobile-gallery类');
-            }
-            
-            renderTopicPanel(topic);
-            renderCommentsPanel(comments);
-            renderViewerAds(ads);
-            currentThreadKey = threadUrl ? normalizeThreadKey(threadUrl) : null;
-            if (threadUrl) {
-                downloadBtn.dataset.clmThreadUrl = threadUrl;
-            } else {
-                delete downloadBtn.dataset.clmThreadUrl;
-            }
-            updateGalleryQuality(qualityTag);
-            updateDownloadAction(download);
-            showImage(currentIndex);
-            
-            debugLog('画廊覆盖层打开完成');
-        }
 
-        // 滚轮放大功能 - 绑定到viewer和图片上（仅电脑端）
-        const handleWheel = (ev) => {
-            if (!overlay.classList.contains('clm-active')) return;
-            if (!viewerImg.src) return;
-            // 手机端禁用滚轮缩放
-            if (document.body.classList.contains('clm-mobile-gallery')) return;
-            
-            ev.preventDefault();
-            ev.stopPropagation();
-            const delta = ev.deltaY;
-            zoomImage(delta, ev.clientX, ev.clientY);
-        };
-        
-        viewer.addEventListener('wheel', handleWheel, { passive: false });
-        viewerImg.addEventListener('wheel', handleWheel, { passive: false });
-
-        // 拖拽功能（当图片放大时）
-        viewerImg.addEventListener('mousedown', (ev) => {
-            if (imageScale <= 1) return;
-            isDragging = true;
-            dragStartX = ev.clientX;
-            dragStartY = ev.clientY;
-            dragStartTranslateX = imageTranslateX;
-            dragStartTranslateY = imageTranslateY;
-            viewerImg.style.cursor = 'grabbing';
-            ev.preventDefault();
-        });
-
-        document.addEventListener('mousemove', (ev) => {
-            if (!isDragging || imageScale <= 1) return;
-            const deltaX = ev.clientX - dragStartX;
-            const deltaY = ev.clientY - dragStartY;
-            imageTranslateX = dragStartTranslateX + deltaX;
-            imageTranslateY = dragStartTranslateY + deltaY;
-            applyImageTransform();
-        });
-
-        document.addEventListener('mouseup', () => {
-            if (isDragging) {
-                isDragging = false;
-                if (imageScale > 1) {
-                    viewerImg.style.cursor = 'move';
+            function openOverlay(newItems, options = {}) {
+                debugLog('========== 打开画廊覆盖层 ==========');
+                debugLog('newItems数量:', newItems ? newItems.length : 0);
+                debugLog('options:', options);
+                
+                if (!newItems || !newItems.length) {
+                    debugLog('没有图片项，退出');
+                    return;
+                }
+                const {
+                    startIndex = 0,
+                    topic = null,
+                    comments = [],
+                    download = null,
+                    smallDownload = null,
+                    threadUrl = null,
+                    qualityTag = null,
+                    ads = []
+                } = options;
+                items = newItems;
+                currentIndex = Math.min(Math.max(startIndex, 0), items.length - 1);
+                
+                debugLog('添加clm-active类到overlay');
+                overlay.classList.add('clm-active');
+                
+                // 手机端添加特殊class以应用抖音风格样式
+                const isMobile = isMobilePage();
+                const isMobileLayout = isMobile || window.innerWidth <= 768;
+                debugLog('isMobilePage()返回:', isMobile, '窗口宽度:', window.innerWidth);
+                if (isMobileLayout) {
+                    debugLog('添加clm-mobile-gallery类到body');
+                    // 记录当前页面滚动位置，稍后关闭画廊时恢复
+                    previousScrollY = window.scrollY || window.pageYOffset || document.documentElement.scrollTop || 0;
+                    document.body.classList.add('clm-mobile-gallery');
+                    document.documentElement.classList.add('clm-mobile-gallery-root');
+                    debugLog('body.classList:', Array.from(document.body.classList));
                 } else {
-                    viewerImg.style.cursor = 'zoom-in';
+                    debugLog('不是手机端，不添加clm-mobile-gallery类');
                 }
+                
+                renderTopicPanel(topic);
+                renderCommentsPanel(comments);
+                renderViewerAds(ads);
+                currentThreadKey = threadUrl ? normalizeThreadKey(threadUrl) : null;
+                if (threadUrl) {
+                    downloadBtn.dataset.clmThreadUrl = threadUrl;
+                    smallDownloadBtn.dataset.clmThreadUrl = threadUrl;
+                } else {
+                    delete downloadBtn.dataset.clmThreadUrl;
+                    delete smallDownloadBtn.dataset.clmThreadUrl;
+                }
+                updateGalleryQuality(qualityTag);
+                updateDownloadAction(download, smallDownload);
+                showImage(currentIndex);
+                
+                debugLog('画廊覆盖层打开完成');
             }
-        });
 
-        // 双击重置缩放
-        viewerImg.addEventListener('dblclick', () => {
-            resetImageTransform();
-        });
+            // 滚轮放大功能 - 绑定到viewer和图片上（仅桌面端主视图区域，避免拦截评论区滚动）
+            const handleWheel = (ev) => {
+                if (!overlay.classList.contains('clm-active')) return;
+                if (!viewerImg.src) return;
+                // 手机端禁用滚轮缩放，避免影响评论面板滚动
+                if (document.body.classList.contains('clm-mobile-gallery')) return;
 
-        closeBtn.addEventListener('click', () => closeOverlay());
-        overlay.addEventListener('click', (ev) => {
-            if (ev.target === overlay) {
-                closeOverlay();
-            }
-        });
-        leftBtn.addEventListener('click', () => showPrev());
-        rightBtn.addEventListener('click', () => showNext());
-        downloadBtn.addEventListener('click', () => handleDownloadClick());
-        document.addEventListener('keydown', (ev) => {
-            if (!overlay.classList.contains('clm-active')) return;
-            // 手机端禁用键盘操作
-            if (document.body.classList.contains('clm-mobile-gallery')) return;
-            if (ev.key === 'ArrowRight') {
+                // 如果滚轮事件来自评论面板或主题面板内容区，则交给浏览器默认滚动
+                const target = ev.target;
+                if (target.closest('.clm-gallery-panel-comments') ||
+                    target.closest('.clm-gallery-panel-topic')) {
+                    return;
+                }
+
                 ev.preventDefault();
-                showNext();
-            } else if (ev.key === 'ArrowLeft') {
+                ev.stopPropagation();
+                const delta = ev.deltaY;
+                zoomImage(delta, ev.clientX, ev.clientY);
+            };
+
+            viewer.addEventListener('wheel', handleWheel, { passive: false });
+            viewerImg.addEventListener('wheel', handleWheel, { passive: false });
+
+            // 拖拽功能（当图片放大时）
+            viewerImg.addEventListener('mousedown', (ev) => {
+                if (imageScale <= 1) return;
+                isDragging = true;
+                dragStartX = ev.clientX;
+                dragStartY = ev.clientY;
+                dragStartTranslateX = imageTranslateX;
+                dragStartTranslateY = imageTranslateY;
+                viewerImg.style.cursor = 'grabbing';
                 ev.preventDefault();
-                showPrev();
-            } else if (ev.key === 'Escape') {
-                ev.preventDefault();
-                if (!closeInlineDownloadWindowIfOpen()) {
+            });
+
+            document.addEventListener('mousemove', (ev) => {
+                if (!isDragging || imageScale <= 1) return;
+                const deltaX = ev.clientX - dragStartX;
+                const deltaY = ev.clientY - dragStartY;
+                imageTranslateX = dragStartTranslateX + deltaX;
+                imageTranslateY = dragStartTranslateY + deltaY;
+                applyImageTransform();
+            });
+
+            document.addEventListener('mouseup', () => {
+                if (isDragging) {
+                    isDragging = false;
+                    if (imageScale > 1) {
+                        viewerImg.style.cursor = 'move';
+                    } else {
+                        viewerImg.style.cursor = 'zoom-in';
+                    }
+                }
+            });
+
+            // 双击重置缩放
+            viewerImg.addEventListener('dblclick', () => {
+                resetImageTransform();
+            });
+
+            closeBtn.addEventListener('click', () => closeOverlay());
+            overlay.addEventListener('click', (ev) => {
+                if (ev.target === overlay) {
                     closeOverlay();
                 }
-            }
-        });
-
-        // 手机端触控手势支持（仅在非缩放状态下启用）
-        // 注意：即使不是手机页面，也要添加触摸事件支持，因为用户可能在桌面浏览器的开发者模式下模拟手机
-        if (true) {  // 始终添加触摸事件支持
-            debugLog('========== 注册触摸事件监听器 ==========');
-            let touchStartX = 0;
-            let touchStartY = 0;
-            let touchEndX = 0;
-            let touchEndY = 0;
-            let initialPinchDistance = 0;
-            let isZooming = false;
-
-            debugLog('为viewer添加touchstart事件监听器');
-            viewer.addEventListener('touchstart', (e) => {
-                debugLog('---------- touchstart触发 ----------');
-                if (!overlay.classList.contains('clm-active')) {
-                    console.log('草榴Manager: touchstart - overlay未激活');
-                    return;
-                }
-                // 只在手机端画廊模式下处理触摸事件
-                if (!document.body.classList.contains('clm-mobile-gallery')) {
-                    console.log('草榴Manager: touchstart - 非手机端画廊模式');
-                    return;
-                }
-
-                // 检查触摸是否在评论面板、按钮或广告区域上
-                const target = e.target;
-                const onComments = target.closest('.clm-gallery-panel-comments');
-                const onCommentBtn = target.closest('.clm-mobile-comment-btn');
-                const onDownloadBtn = target.closest('.clm-gallery-download-btn');
-                const onCloseBtn = target.closest('.clm-gallery-close');
-                const onAds = target.closest('.clm-gallery-ads-slot-viewer-top');
-                
-                console.log('草榴Manager: touchstart检查 - onComments:', !!onComments, 'onCommentBtn:', !!onCommentBtn, 'onDownloadBtn:', !!onDownloadBtn, 'onCloseBtn:', !!onCloseBtn, 'onAds:', !!onAds);
-                
-                if (onComments || onCommentBtn || onDownloadBtn || onCloseBtn || onAds) {
-                    console.log('草榴Manager: touchstart - 在按钮或面板上，跳过');
-                    return;
-                }
-                
-                // 如果在主题面板的内容区域（非头部），阻止滑动
-                const topicPanel = target.closest('.clm-gallery-panel-topic');
-                if (topicPanel && topicPanel.classList.contains('clm-topic-expanded')) {
-                    const panelBody = target.closest('.clm-gallery-panel-body');
-                    if (panelBody) {
-                        // 在展开的主题面板内容区域，不处理滑动
-                        console.log('草榴Manager: touchstart - 在展开的主题面板内容区域，跳过');
-                        return;
-                    }
-                }
-
-                if (e.touches.length === 2) {
-                    // 双指触控 - 记录初始距离
-                    const dx = e.touches[0].clientX - e.touches[1].clientX;
-                    const dy = e.touches[0].clientY - e.touches[1].clientY;
-                    initialPinchDistance = Math.sqrt(dx * dx + dy * dy);
-                    isZooming = true;
-                    console.log('草榴Manager: 检测到双指触摸，初始距离:', initialPinchDistance);
-                } else if (e.touches.length === 1) {
-                    // 单指触控
-                    touchStartX = e.touches[0].clientX;
-                    touchStartY = e.touches[0].clientY;
-                    isZooming = false;
-                    console.log('草榴Manager: 触摸开始', touchStartX, touchStartY);
-                }
-            }, { passive: true });
-
-            viewer.addEventListener('touchmove', (e) => {
+            });
+            leftBtn.addEventListener('click', () => showPrev());
+            rightBtn.addEventListener('click', () => showNext());
+            downloadBtn.addEventListener('click', () => handleDownloadClick());
+            smallDownloadBtn.addEventListener('click', () => handleSmallDownloadClick());
+            document.addEventListener('keydown', (ev) => {
                 if (!overlay.classList.contains('clm-active')) return;
-                if (!document.body.classList.contains('clm-mobile-gallery')) return;
-
-                if (e.touches.length === 2 && initialPinchDistance > 0) {
-                    // 双指移动 - 检测缩放
-                    const dx = e.touches[0].clientX - e.touches[1].clientX;
-                    const dy = e.touches[0].clientY - e.touches[1].clientY;
-                    const currentDistance = Math.sqrt(dx * dx + dy * dy);
-
-                    if (Math.abs(currentDistance - initialPinchDistance) > 10) {
-                        isZooming = true;
-                        const scale = currentDistance / initialPinchDistance;
-                        console.log('草榴Manager: 双指缩放比例:', scale);
+                // 手机端禁用键盘操作
+                if (document.body.classList.contains('clm-mobile-gallery')) return;
+                if (ev.key === 'ArrowRight') {
+                    ev.preventDefault();
+                    showNext();
+                } else if (ev.key === 'ArrowLeft') {
+                    ev.preventDefault();
+                    showPrev();
+                } else if (ev.key === 'Escape') {
+                    ev.preventDefault();
+                    if (!closeInlineDownloadWindowIfOpen()) {
+                        closeOverlay();
                     }
                 }
-            }, { passive: true });
+            });
 
-            viewer.addEventListener('touchend', (e) => {
-                if (!overlay.classList.contains('clm-active')) {
-                    console.log('草榴Manager: touchend - overlay未激活');
-                    return;
-                }
-                if (!document.body.classList.contains('clm-mobile-gallery')) {
-                    console.log('草榴Manager: touchend - 非手机端画廊模式');
-                    return;
-                }
+            // 手机端触控手势支持（仅在非缩放状态下启用）
+            // 注意：即使不是手机页面，也要添加触摸事件支持，因为用户可能在桌面浏览器的开发者模式下模拟手机
+            if (true) {  // 始终添加触摸事件支持
+                debugLog('========== 注册触摸事件监听器 ==========');
+                let touchStartX = 0;
+                let touchStartY = 0;
+                let touchEndX = 0;
+                let touchEndY = 0;
+                let initialPinchDistance = 0;
+                let isZooming = false;
 
-                // 检查触摸是否在评论面板、按钮或广告区域上
-                const target = e.target;
-                const onComments = target.closest('.clm-gallery-panel-comments');
-                const onCommentBtn = target.closest('.clm-mobile-comment-btn');
-                const onDownloadBtn = target.closest('.clm-gallery-download-btn');
-                const onCloseBtn = target.closest('.clm-gallery-close');
-                const onAds = target.closest('.clm-gallery-ads-slot-viewer-top');
-                
-                console.log('草榴Manager: touchend检查 - onComments:', !!onComments, 'onCommentBtn:', !!onCommentBtn, 'onDownloadBtn:', !!onDownloadBtn, 'onCloseBtn:', !!onCloseBtn, 'onAds:', !!onAds);
-                
-                if (onComments || onCommentBtn || onDownloadBtn || onCloseBtn || onAds) {
-                    console.log('草榴Manager: touchend - 在按钮或面板上，跳过');
-                    return;
-                }
-                
-                // 如果在主题面板的内容区域（非头部），阻止滑动
-                const topicPanel = target.closest('.clm-gallery-panel-topic');
-                if (topicPanel && topicPanel.classList.contains('clm-topic-expanded')) {
-                    const panelBody = target.closest('.clm-gallery-panel-body');
-                    if (panelBody) {
-                        // 在展开的主题面板内容区域，不处理滑动
-                        console.log('草榴Manager: touchend - 在展开的主题面板内容区域，跳过');
+                debugLog('为viewer添加touchstart事件监听器');
+                viewer.addEventListener('touchstart', (e) => {
+                    debugLog('---------- touchstart触发 ----------');
+                    if (!overlay.classList.contains('clm-active')) {
+                        console.log('草榴Manager: touchstart - overlay未激活');
                         return;
                     }
-                }
+                    // 只在手机端画廊模式下处理触摸事件
+                    if (!document.body.classList.contains('clm-mobile-gallery')) {
+                        console.log('草榴Manager: touchstart - 非手机端画廊模式');
+                        return;
+                    }
 
-                console.log('草榴Manager: touchend - e.touches.length:', e.touches.length, 'isZooming:', isZooming);
-                
-                if (e.touches.length === 0 && !isZooming) {
-                    // 单指滑动结束且未缩放
-                    touchEndX = e.changedTouches[0].clientX;
-                    touchEndY = e.changedTouches[0].clientY;
-                    console.log('草榴Manager: 触摸结束 - touchEndX:', touchEndX, 'touchEndY:', touchEndY);
-                    console.log('草榴Manager: 准备调用handleGesture');
-                    handleGesture();
-                } else {
-                    console.log('草榴Manager: touchend - 不满足handleGesture条件');
-                }
+                    // 检查触摸是否在评论面板、按钮或广告区域上
+                    const target = e.target;
+                    const onComments = target.closest('.clm-gallery-panel-comments');
+                    const onCommentBtn = target.closest('.clm-mobile-comment-btn');
+                    const onDownloadBtn = target.closest('.clm-gallery-download-btn');
+                    const onCloseBtn = target.closest('.clm-gallery-close');
+                    const onAds = target.closest('.clm-gallery-ads-slot-viewer-top');
+                    
+                    console.log('草榴Manager: touchstart检查 - onComments:', !!onComments, 'onCommentBtn:', !!onCommentBtn, 'onDownloadBtn:', !!onDownloadBtn, 'onCloseBtn:', !!onCloseBtn, 'onAds:', !!onAds);
+                    
+                    if (onComments || onCommentBtn || onDownloadBtn || onCloseBtn || onAds) {
+                        console.log('草榴Manager: touchstart - 在按钮或面板上，跳过');
+                        return;
+                    }
+                    
+                    // 如果在主题面板的内容区域（非头部），阻止滑动
+                    const topicPanel = target.closest('.clm-gallery-panel-topic');
+                    if (topicPanel && topicPanel.classList.contains('clm-topic-expanded')) {
+                        const panelBody = target.closest('.clm-gallery-panel-body');
+                        if (panelBody) {
+                            // 在展开的主题面板内容区域，不处理滑动
+                            console.log('草榴Manager: touchstart - 在展开的主题面板内容区域，跳过');
+                            return;
+                        }
+                    }
 
-                if (e.touches.length === 0) {
-                    isZooming = false;
-                    initialPinchDistance = 0;
-                }
-            }, { passive: true });
+                    if (e.touches.length === 2) {
+                        // 双指触控 - 记录初始距离
+                        const dx = e.touches[0].clientX - e.touches[1].clientX;
+                        const dy = e.touches[0].clientY - e.touches[1].clientY;
+                        initialPinchDistance = Math.sqrt(dx * dx + dy * dy);
+                        isZooming = true;
+                        console.log('草榴Manager: 检测到双指触摸，初始距离:', initialPinchDistance);
+                    } else if (e.touches.length === 1) {
+                        // 单指触控
+                        touchStartX = e.touches[0].clientX;
+                        touchStartY = e.touches[0].clientY;
+                        isZooming = false;
+                        console.log('草榴Manager: 触摸开始', touchStartX, touchStartY);
+                    }
+                }, { passive: true });
 
-            function handleGesture() {
-                const deltaX = touchEndX - touchStartX;
-                const deltaY = touchEndY - touchStartY;
-                const absDeltaX = Math.abs(deltaX);
-                const absDeltaY = Math.abs(deltaY);
-                const minSwipeDistance = 80;
+                viewer.addEventListener('touchmove', (e) => {
+                    if (!overlay.classList.contains('clm-active')) return;
+                    if (!document.body.classList.contains('clm-mobile-gallery')) return;
 
-                console.log('草榴Manager: 手势检测 - deltaX:', deltaX, 'deltaY:', deltaY, 'absDeltaX:', absDeltaX, 'absDeltaY:', absDeltaY);
-                console.log('草榴Manager: isZooming:', isZooming, 'minSwipeDistance:', minSwipeDistance);
+                    if (e.touches.length === 2 && initialPinchDistance > 0) {
+                        // 双指移动 - 检测缩放
+                        const dx = e.touches[0].clientX - e.touches[1].clientX;
+                        const dy = e.touches[0].clientY - e.touches[1].clientY;
+                        const currentDistance = Math.sqrt(dx * dx + dy * dy);
 
-                const viewportHeight = window.innerHeight || document.documentElement.clientHeight || document.body.clientHeight || 0;
-                const isTopicExpanded = topicPanel.classList.contains('clm-topic-expanded');
-                
-                console.log('草榴Manager: viewportHeight:', viewportHeight, 'isTopicExpanded:', isTopicExpanded);
+                        if (Math.abs(currentDistance - initialPinchDistance) > 10) {
+                            isZooming = true;
+                            const scale = currentDistance / initialPinchDistance;
+                            console.log('草榴Manager: 双指缩放比例:', scale);
+                        }
+                    }
+                }, { passive: true });
 
-                // 判断滑动方向：水平或垂直
-                if (absDeltaX > absDeltaY) {
-                    console.log('草榴Manager: 判定为水平滑动 (absDeltaX > absDeltaY)');
-                    // 水平滑动：左右翻页
-                    if (!isZooming && absDeltaX > minSwipeDistance) {
-                        console.log('草榴Manager: 水平滑动距离足够，准备翻页');
-                        if (deltaX > 0) {
-                            // 向右滑动 - 显示上一张
-                            console.log('草榴Manager: 向右滑动，显示上一张');
-                            showPrev();
-                            showTapIndicator('left');
+                viewer.addEventListener('touchend', (e) => {
+                    if (!overlay.classList.contains('clm-active')) {
+                        console.log('草榴Manager: touchend - overlay未激活');
+                        return;
+                    }
+                    if (!document.body.classList.contains('clm-mobile-gallery')) {
+                        console.log('草榴Manager: touchend - 非手机端画廊模式');
+                        return;
+                    }
+
+                    // 检查触摸是否在评论面板、按钮或广告区域上
+                    const target = e.target;
+                    const onComments = target.closest('.clm-gallery-panel-comments');
+                    const onCommentBtn = target.closest('.clm-mobile-comment-btn');
+                    const onDownloadBtn = target.closest('.clm-gallery-download-btn');
+                    const onCloseBtn = target.closest('.clm-gallery-close');
+                    const onAds = target.closest('.clm-gallery-ads-slot-viewer-top');
+                    
+                    console.log('草榴Manager: touchend检查 - onComments:', !!onComments, 'onCommentBtn:', !!onCommentBtn, 'onDownloadBtn:', !!onDownloadBtn, 'onCloseBtn:', !!onCloseBtn, 'onAds:', !!onAds);
+
+                    // 如果手指结束在评论面板或按钮/广告上，视为点击/滚动结束，不触发左右翻页手势
+                    if (onComments || onCommentBtn || onDownloadBtn || onCloseBtn || onAds) {
+                        console.log('草榴Manager: touchend - 在按钮或面板上，跳过手势处理');
+                        return;
+                    }
+                    
+                    // 如果在主题面板的内容区域（非头部），阻止滑动
+                    const topicPanel = target.closest('.clm-gallery-panel-topic');
+                    if (topicPanel && topicPanel.classList.contains('clm-topic-expanded')) {
+                        const panelBody = target.closest('.clm-gallery-panel-body');
+                        if (panelBody) {
+                            // 在展开的主题面板内容区域，不处理滑动
+                            console.log('草榴Manager: touchend - 在展开的主题面板内容区域，跳过');
+                            return;
+                        }
+                    }
+
+                    console.log('草榴Manager: touchend - e.touches.length:', e.touches.length, 'isZooming:', isZooming);
+                    
+                    if (e.touches.length === 0 && !isZooming) {
+                        // 单指滑动结束且未缩放
+                        touchEndX = e.changedTouches[0].clientX;
+                        touchEndY = e.changedTouches[0].clientY;
+                        console.log('草榴Manager: 触摸结束 - touchEndX:', touchEndX, 'touchEndY:', touchEndY);
+                        console.log('草榴Manager: 准备调用handleGesture');
+                        handleGesture();
+                    } else {
+                        console.log('草榴Manager: touchend - 不满足handleGesture条件');
+                    }
+
+                    if (e.touches.length === 0) {
+                        isZooming = false;
+                        initialPinchDistance = 0;
+                    }
+                }, { passive: true });
+
+                function handleGesture() {
+                    const deltaX = touchEndX - touchStartX;
+                    const deltaY = touchEndY - touchStartY;
+                    const absDeltaX = Math.abs(deltaX);
+                    const absDeltaY = Math.abs(deltaY);
+                    const minSwipeDistance = 80;
+
+                    console.log('草榴Manager: 手势检测 - deltaX:', deltaX, 'deltaY:', deltaY, 'absDeltaX:', absDeltaX, 'absDeltaY:', absDeltaY);
+                    console.log('草榴Manager: isZooming:', isZooming, 'minSwipeDistance:', minSwipeDistance);
+
+                    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || document.body.clientHeight || 0;
+                    const isTopicExpanded = topicPanel.classList.contains('clm-topic-expanded');
+                    
+                    console.log('草榴Manager: viewportHeight:', viewportHeight, 'isTopicExpanded:', isTopicExpanded);
+
+                    // 判断滑动方向：水平或垂直
+                    if (absDeltaX > absDeltaY) {
+                        console.log('草榴Manager: 判定为水平滑动 (absDeltaX > absDeltaY)');
+                        // 水平滑动：左右翻页
+                        if (!isZooming && absDeltaX > minSwipeDistance) {
+                            console.log('草榴Manager: 水平滑动距离足够，准备翻页');
+                            if (deltaX > 0) {
+                                // 向右滑动 - 显示上一张
+                                console.log('草榴Manager: 向右滑动，显示上一张');
+                                showPrev();
+                                showTapIndicator('left');
+                            } else {
+                                // 向左滑动 - 显示下一张
+                                console.log('草榴Manager: 向左滑动，显示下一张');
+                                showNext();
+                                showTapIndicator('right');
+                            }
                         } else {
-                            // 向左滑动 - 显示下一张
-                            console.log('草榴Manager: 向左滑动，显示下一张');
-                            showNext();
-                            showTapIndicator('right');
+                            console.log('草榴Manager: 水平滑动距离不足或正在缩放，不翻页');
                         }
                     } else {
-                        console.log('草榴Manager: 水平滑动距离不足或正在缩放，不翻页');
-                    }
-                } else {
-                    console.log('草榴Manager: 判定为垂直滑动 (absDeltaY >= absDeltaX)');
-                    // 垂直滑动：控制主题抽屉
-                    if (!isZooming && absDeltaY > minSwipeDistance && viewportHeight > 0) {
-                        console.log('草榴Manager: 垂直滑动距离足够，准备控制抽屉');
-                        if (typeof toggleTopicPanelState === 'function') {
-                            if (!isTopicExpanded && deltaY < 0) {
-                                // 向上滑动 - 展开抽屉
-                                console.log('草榴Manager: 向上滑动，展开主题抽屉');
-                                toggleTopicPanelState();
-                            } else if (isTopicExpanded && deltaY > 0) {
-                                // 向下滑动 - 收起抽屉
-                                console.log('草榴Manager: 向下滑动，收起主题抽屉');
-                                toggleTopicPanelState();
+                        console.log('草榴Manager: 判定为垂直滑动 (absDeltaY >= absDeltaX)');
+                        // 垂直滑动：控制主题抽屉
+                        if (!isZooming && absDeltaY > minSwipeDistance && viewportHeight > 0) {
+                            console.log('草榴Manager: 垂直滑动距离足够，准备控制抽屉');
+                            if (typeof toggleTopicPanelState === 'function') {
+                                if (!isTopicExpanded && deltaY < 0) {
+                                    // 向上滑动 - 展开抽屉
+                                    console.log('草榴Manager: 向上滑动，展开主题抽屉');
+                                    toggleTopicPanelState();
+                                } else if (isTopicExpanded && deltaY > 0) {
+                                    // 向下滑动 - 收起抽屉
+                                    console.log('草榴Manager: 向下滑动，收起主题抽屉');
+                                    toggleTopicPanelState();
+                                }
                             }
                         }
                     }
                 }
             }
+
+            return {
+                open: openOverlay,
+                close: closeOverlay,
+                isOpen: () => overlay.classList.contains('clm-active'),
+                showNext,
+                showPrev,
+                showLoading: openLoadingState
+            };
         }
 
-        return {
-            open: openOverlay,
-            close: closeOverlay,
-            isOpen: () => overlay.classList.contains('clm-active'),
-            showNext,
-            showPrev,
-            showLoading: openLoadingState
+        /**
+         * -------------------------------
+         *   搜索功能：点击标签进行搜索
+         * -------------------------------
+         */
+
+        const SEARCH_SETTINGS_KEY = '草榴ManagerSearchSettings';
+
+        const DEFAULT_SEARCH_SETTINGS = {
+            f_fid: '', // 社区分类（必选）
+            sch_area: '0', // 搜索帖子范围：0=主题标题, 1=主题标题与主题内容, 2=回复标题与回复内容
+            sch_time: 'all', // 发表主题时间
+            method: 'AND', // 关键词匹配方式：AND=完全匹配, OR=部分匹配
+            orderway: 'postdate', // 结果排序：postdate=发布时间, lastpost=最后回复时间, replies=回复, hits=赞
+            asc: 'DESC', // 升序/降序：ASC=升序, DESC=降序
+            sch_author: '', // 限定用戶（用戶名）
+            digest: false // 精华帖标志
         };
-    }
 
-    /**
-     * -------------------------------
-     *   搜索功能：点击标签进行搜索
-     * -------------------------------
-     */
-
-    const SEARCH_SETTINGS_KEY = '草榴ManagerSearchSettings';
-
-    const DEFAULT_SEARCH_SETTINGS = {
-        f_fid: '', // 社区分类（必选）
-        sch_area: '0', // 搜索帖子范围：0=主题标题, 1=主题标题与主题内容, 2=回复标题与回复内容
-        sch_time: 'all', // 发表主题时间
-        method: 'AND', // 关键词匹配方式：AND=完全匹配, OR=部分匹配
-        orderway: 'postdate', // 结果排序：postdate=发布时间, lastpost=最后回复时间, replies=回复, hits=赞
-        asc: 'DESC', // 升序/降序：ASC=升序, DESC=降序
-        sch_author: '', // 限定用戶（用戶名）
-        digest: false // 精华帖标志
-    };
-
-    function loadSearchSettings() {
-        try {
-            const raw = localStorage.getItem(SEARCH_SETTINGS_KEY);
-            if (raw) {
-                const parsed = JSON.parse(raw);
-                return { ...DEFAULT_SEARCH_SETTINGS, ...parsed };
-            }
-        } catch (e) {
-            console.error('草榴Manager: 搜索设置读取失败，使用默认值', e);
-        }
-        return { ...DEFAULT_SEARCH_SETTINGS };
-    }
-
-    function saveSearchSettings(settings) {
-        try {
-            localStorage.setItem(SEARCH_SETTINGS_KEY, JSON.stringify(settings));
-        } catch (e) {
-            console.error('草榴Manager: 搜索设置保存失败', e);
-        }
-    }
-
-    function createSearchDialog() {
-        const mask = document.createElement('div');
-        mask.className = 'clm-search-dialog-mask';
-        mask.style.display = 'none';
-
-        const dialog = document.createElement('div');
-        dialog.className = 'clm-search-dialog';
-
-        const header = document.createElement('div');
-        header.className = 'clm-search-dialog-header';
-        const title = document.createElement('div');
-        title.className = 'clm-search-dialog-title';
-        title.textContent = '搜索选项';
-        const closeBtn = document.createElement('button');
-        closeBtn.type = 'button';
-        closeBtn.className = 'clm-search-dialog-close';
-        closeBtn.textContent = '×';
-        header.appendChild(title);
-        header.appendChild(closeBtn);
-
-        const body = document.createElement('div');
-        body.className = 'clm-search-dialog-body';
-
-        // 关键词（必选）
-        const keywordRow = document.createElement('div');
-        keywordRow.className = 'clm-search-form-row';
-        const keywordLabel = document.createElement('label');
-        keywordLabel.className = 'clm-search-form-label required';
-        keywordLabel.textContent = '关键词';
-        const keywordInput = document.createElement('input');
-        keywordInput.type = 'text';
-        keywordInput.className = 'clm-search-form-input';
-        keywordInput.name = 'keyword';
-        keywordInput.id = 'sch_keyword';
-        keywordInput.placeholder = '請輸入搜索關鍵詞';
-        keywordRow.appendChild(keywordLabel);
-        keywordRow.appendChild(keywordInput);
-        body.appendChild(keywordRow);
-
-        // 社区分类（必选）
-        const fidRow = document.createElement('div');
-        fidRow.className = 'clm-search-form-row';
-        const fidLabel = document.createElement('label');
-        fidLabel.className = 'clm-search-form-label required';
-        fidLabel.textContent = '社区分类';
-        const fidSelect = document.createElement('select');
-        fidSelect.className = 'clm-search-form-select';
-        fidSelect.name = 'f_fid';
-        fidSelect.innerHTML = `
-            <option value="">請選擇板塊</option>
-            <option value="1">&gt;&gt; BT電影下載</option>
-            <option value="2"> &nbsp;|- 亞洲無碼原創區</option>
-            <option value="15"> &nbsp;|- 亞洲有碼原創區</option>
-            <option value="4"> &nbsp;|- 歐美原創區</option>
-            <option value="5"> &nbsp;|- 動漫原創區</option>
-            <option value="25"> &nbsp;|- 國產原創區</option>
-            <option value="26"> &nbsp;|- 中字原創區</option>
-            <option value="28"> &nbsp;|- AI破解原創區</option>
-            <option value="27"> &nbsp;|- 綜合分享區</option>
-            <option value="21"> &nbsp;|- HTTP下載區</option>
-            <option value="22"> &nbsp;|- 在綫成人影院</option>
-            <option value="10"> &nbsp;|- 草榴影視庫</option>
-            <option value="11"> &nbsp; &nbsp;|-  亞洲區</option>
-            <option value="12"> &nbsp; &nbsp;|-  歐美區</option>
-            <option value="13"> &nbsp; &nbsp;|-  動漫區</option>
-            <option value="14"> &nbsp; &nbsp;|-  圖片區</option>
-            <option value="23"> &nbsp; &nbsp;|-  博彩區</option>
-            <option value="6">&gt;&gt; 草榴休閑區</option>
-            <option value="7"> &nbsp;|- 技術討論區</option>
-            <option value="8"> &nbsp;|- 新時代的我們</option>
-            <option value="16"> &nbsp;|- 達蓋爾的旗幟</option>
-            <option value="20"> &nbsp;|- 成人文學交流區</option>
-            <option value="9"> &nbsp;|- 草榴資訊</option>
-        `;
-        fidRow.appendChild(fidLabel);
-        fidRow.appendChild(fidSelect);
-        body.appendChild(fidRow);
-
-        // 搜索帖子范围
-        const areaRow = document.createElement('div');
-        areaRow.className = 'clm-search-form-row';
-        const areaLabel = document.createElement('label');
-        areaLabel.className = 'clm-search-form-label';
-        areaLabel.textContent = '搜索帖子范围';
-        const areaGroup = document.createElement('div');
-        areaGroup.className = 'clm-search-form-radio-group';
-        const area0 = document.createElement('div');
-        area0.className = 'clm-search-form-radio';
-        area0.innerHTML = '<input type="radio" name="sch_area" value="0" id="sch_area_0" checked><label for="sch_area_0">主题标题</label>';
-        areaGroup.appendChild(area0);
-        areaRow.appendChild(areaLabel);
-        areaRow.appendChild(areaGroup);
-        body.appendChild(areaRow);
-
-        // 发表主题时间
-        const timeRow = document.createElement('div');
-        timeRow.className = 'clm-search-form-row';
-        const timeLabel = document.createElement('label');
-        timeLabel.className = 'clm-search-form-label';
-        timeLabel.textContent = '发表主题时间';
-        const timeSelect = document.createElement('select');
-        timeSelect.className = 'clm-search-form-select';
-        timeSelect.name = 'sch_time';
-        timeSelect.innerHTML = `
-            <option value="all">所有主题</option>
-            <option value="86400">1天内的主题</option>
-            <option value="172800">2天内的主题</option>
-            <option value="604800">1星期内的主题</option>
-            <option value="2592000">1个月内的主题</option>
-            <option value="5184000">2个月内的主题</option>
-            <option value="7776000">3个月内的主题</option>
-            <option value="15552000">6个月内的主题</option>
-            <option value="31536000">1年内的主题</option>
-        `;
-        timeRow.appendChild(timeLabel);
-        timeRow.appendChild(timeSelect);
-        body.appendChild(timeRow);
-
-        // 关键词匹配方式
-        const methodRow = document.createElement('div');
-        methodRow.className = 'clm-search-form-row';
-        const methodLabel = document.createElement('label');
-        methodLabel.className = 'clm-search-form-label';
-        methodLabel.textContent = '关键词匹配方式';
-        const methodGroup = document.createElement('div');
-        methodGroup.className = 'clm-search-form-radio-group';
-        const methodAnd = document.createElement('div');
-        methodAnd.className = 'clm-search-form-radio';
-        methodAnd.innerHTML = '<input type="radio" name="method" value="AND" id="method_and" checked><label for="method_and">完全匹配</label>';
-        const methodOr = document.createElement('div');
-        methodOr.className = 'clm-search-form-radio';
-        methodOr.innerHTML = '<input type="radio" name="method" value="OR" id="method_or"><label for="method_or">部分匹配</label>';
-        methodGroup.appendChild(methodAnd);
-        methodGroup.appendChild(methodOr);
-        methodRow.appendChild(methodLabel);
-        methodRow.appendChild(methodGroup);
-        body.appendChild(methodRow);
-
-        // 结果排序
-        const orderRow = document.createElement('div');
-        orderRow.className = 'clm-search-form-row';
-        const orderLabel = document.createElement('label');
-        orderLabel.className = 'clm-search-form-label';
-        orderLabel.textContent = '结果排序';
-        const orderSelect = document.createElement('select');
-        orderSelect.className = 'clm-search-form-select';
-        orderSelect.name = 'orderway';
-        orderSelect.style.marginBottom = '8px';
-        orderSelect.innerHTML = `
-            <option value="postdate">发布时间</option>
-            <option value="lastpost">最后回复时间</option>
-            <option value="replies">回复</option>
-            <option value="hits">赞</option>
-        `;
-        const ascGroup = document.createElement('div');
-        ascGroup.className = 'clm-search-form-radio-group';
-        const ascAsc = document.createElement('div');
-        ascAsc.className = 'clm-search-form-radio';
-        ascAsc.innerHTML = '<input type="radio" name="asc" value="ASC" id="asc_asc"><label for="asc_asc">升序</label>';
-        const ascDesc = document.createElement('div');
-        ascDesc.className = 'clm-search-form-radio';
-        ascDesc.innerHTML = '<input type="radio" name="asc" value="DESC" id="asc_desc" checked><label for="asc_desc">降序</label>';
-        ascGroup.appendChild(ascAsc);
-        ascGroup.appendChild(ascDesc);
-        orderRow.appendChild(orderLabel);
-        orderRow.appendChild(orderSelect);
-        orderRow.appendChild(ascGroup);
-        body.appendChild(orderRow);
-
-        // 限定用戶
-        const authorRow = document.createElement('div');
-        authorRow.className = 'clm-search-form-row';
-        const authorLabel = document.createElement('label');
-        authorLabel.className = 'clm-search-form-label';
-        authorLabel.textContent = '限定用戶(請輸入用戶名或留空)';
-        const authorInput = document.createElement('input');
-        authorInput.type = 'text';
-        authorInput.className = 'clm-search-form-input';
-        authorInput.name = 'pwuser';
-        authorInput.id = 'sch_author';
-        authorInput.placeholder = '請輸入用戶名或留空';
-        authorRow.appendChild(authorLabel);
-        authorRow.appendChild(authorInput);
-        body.appendChild(authorRow);
-
-        // 精华帖标志
-        const digestRow = document.createElement('div');
-        digestRow.className = 'clm-search-form-row';
-        const digestCheckbox = document.createElement('div');
-        digestCheckbox.className = 'clm-search-form-checkbox';
-        digestCheckbox.innerHTML = '<input type="checkbox" name="digest" value="1" id="digest_check"><label for="digest_check">精华帖标志</label>';
-        digestRow.appendChild(digestCheckbox);
-        body.appendChild(digestRow);
-
-        const footer = document.createElement('div');
-        footer.className = 'clm-search-dialog-footer';
-        const searchBtn = document.createElement('button');
-        searchBtn.type = 'button';
-        searchBtn.className = 'clm-search-btn clm-search-btn-primary';
-        searchBtn.textContent = '搜索';
-        const cancelBtn = document.createElement('button');
-        cancelBtn.type = 'button';
-        cancelBtn.className = 'clm-search-btn clm-search-btn-secondary';
-        cancelBtn.textContent = '取消';
-        footer.appendChild(searchBtn);
-        footer.appendChild(cancelBtn);
-
-        dialog.appendChild(header);
-        dialog.appendChild(body);
-        dialog.appendChild(footer);
-        mask.appendChild(dialog);
-        document.body.appendChild(mask);
-
-        let currentKeyword = '';
-        let currentSearchCallback = null;
-
-        function open(keyword, callback) {
-            currentKeyword = keyword;
-            currentSearchCallback = callback;
-            const settings = loadSearchSettings();
-            
-            // 设置关键词输入框
-            const keywordInput = document.getElementById('sch_keyword');
-            if (keywordInput) {
-                keywordInput.value = keyword || '';
-            }
-            
-            // 加载保存的设置
-            fidSelect.value = settings.f_fid || '';
-            
-            // 清除所有单选按钮的选中状态
-            document.querySelectorAll('input[name="sch_area"]').forEach(radio => {
-                radio.checked = false;
-            });
-            document.querySelectorAll('input[name="method"]').forEach(radio => {
-                radio.checked = false;
-            });
-            document.querySelectorAll('input[name="asc"]').forEach(radio => {
-                radio.checked = false;
-            });
-            
-            // 设置选中的单选按钮
-            const schAreaRadio = document.querySelector('input[name="sch_area"][value="' + (settings.sch_area || '0') + '"]');
-            if (schAreaRadio) schAreaRadio.checked = true;
-            
-            timeSelect.value = settings.sch_time || 'all';
-            
-            const methodRadio = document.querySelector('input[name="method"][value="' + (settings.method || 'AND') + '"]');
-            if (methodRadio) methodRadio.checked = true;
-            
-            orderSelect.value = settings.orderway || 'postdate';
-            
-            const ascRadio = document.querySelector('input[name="asc"][value="' + (settings.asc || 'DESC') + '"]');
-            if (ascRadio) ascRadio.checked = true;
-            
-            const digestCheck = document.getElementById('digest_check');
-            if (digestCheck) {
-                digestCheck.checked = settings.digest || false;
-            }
-            
-            const authorInput = document.getElementById('sch_author');
-            if (authorInput) {
-                authorInput.value = settings.sch_author || '';
-            }
-            
-            mask.style.display = 'flex';
-        }
-
-        function close() {
-            mask.style.display = 'none';
-            currentKeyword = '';
-            currentSearchCallback = null;
-        }
-
-        function performSearch() {
-            // 验证必选项
-            const keywordInput = document.getElementById('sch_keyword');
-            const keyword = keywordInput?.value.trim() || '';
-            if (!keyword) {
-                alert('请输入关键词（必选项）');
-                if (keywordInput) keywordInput.focus();
-                return;
-            }
-            if (!fidSelect.value) {
-                alert('请选择社区分类（必选项）');
-                fidSelect.focus();
-                return;
-            }
-
-            // 收集表单数据
-            const authorInput = document.getElementById('sch_author');
-            const authorValue = authorInput?.value.trim() || '';
-            const formData = {
-                step: '2',
-                s_type: 'forum',
-                keyword: keyword,
-                f_fid: fidSelect.value,
-                sch_area: document.querySelector('input[name="sch_area"]:checked')?.value || '0',
-                sch_time: timeSelect.value,
-                method: document.querySelector('input[name="method"]:checked')?.value || 'AND',
-                orderway: orderSelect.value,
-                asc: document.querySelector('input[name="asc"]:checked')?.value || 'DESC',
-                pwuser: authorValue,
-                digest: document.getElementById('digest_check')?.checked ? '1' : ''
-            };
-
-            // 保存设置
-            const settings = {
-                f_fid: formData.f_fid,
-                sch_area: formData.sch_area,
-                sch_time: formData.sch_time,
-                method: formData.method,
-                orderway: formData.orderway,
-                asc: formData.asc,
-                sch_author: authorValue,
-                digest: document.getElementById('digest_check')?.checked || false
-            };
-            saveSearchSettings(settings);
-
-            // 构建搜索URL
-            const params = new URLSearchParams();
-            Object.keys(formData).forEach(key => {
-                if (formData[key]) {
-                    params.append(key, formData[key]);
+        function loadSearchSettings() {
+            try {
+                const raw = localStorage.getItem(SEARCH_SETTINGS_KEY);
+                if (raw) {
+                    const parsed = JSON.parse(raw);
+                    return { ...DEFAULT_SEARCH_SETTINGS, ...parsed };
                 }
-            });
-            const searchUrl = 'https://t66y.com/search.php?' + params.toString();
-
-            // 打开新标签页
-            window.open(searchUrl, '_blank');
-
-            // 执行回调
-            if (currentSearchCallback) {
-                currentSearchCallback();
+            } catch (e) {
+                console.error('草榴Manager: 搜索设置读取失败，使用默认值', e);
             }
-
-            close();
+            return { ...DEFAULT_SEARCH_SETTINGS };
         }
 
-        closeBtn.addEventListener('click', close);
-        cancelBtn.addEventListener('click', close);
-        searchBtn.addEventListener('click', performSearch);
-        mask.addEventListener('click', (e) => {
-            if (e.target === mask) {
-                close();
-            }
-        });
-
-        // ESC键关闭
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && mask.style.display === 'flex') {
-                close();
-            }
-        });
-
-        return {
-            open,
-            close
-        };
-    }
-
-    function createInlineDownloadWindow() {
-        const mask = document.createElement('div');
-        mask.className = 'clm-download-window-mask';
-        const preview = document.createElement('div');
-        preview.className = 'clm-gallery-download-preview';
-
-        const header = document.createElement('div');
-        header.className = 'clm-gallery-download-preview-header';
-        const headerMeta = document.createElement('div');
-        headerMeta.style.display = 'flex';
-        headerMeta.style.flexDirection = 'column';
-        headerMeta.style.gap = '2px';
-        const title = document.createElement('div');
-        title.className = 'clm-gallery-download-preview-title';
-        title.textContent = '下載窗口 · RMDOWN';
-        const subtitle = document.createElement('div');
-        subtitle.className = 'clm-gallery-download-preview-subtitle';
-        headerMeta.appendChild(title);
-        headerMeta.appendChild(subtitle);
-
-        const link = document.createElement('a');
-        link.className = 'clm-gallery-download-preview-link';
-        link.textContent = '新窗口開啟';
-        link.target = '_blank';
-        link.rel = 'noopener noreferrer';
-        // 点击新窗口开启时，关闭下载窗口（避免遮挡）
-        link.addEventListener('click', () => {
-            close();
-        });
-
-        const closeBtn = document.createElement('button');
-        closeBtn.type = 'button';
-        closeBtn.className = 'clm-gallery-download-preview-close';
-        closeBtn.textContent = '關閉';
-
-        header.appendChild(headerMeta);
-        header.appendChild(link);
-        header.appendChild(closeBtn);
-
-        const frame = document.createElement('iframe');
-        frame.className = 'clm-gallery-download-preview-frame';
-        frame.title = 'RMDOWN 下載內容';
-        // 确保 iframe 允许导航，不设置 sandbox 属性以允许所有导航
-
-        const footer = document.createElement('div');
-        footer.className = 'clm-gallery-download-preview-footer';
-        const status = document.createElement('div');
-        status.className = 'clm-download-window-status';
-        status.textContent = '準備載入下載頁面…';
-        const fallbackHint = document.createElement('div');
-        fallbackHint.style.marginTop = '6px';
-        fallbackHint.style.fontSize = '11px';
-        fallbackHint.style.color = 'rgba(0, 0, 0, 0.45)';
-        fallbackHint.textContent = '若頁面無法顯示，請使用新窗口開啟連結。';
-        footer.appendChild(status);
-        footer.appendChild(fallbackHint);
-
-        preview.appendChild(header);
-        preview.appendChild(frame);
-        preview.appendChild(footer);
-
-        mask.appendChild(preview);
-        document.body.appendChild(mask);
-
-        const state = {
-            open: false,
-            currentUrl: '',
-            loadPromise: null,
-            loadResolve: null
-        };
-
-        function setTitle(text) {
-            title.textContent = text || '下載窗口 · RMDOWN';
-        }
-
-        function setSubtitle(text) {
-            subtitle.textContent = text || '';
-        }
-
-        function setLink(url) {
-            if (url) {
-                link.href = url;
-                link.style.pointerEvents = '';
-                link.style.opacity = '';
-            } else {
-                link.removeAttribute('href');
-                link.style.pointerEvents = 'none';
-                link.style.opacity = '0.45';
+        function saveSearchSettings(settings) {
+            try {
+                localStorage.setItem(SEARCH_SETTINGS_KEY, JSON.stringify(settings));
+            } catch (e) {
+                console.error('草榴Manager: 搜索设置保存失败', e);
             }
         }
 
-        function setPageUrl(url) {
-            state.currentUrl = url || '';
-            // 重置加载 Promise
-            if (state.loadResolve) {
-                state.loadResolve = null;
-            }
-            state.loadPromise = null;
-            
-            if (url) {
-                // 创建新的 Promise 用于等待加载完成
-                state.loadPromise = new Promise((resolve) => {
-                    state.loadResolve = resolve;
+        function createSearchDialog() {
+            const mask = document.createElement('div');
+            mask.className = 'clm-search-dialog-mask';
+            mask.style.display = 'none';
+
+            const dialog = document.createElement('div');
+            dialog.className = 'clm-search-dialog';
+
+            const header = document.createElement('div');
+            header.className = 'clm-search-dialog-header';
+            const title = document.createElement('div');
+            title.className = 'clm-search-dialog-title';
+            title.textContent = '搜索选项';
+            const closeBtn = document.createElement('button');
+            closeBtn.type = 'button';
+            closeBtn.className = 'clm-search-dialog-close';
+            closeBtn.textContent = '×';
+            header.appendChild(title);
+            header.appendChild(closeBtn);
+
+            const body = document.createElement('div');
+            body.className = 'clm-search-dialog-body';
+
+            // 关键词（必选）
+            const keywordRow = document.createElement('div');
+            keywordRow.className = 'clm-search-form-row';
+            const keywordLabel = document.createElement('label');
+            keywordLabel.className = 'clm-search-form-label required';
+            keywordLabel.textContent = '关键词';
+            const keywordInput = document.createElement('input');
+            keywordInput.type = 'text';
+            keywordInput.className = 'clm-search-form-input';
+            keywordInput.name = 'keyword';
+            keywordInput.id = 'sch_keyword';
+            keywordInput.placeholder = '請輸入搜索關鍵詞';
+            keywordRow.appendChild(keywordLabel);
+            keywordRow.appendChild(keywordInput);
+            body.appendChild(keywordRow);
+
+            // 社区分类（必选）
+            const fidRow = document.createElement('div');
+            fidRow.className = 'clm-search-form-row';
+            const fidLabel = document.createElement('label');
+            fidLabel.className = 'clm-search-form-label required';
+            fidLabel.textContent = '社区分类';
+            const fidSelect = document.createElement('select');
+            fidSelect.className = 'clm-search-form-select';
+            fidSelect.name = 'f_fid';
+            fidSelect.innerHTML = `
+                <option value="">請選擇板塊</option>
+                <option value="1">&gt;&gt; BT電影下載</option>
+                <option value="2"> &nbsp;|- 亞洲無碼原創區</option>
+                <option value="15"> &nbsp;|- 亞洲有碼原創區</option>
+                <option value="4"> &nbsp;|- 歐美原創區</option>
+                <option value="5"> &nbsp;|- 動漫原創區</option>
+                <option value="25"> &nbsp;|- 國產原創區</option>
+                <option value="26"> &nbsp;|- 中字原創區</option>
+                <option value="28"> &nbsp;|- AI破解原創區</option>
+                <option value="27"> &nbsp;|- 綜合分享區</option>
+                <option value="21"> &nbsp;|- HTTP下載區</option>
+                <option value="22"> &nbsp;|- 在綫成人影院</option>
+                <option value="10"> &nbsp;|- 草榴影視庫</option>
+                <option value="11"> &nbsp; &nbsp;|-  亞洲區</option>
+                <option value="12"> &nbsp; &nbsp;|-  歐美區</option>
+                <option value="13"> &nbsp; &nbsp;|-  動漫區</option>
+                <option value="14"> &nbsp; &nbsp;|-  圖片區</option>
+                <option value="23"> &nbsp; &nbsp;|-  博彩區</option>
+                <option value="6">&gt;&gt; 草榴休閑區</option>
+                <option value="7"> &nbsp;|- 技術討論區</option>
+                <option value="8"> &nbsp;|- 新時代的我們</option>
+                <option value="16"> &nbsp;|- 達蓋爾的旗幟</option>
+                <option value="20"> &nbsp;|- 成人文學交流區</option>
+                <option value="9"> &nbsp;|- 草榴資訊</option>
+            `;
+            fidRow.appendChild(fidLabel);
+            fidRow.appendChild(fidSelect);
+            body.appendChild(fidRow);
+
+            // 搜索帖子范围
+            const areaRow = document.createElement('div');
+            areaRow.className = 'clm-search-form-row';
+            const areaLabel = document.createElement('label');
+            areaLabel.className = 'clm-search-form-label';
+            areaLabel.textContent = '搜索帖子范围';
+            const areaGroup = document.createElement('div');
+            areaGroup.className = 'clm-search-form-radio-group';
+            const area0 = document.createElement('div');
+            area0.className = 'clm-search-form-radio';
+            area0.innerHTML = '<input type="radio" name="sch_area" value="0" id="sch_area_0" checked><label for="sch_area_0">主题标题</label>';
+            areaGroup.appendChild(area0);
+            areaRow.appendChild(areaLabel);
+            areaRow.appendChild(areaGroup);
+            body.appendChild(areaRow);
+
+            // 发表主题时间
+            const timeRow = document.createElement('div');
+            timeRow.className = 'clm-search-form-row';
+            const timeLabel = document.createElement('label');
+            timeLabel.className = 'clm-search-form-label';
+            timeLabel.textContent = '发表主题时间';
+            const timeSelect = document.createElement('select');
+            timeSelect.className = 'clm-search-form-select';
+            timeSelect.name = 'sch_time';
+            timeSelect.innerHTML = `
+                <option value="all">所有主题</option>
+                <option value="86400">1天内的主题</option>
+                <option value="172800">2天内的主题</option>
+                <option value="604800">1星期内的主题</option>
+                <option value="2592000">1个月内的主题</option>
+                <option value="5184000">2个月内的主题</option>
+                <option value="7776000">3个月内的主题</option>
+                <option value="15552000">6个月内的主题</option>
+                <option value="31536000">1年内的主题</option>
+            `;
+            timeRow.appendChild(timeLabel);
+            timeRow.appendChild(timeSelect);
+            body.appendChild(timeRow);
+
+            // 关键词匹配方式
+            const methodRow = document.createElement('div');
+            methodRow.className = 'clm-search-form-row';
+            const methodLabel = document.createElement('label');
+            methodLabel.className = 'clm-search-form-label';
+            methodLabel.textContent = '关键词匹配方式';
+            const methodGroup = document.createElement('div');
+            methodGroup.className = 'clm-search-form-radio-group';
+            const methodAnd = document.createElement('div');
+            methodAnd.className = 'clm-search-form-radio';
+            methodAnd.innerHTML = '<input type="radio" name="method" value="AND" id="method_and" checked><label for="method_and">完全匹配</label>';
+            const methodOr = document.createElement('div');
+            methodOr.className = 'clm-search-form-radio';
+            methodOr.innerHTML = '<input type="radio" name="method" value="OR" id="method_or"><label for="method_or">部分匹配</label>';
+            methodGroup.appendChild(methodAnd);
+            methodGroup.appendChild(methodOr);
+            methodRow.appendChild(methodLabel);
+            methodRow.appendChild(methodGroup);
+            body.appendChild(methodRow);
+
+            // 结果排序
+            const orderRow = document.createElement('div');
+            orderRow.className = 'clm-search-form-row';
+            const orderLabel = document.createElement('label');
+            orderLabel.className = 'clm-search-form-label';
+            orderLabel.textContent = '结果排序';
+            const orderSelect = document.createElement('select');
+            orderSelect.className = 'clm-search-form-select';
+            orderSelect.name = 'orderway';
+            orderSelect.style.marginBottom = '8px';
+            orderSelect.innerHTML = `
+                <option value="postdate">发布时间</option>
+                <option value="lastpost">最后回复时间</option>
+                <option value="replies">回复</option>
+                <option value="hits">赞</option>
+            `;
+            const ascGroup = document.createElement('div');
+            ascGroup.className = 'clm-search-form-radio-group';
+            const ascAsc = document.createElement('div');
+            ascAsc.className = 'clm-search-form-radio';
+            ascAsc.innerHTML = '<input type="radio" name="asc" value="ASC" id="asc_asc"><label for="asc_asc">升序</label>';
+            const ascDesc = document.createElement('div');
+            ascDesc.className = 'clm-search-form-radio';
+            ascDesc.innerHTML = '<input type="radio" name="asc" value="DESC" id="asc_desc" checked><label for="asc_desc">降序</label>';
+            ascGroup.appendChild(ascAsc);
+            ascGroup.appendChild(ascDesc);
+            orderRow.appendChild(orderLabel);
+            orderRow.appendChild(orderSelect);
+            orderRow.appendChild(ascGroup);
+            body.appendChild(orderRow);
+
+            // 限定用戶
+            const authorRow = document.createElement('div');
+            authorRow.className = 'clm-search-form-row';
+            const authorLabel = document.createElement('label');
+            authorLabel.className = 'clm-search-form-label';
+            authorLabel.textContent = '限定用戶(請輸入用戶名或留空)';
+            const authorInput = document.createElement('input');
+            authorInput.type = 'text';
+            authorInput.className = 'clm-search-form-input';
+            authorInput.name = 'pwuser';
+            authorInput.id = 'sch_author';
+            authorInput.placeholder = '請輸入用戶名或留空';
+            authorRow.appendChild(authorLabel);
+            authorRow.appendChild(authorInput);
+            body.appendChild(authorRow);
+
+            // 精华帖标志
+            const digestRow = document.createElement('div');
+            digestRow.className = 'clm-search-form-row';
+            const digestCheckbox = document.createElement('div');
+            digestCheckbox.className = 'clm-search-form-checkbox';
+            digestCheckbox.innerHTML = '<input type="checkbox" name="digest" value="1" id="digest_check"><label for="digest_check">精华帖标志</label>';
+            digestRow.appendChild(digestCheckbox);
+            body.appendChild(digestRow);
+
+            const footer = document.createElement('div');
+            footer.className = 'clm-search-dialog-footer';
+            const searchBtn = document.createElement('button');
+            searchBtn.type = 'button';
+            searchBtn.className = 'clm-search-btn clm-search-btn-primary';
+            searchBtn.textContent = '搜索';
+            const cancelBtn = document.createElement('button');
+            cancelBtn.type = 'button';
+            cancelBtn.className = 'clm-search-btn clm-search-btn-secondary';
+            cancelBtn.textContent = '取消';
+            footer.appendChild(searchBtn);
+            footer.appendChild(cancelBtn);
+
+            dialog.appendChild(header);
+            dialog.appendChild(body);
+            dialog.appendChild(footer);
+            mask.appendChild(dialog);
+            document.body.appendChild(mask);
+
+            let currentKeyword = '';
+            let currentSearchCallback = null;
+
+            function open(keyword, callback) {
+                currentKeyword = keyword;
+                currentSearchCallback = callback;
+                const settings = loadSearchSettings();
+                
+                // 设置关键词输入框
+                const keywordInput = document.getElementById('sch_keyword');
+                if (keywordInput) {
+                    keywordInput.value = keyword || '';
+                }
+                
+                // 加载保存的设置
+                fidSelect.value = settings.f_fid || '';
+                
+                // 清除所有单选按钮的选中状态
+                document.querySelectorAll('input[name="sch_area"]').forEach(radio => {
+                    radio.checked = false;
+                });
+                document.querySelectorAll('input[name="method"]').forEach(radio => {
+                    radio.checked = false;
+                });
+                document.querySelectorAll('input[name="asc"]').forEach(radio => {
+                    radio.checked = false;
                 });
                 
-                frame.src = url;
-                // 记录初始 URL，用于检测页面跳转
-                let initialUrl = url;
-                let hasNavigated = false;
+                // 设置选中的单选按钮
+                const schAreaRadio = document.querySelector('input[name="sch_area"][value="' + (settings.sch_area || '0') + '"]');
+                if (schAreaRadio) schAreaRadio.checked = true;
                 
-                // 监听 iframe 加载完成，尝试检测下载链接
-                frame.onload = function() {
-                    // 检查 iframe 是否发生了跳转（比如跳转到广告页面）
-                    // 这是正常行为，当用户点击 DOWNLOAD 后，页面会跳转到广告页面
-                    try {
-                        const currentUrl = frame.contentWindow.location.href;
-                        if (currentUrl !== initialUrl && !currentUrl.includes('rmdown.com')) {
-                            // iframe 已跳转到其他页面（可能是广告页面），这是正常行为
-                            // 保持窗口打开，让用户看到跳转后的页面
-                            hasNavigated = true;
-                            setStatus('頁面已跳轉到廣告頁面（正常行為）', 'info');
+                timeSelect.value = settings.sch_time || 'all';
+                
+                const methodRadio = document.querySelector('input[name="method"][value="' + (settings.method || 'AND') + '"]');
+                if (methodRadio) methodRadio.checked = true;
+                
+                orderSelect.value = settings.orderway || 'postdate';
+                
+                const ascRadio = document.querySelector('input[name="asc"][value="' + (settings.asc || 'DESC') + '"]');
+                if (ascRadio) ascRadio.checked = true;
+                
+                const digestCheck = document.getElementById('digest_check');
+                if (digestCheck) {
+                    digestCheck.checked = settings.digest || false;
+                }
+                
+                const authorInput = document.getElementById('sch_author');
+                if (authorInput) {
+                    authorInput.value = settings.sch_author || '';
+                }
+                
+                mask.style.display = 'flex';
+            }
+
+            function close() {
+                mask.style.display = 'none';
+                currentKeyword = '';
+                currentSearchCallback = null;
+            }
+
+            function performSearch() {
+                // 验证必选项
+                const keywordInput = document.getElementById('sch_keyword');
+                const keyword = keywordInput?.value.trim() || '';
+                if (!keyword) {
+                    alert('请输入关键词（必选项）');
+                    if (keywordInput) keywordInput.focus();
+                    return;
+                }
+                if (!fidSelect.value) {
+                    alert('请选择社区分类（必选项）');
+                    fidSelect.focus();
+                    return;
+                }
+
+                // 收集表单数据
+                const authorInput = document.getElementById('sch_author');
+                const authorValue = authorInput?.value.trim() || '';
+                const formData = {
+                    step: '2',
+                    s_type: 'forum',
+                    keyword: keyword,
+                    f_fid: fidSelect.value,
+                    sch_area: document.querySelector('input[name="sch_area"]:checked')?.value || '0',
+                    sch_time: timeSelect.value,
+                    method: document.querySelector('input[name="method"]:checked')?.value || 'AND',
+                    orderway: orderSelect.value,
+                    asc: document.querySelector('input[name="asc"]:checked')?.value || 'DESC',
+                    pwuser: authorValue,
+                    digest: document.getElementById('digest_check')?.checked ? '1' : ''
+                };
+
+                // 保存设置
+                const settings = {
+                    f_fid: formData.f_fid,
+                    sch_area: formData.sch_area,
+                    sch_time: formData.sch_time,
+                    method: formData.method,
+                    orderway: formData.orderway,
+                    asc: formData.asc,
+                    sch_author: authorValue,
+                    digest: document.getElementById('digest_check')?.checked || false
+                };
+                saveSearchSettings(settings);
+
+                // 构建搜索URL
+                const params = new URLSearchParams();
+                Object.keys(formData).forEach(key => {
+                    if (formData[key]) {
+                        params.append(key, formData[key]);
+                    }
+                });
+                const searchUrl = 'https://t66y.com/search.php?' + params.toString();
+
+                // 打开新标签页
+                window.open(searchUrl, '_blank');
+
+                // 执行回调
+                if (currentSearchCallback) {
+                    currentSearchCallback();
+                }
+
+                close();
+            }
+
+            closeBtn.addEventListener('click', close);
+            cancelBtn.addEventListener('click', close);
+            searchBtn.addEventListener('click', performSearch);
+            mask.addEventListener('click', (e) => {
+                if (e.target === mask) {
+                    close();
+                }
+            });
+
+            // ESC键关闭
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape' && mask.style.display === 'flex') {
+                    close();
+                }
+            });
+
+            return {
+                open,
+                close
+            };
+        }
+
+        function createInlineDownloadWindow() {
+            const mask = document.createElement('div');
+            mask.className = 'clm-download-window-mask';
+            const preview = document.createElement('div');
+            preview.className = 'clm-gallery-download-preview';
+
+            const header = document.createElement('div');
+            header.className = 'clm-gallery-download-preview-header';
+            const headerMeta = document.createElement('div');
+            headerMeta.style.display = 'flex';
+            headerMeta.style.flexDirection = 'column';
+            headerMeta.style.gap = '2px';
+            const title = document.createElement('div');
+            title.className = 'clm-gallery-download-preview-title';
+            title.textContent = '下載窗口 · RMDOWN';
+            const subtitle = document.createElement('div');
+            subtitle.className = 'clm-gallery-download-preview-subtitle';
+            headerMeta.appendChild(title);
+            headerMeta.appendChild(subtitle);
+
+            const link = document.createElement('a');
+            link.className = 'clm-gallery-download-preview-link';
+            link.textContent = '新窗口開啟';
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            // 点击新窗口开启时，关闭下载窗口（避免遮挡）
+            link.addEventListener('click', () => {
+                close();
+            });
+
+            const closeBtn = document.createElement('button');
+            closeBtn.type = 'button';
+            closeBtn.className = 'clm-gallery-download-preview-close';
+            closeBtn.textContent = '關閉';
+
+            header.appendChild(headerMeta);
+            header.appendChild(link);
+            header.appendChild(closeBtn);
+
+            const frame = document.createElement('iframe');
+            frame.className = 'clm-gallery-download-preview-frame';
+            frame.title = 'RMDOWN 下載內容';
+            // 确保 iframe 允许导航，不设置 sandbox 属性以允许所有导航
+
+            const footer = document.createElement('div');
+            footer.className = 'clm-gallery-download-preview-footer';
+            const status = document.createElement('div');
+            status.className = 'clm-download-window-status';
+            status.textContent = '準備載入下載頁面…';
+            const fallbackHint = document.createElement('div');
+            fallbackHint.style.marginTop = '6px';
+            fallbackHint.style.fontSize = '11px';
+            fallbackHint.style.color = 'rgba(0, 0, 0, 0.45)';
+            fallbackHint.textContent = '若頁面無法顯示，請使用新窗口開啟連結。';
+            footer.appendChild(status);
+            footer.appendChild(fallbackHint);
+
+            preview.appendChild(header);
+            preview.appendChild(frame);
+            preview.appendChild(footer);
+
+            mask.appendChild(preview);
+            document.body.appendChild(mask);
+
+            const state = {
+                open: false,
+                currentUrl: '',
+                loadPromise: null,
+                loadResolve: null
+            };
+
+            function setTitle(text) {
+                title.textContent = text || '下載窗口 · RMDOWN';
+            }
+
+            function setSubtitle(text) {
+                subtitle.textContent = text || '';
+            }
+
+            function setLink(url) {
+                if (url) {
+                    link.href = url;
+                    link.style.pointerEvents = '';
+                    link.style.opacity = '';
+                } else {
+                    link.removeAttribute('href');
+                    link.style.pointerEvents = 'none';
+                    link.style.opacity = '0.45';
+                }
+            }
+
+            function setPageUrl(url) {
+                state.currentUrl = url || '';
+                // 重置加载 Promise
+                if (state.loadResolve) {
+                    state.loadResolve = null;
+                }
+                state.loadPromise = null;
+                
+                if (url) {
+                    // 创建新的 Promise 用于等待加载完成
+                    state.loadPromise = new Promise((resolve) => {
+                        state.loadResolve = resolve;
+                    });
+                    
+                    frame.src = url;
+                    // 记录初始 URL，用于检测页面跳转
+                    let initialUrl = url;
+                    let hasNavigated = false;
+                    
+                    // 监听 iframe 加载完成，尝试检测下载链接
+                    frame.onload = function() {
+                        // 检查 iframe 是否发生了跳转（比如跳转到广告页面）
+                        // 这是正常行为，当用户点击 DOWNLOAD 后，页面会跳转到广告页面
+                        try {
+                            const currentUrl = frame.contentWindow.location.href;
+                            if (currentUrl !== initialUrl && !currentUrl.includes('rmdown.com')) {
+                                // iframe 已跳转到其他页面（可能是广告页面），这是正常行为
+                                // 保持窗口打开，让用户看到跳转后的页面
+                                hasNavigated = true;
+                                setStatus('頁面已跳轉到廣告頁面（正常行為）', 'info');
+                                // 通知加载完成
+                                if (state.loadResolve) {
+                                    state.loadResolve();
+                                    state.loadResolve = null;
+                                }
+                                return;
+                            }
+                            // 如果还在 rmdown.com 域名下，检查是否有 poData，以便后续跳转
+                            if (currentUrl.includes('rmdown.com')) {
+                                try {
+                                    const iframeWindow = frame.contentWindow;
+                                    if (typeof iframeWindow.poData !== 'undefined' && Array.isArray(iframeWindow.poData) && iframeWindow.poData.length > 0) {
+                                        // poData 存在，跳转应该会在 downloadFile 完成后自动执行
+                                        console.log('草榴Manager: 检测到 poData，等待自动跳转');
+                                    }
+                                } catch (e) {
+                                    // 无法访问 iframe 的 window 对象
+                                }
+                            }
+                        } catch (e) {
+                            // 跨域限制，无法访问 location
+                            // 这是正常的，当页面跳转到其他域名时会出现跨域限制
+                            // 我们假设跳转已经发生，这是正常行为
+                            if (!hasNavigated) {
+                                // 可能是第一次加载后的跳转，更新状态
+                                setStatus('頁面可能已跳轉（跨域限制無法檢測）', 'info');
+                            }
+                        }
+                        
+                        // 等待一小段时间，确保页面完全渲染
+                        setTimeout(() => {
+                            try {
+                                // 尝试访问 iframe 内容（可能因跨域限制而失败）
+                                const iframeDoc = frame.contentDocument || frame.contentWindow.document;
+                                if (iframeDoc) {
+                                    // 查找所有可能的下载链接
+                                    const downloadLinks = iframeDoc.querySelectorAll('a[href*="download"], a[href*=".torrent"], button[onclick*="download"], button[onclick*="Download"], form[action*="download"], a[href*=".zip"], a[href*=".rar"], a[href*=".7z"]');
+                                    downloadLinks.forEach(link => {
+                                        // 使用捕获阶段，确保在事件传播前就隐藏窗口
+                                        link.addEventListener('click', function(e) {
+                                            // 立即隐藏下载窗口，但允许跳转继续
+                                            hideForDownload();
+                                        }, true); // 使用捕获阶段
+                                    });
+                                    
+                                    // 也监听表单提交（可能用于下载）
+                                    const forms = iframeDoc.querySelectorAll('form');
+                                    forms.forEach(form => {
+                                        form.addEventListener('submit', function() {
+                                            // 立即隐藏下载窗口，但允许提交继续
+                                            hideForDownload();
+                                        }, true); // 使用捕获阶段
+                                    });
+                                    
+                                    // 监听所有链接点击（更广泛的捕获）
+                                    iframeDoc.addEventListener('click', function(e) {
+                                        const target = e.target;
+                                        // 检查是否是下载相关的链接
+                                        if (target.tagName === 'A' || target.closest('a')) {
+                                            const href = target.href || (target.closest('a')?.href);
+                                            if (href && (href.includes('download') || href.includes('.torrent') || href.includes('.zip') || href.includes('.rar') || href.includes('.7z'))) {
+                                                // 延迟一点，确保链接能正常触发
+                                                setTimeout(() => {
+                                                    hideForDownload();
+                                                }, 100);
+                                            }
+                                        }
+                                    }, true);
+                                    
+                                    // 监听 DOWNLOAD 按钮点击，确保允许页面跳转
+                                    // 查找所有按钮，然后筛选出包含 "DOWNLOAD" 文本的按钮
+                                    const allButtons = iframeDoc.querySelectorAll('button');
+                                    allButtons.forEach(btn => {
+                                        const btnText = btn.textContent || btn.innerText || '';
+                                        const btnOnclick = btn.getAttribute('onclick') || '';
+                                        const btnTitle = btn.getAttribute('title') || '';
+                                        // 检查是否是 DOWNLOAD 按钮
+                                        if (btnOnclick.includes('downloadFile') || 
+                                            btnTitle.toLowerCase().includes('download') ||
+                                            btnText.toUpperCase().includes('DOWNLOAD')) {
+                                            btn.addEventListener('click', function(e) {
+                                                // 允许点击事件正常传播，不阻止默认行为
+                                                // 这样 downloadFile() 函数可以正常执行，包括跳转到广告页面
+                                                hideForDownload();
+                                            }, false); // 不使用捕获阶段，让事件正常传播
+                                        }
+                                    });
+                                }
+                            } catch (e) {
+                                // 跨域限制，无法访问 iframe 内容
+                                // 使用备用方案：监听 iframe 的 beforeunload 事件
+                                try {
+                                    frame.contentWindow.addEventListener('beforeunload', function() {
+                                        // 当 iframe 即将卸载时（可能是下载触发或页面跳转），暂时隐藏下载窗口
+                                        hideForDownload();
+                                    });
+                                } catch (e2) {
+                                    // 如果还是失败，忽略
+                                }
+                            }
+                            
                             // 通知加载完成
                             if (state.loadResolve) {
                                 state.loadResolve();
                                 state.loadResolve = null;
                             }
-                            return;
-                        }
-                        // 如果还在 rmdown.com 域名下，检查是否有 poData，以便后续跳转
-                        if (currentUrl.includes('rmdown.com')) {
-                            try {
-                                const iframeWindow = frame.contentWindow;
-                                if (typeof iframeWindow.poData !== 'undefined' && Array.isArray(iframeWindow.poData) && iframeWindow.poData.length > 0) {
-                                    // poData 存在，跳转应该会在 downloadFile 完成后自动执行
-                                    console.log('草榴Manager: 检测到 poData，等待自动跳转');
-                                }
-                            } catch (e) {
-                                // 无法访问 iframe 的 window 对象
-                            }
-                        }
-                    } catch (e) {
-                        // 跨域限制，无法访问 location
-                        // 这是正常的，当页面跳转到其他域名时会出现跨域限制
-                        // 我们假设跳转已经发生，这是正常行为
-                        if (!hasNavigated) {
-                            // 可能是第一次加载后的跳转，更新状态
-                            setStatus('頁面可能已跳轉（跨域限制無法檢測）', 'info');
-                        }
+                        }, 500); // 等待 500ms 确保页面完全加载
+                    };
+                } else {
+                    frame.removeAttribute('src');
+                    frame.onload = null;
+                    // 如果没有 URL，立即 resolve
+                    if (state.loadResolve) {
+                        state.loadResolve();
+                        state.loadResolve = null;
+                    }
+                }
+            }
+            
+            function waitForLoad() {
+                return state.loadPromise || Promise.resolve();
+            }
+            
+            // 模拟点击 DOWNLOAD 按钮
+            function simulateDownloadClick() {
+                try {
+                    const iframeDoc = frame.contentDocument || frame.contentWindow?.document;
+                    if (!iframeDoc) {
+                        console.warn('草榴Manager: 无法访问 iframe 内容，可能因跨域限制');
+                        return false;
                     }
                     
-                    // 等待一小段时间，确保页面完全渲染
-                    setTimeout(() => {
-                        try {
-                            // 尝试访问 iframe 内容（可能因跨域限制而失败）
-                            const iframeDoc = frame.contentDocument || frame.contentWindow.document;
-                            if (iframeDoc) {
-                                // 查找所有可能的下载链接
-                                const downloadLinks = iframeDoc.querySelectorAll('a[href*="download"], a[href*=".torrent"], button[onclick*="download"], button[onclick*="Download"], form[action*="download"], a[href*=".zip"], a[href*=".rar"], a[href*=".7z"]');
-                                downloadLinks.forEach(link => {
-                                    // 使用捕获阶段，确保在事件传播前就隐藏窗口
-                                    link.addEventListener('click', function(e) {
-                                        // 立即隐藏下载窗口，但允许跳转继续
-                                        hideForDownload();
-                                    }, true); // 使用捕获阶段
-                                });
-                                
-                                // 也监听表单提交（可能用于下载）
-                                const forms = iframeDoc.querySelectorAll('form');
-                                forms.forEach(form => {
-                                    form.addEventListener('submit', function() {
-                                        // 立即隐藏下载窗口，但允许提交继续
-                                        hideForDownload();
-                                    }, true); // 使用捕获阶段
-                                });
-                                
-                                // 监听所有链接点击（更广泛的捕获）
-                                iframeDoc.addEventListener('click', function(e) {
-                                    const target = e.target;
-                                    // 检查是否是下载相关的链接
-                                    if (target.tagName === 'A' || target.closest('a')) {
-                                        const href = target.href || (target.closest('a')?.href);
-                                        if (href && (href.includes('download') || href.includes('.torrent') || href.includes('.zip') || href.includes('.rar') || href.includes('.7z'))) {
-                                            // 延迟一点，确保链接能正常触发
-                                            setTimeout(() => {
-                                                hideForDownload();
-                                            }, 100);
-                                        }
+                    // 查找所有按钮，然后筛选出包含 "DOWNLOAD" 文本的按钮
+                    const allButtons = iframeDoc.querySelectorAll('button');
+                    for (const btn of allButtons) {
+                        const btnText = btn.textContent || btn.innerText || '';
+                        const btnOnclick = btn.getAttribute('onclick') || '';
+                        const btnTitle = btn.getAttribute('title') || '';
+                        // 检查是否是 DOWNLOAD 按钮
+                        if (btnOnclick.includes('downloadFile') || 
+                            btnTitle.toLowerCase().includes('download') ||
+                            btnText.toUpperCase().includes('DOWNLOAD')) {
+                            console.log('草榴Manager: 找到 DOWNLOAD 按钮，正在模拟点击...');
+                            // 创建并触发点击事件
+                            const clickEvent = new MouseEvent('click', {
+                                view: frame.contentWindow,
+                                bubbles: true,
+                                cancelable: true
+                            });
+                            btn.dispatchEvent(clickEvent);
+                            // 如果按钮有 onclick 属性，也直接调用
+                            if (btnOnclick.includes('downloadFile')) {
+                                try {
+                                    // 尝试在 iframe 的 window 上下文中执行 onclick
+                                    const iframeWindow = frame.contentWindow;
+                                    if (iframeWindow && typeof iframeWindow.downloadFile === 'function') {
+                                        iframeWindow.downloadFile(btn);
+                                    } else if (btn.onclick) {
+                                        btn.onclick();
                                     }
-                                }, true);
-                                
-                                // 监听 DOWNLOAD 按钮点击，确保允许页面跳转
-                                // 查找所有按钮，然后筛选出包含 "DOWNLOAD" 文本的按钮
-                                const allButtons = iframeDoc.querySelectorAll('button');
-                                allButtons.forEach(btn => {
-                                    const btnText = btn.textContent || btn.innerText || '';
-                                    const btnOnclick = btn.getAttribute('onclick') || '';
-                                    const btnTitle = btn.getAttribute('title') || '';
-                                    // 检查是否是 DOWNLOAD 按钮
-                                    if (btnOnclick.includes('downloadFile') || 
-                                        btnTitle.toLowerCase().includes('download') ||
-                                        btnText.toUpperCase().includes('DOWNLOAD')) {
-                                        btn.addEventListener('click', function(e) {
-                                            // 允许点击事件正常传播，不阻止默认行为
-                                            // 这样 downloadFile() 函数可以正常执行，包括跳转到广告页面
-                                            hideForDownload();
-                                        }, false); // 不使用捕获阶段，让事件正常传播
-                                    }
-                                });
+                                } catch (e) {
+                                    console.warn('草榴Manager: 执行 onclick 失败', e);
+                                }
                             }
-                        } catch (e) {
-                            // 跨域限制，无法访问 iframe 内容
-                            // 使用备用方案：监听 iframe 的 beforeunload 事件
-                            try {
-                                frame.contentWindow.addEventListener('beforeunload', function() {
-                                    // 当 iframe 即将卸载时（可能是下载触发或页面跳转），暂时隐藏下载窗口
-                                    hideForDownload();
-                                });
-                            } catch (e2) {
-                                // 如果还是失败，忽略
-                            }
+                            hideForDownload();
+                            return true;
                         }
-                        
-                        // 通知加载完成
-                        if (state.loadResolve) {
-                            state.loadResolve();
-                            state.loadResolve = null;
-                        }
-                    }, 500); // 等待 500ms 确保页面完全加载
-                };
-            } else {
-                frame.removeAttribute('src');
-                frame.onload = null;
-                // 如果没有 URL，立即 resolve
-                if (state.loadResolve) {
-                    state.loadResolve();
-                    state.loadResolve = null;
-                }
-            }
-        }
-        
-        function waitForLoad() {
-            return state.loadPromise || Promise.resolve();
-        }
-        
-        // 模拟点击 DOWNLOAD 按钮
-        function simulateDownloadClick() {
-            try {
-                const iframeDoc = frame.contentDocument || frame.contentWindow?.document;
-                if (!iframeDoc) {
-                    console.warn('草榴Manager: 无法访问 iframe 内容，可能因跨域限制');
+                    }
+                    console.warn('草榴Manager: 未找到 DOWNLOAD 按钮');
+                    return false;
+                } catch (e) {
+                    console.error('草榴Manager: 模拟点击 DOWNLOAD 按钮失败', e);
                     return false;
                 }
+            }
+            
+            // 暂时隐藏下载窗口，以便浏览器的文件保存对话框显示在最上层
+            function hideForDownload() {
+                // 使用 display: none 而不是 visibility，确保完全隐藏
+                mask.style.display = 'none';
+                mask.style.zIndex = '1'; // 降低 z-index
+                // 10秒后恢复显示（给文件保存对话框足够的时间）
+                setTimeout(() => {
+                    if (state.open) {
+                        mask.style.display = '';
+                        mask.style.zIndex = ''; // 恢复 z-index
+                    }
+                }, 10000);
+            }
+
+            function setStatus(text, variant = 'info') {
+                status.textContent = text || '準備中…';
+                if (variant === 'success' || variant === 'error') {
+                    status.dataset.variant = variant;
+                } else {
+                    delete status.dataset.variant;
+                }
+            }
+
+            function open(options = {}) {
+                debugLog('========== 打开下载窗口 ==========');
+                debugLog('options:', options);
+                debugLog('当前state.open:', state.open);
+                debugLog('window.innerWidth:', window.innerWidth);
+                debugLog('window.innerHeight:', window.innerHeight);
                 
-                // 查找所有按钮，然后筛选出包含 "DOWNLOAD" 文本的按钮
-                const allButtons = iframeDoc.querySelectorAll('button');
-                for (const btn of allButtons) {
-                    const btnText = btn.textContent || btn.innerText || '';
-                    const btnOnclick = btn.getAttribute('onclick') || '';
-                    const btnTitle = btn.getAttribute('title') || '';
-                    // 检查是否是 DOWNLOAD 按钮
-                    if (btnOnclick.includes('downloadFile') || 
-                        btnTitle.toLowerCase().includes('download') ||
-                        btnText.toUpperCase().includes('DOWNLOAD')) {
-                        console.log('草榴Manager: 找到 DOWNLOAD 按钮，正在模拟点击...');
-                        // 创建并触发点击事件
-                        const clickEvent = new MouseEvent('click', {
-                            view: frame.contentWindow,
-                            bubbles: true,
-                            cancelable: true
-                        });
-                        btn.dispatchEvent(clickEvent);
-                        // 如果按钮有 onclick 属性，也直接调用
-                        if (btnOnclick.includes('downloadFile')) {
-                            try {
-                                // 尝试在 iframe 的 window 上下文中执行 onclick
-                                const iframeWindow = frame.contentWindow;
-                                if (iframeWindow && typeof iframeWindow.downloadFile === 'function') {
-                                    iframeWindow.downloadFile(btn);
-                                } else if (btn.onclick) {
-                                    btn.onclick();
-                                }
-                            } catch (e) {
-                                console.warn('草榴Manager: 执行 onclick 失败', e);
-                            }
-                        }
-                        hideForDownload();
-                        return true;
+                if (!state.open) {
+                    state.open = true;
+                    debugLog('添加clm-active类到mask');
+                    mask.classList.add('clm-active');
+                    debugLog('mask.classList:', Array.from(mask.classList));
+                }
+                
+                debugLog('添加clm-active类到preview');
+                preview.classList.add('clm-active');
+                debugLog('preview.classList:', Array.from(preview.classList));
+                
+                // 检查CSS样式
+                const previewStyles = window.getComputedStyle(preview);
+                debugLog('preview计算后的样式:');
+                debugLog('  - position:', previewStyles.position);
+                debugLog('  - inset:', previewStyles.inset);
+                debugLog('  - top:', previewStyles.top);
+                debugLog('  - left:', previewStyles.left);
+                debugLog('  - right:', previewStyles.right);
+                debugLog('  - bottom:', previewStyles.bottom);
+                debugLog('  - width:', previewStyles.width);
+                debugLog('  - height:', previewStyles.height);
+                debugLog('  - border-radius:', previewStyles.borderRadius);
+                
+                setTitle(options.title || null);
+                setSubtitle(options.subtitle || '');
+                if (options.pageUrl) {
+                    setPageUrl(options.pageUrl);
+                    setLink(options.pageUrl);
+                } else if (state.currentUrl) {
+                    setLink(state.currentUrl);
+                } else if (options.link) {
+                    setLink(options.link);
+                } else {
+                    setLink('');
+                    setPageUrl('');
+                }
+                setStatus(options.status || '正在初始化下載窗口…');
+                
+                debugLog('下载窗口打开完成');
+            }
+
+            function close() {
+                if (!state.open) return;
+                state.open = false;
+                mask.classList.remove('clm-active');
+                preview.classList.remove('clm-active');
+                state.currentUrl = '';
+                setLink('');
+                setStatus('準備載入下載頁面…');
+                frame.removeAttribute('src');
+                // 重置加载 Promise
+                if (state.loadResolve) {
+                    state.loadResolve = null;
+                }
+                state.loadPromise = null;
+                
+                // 重置所有处于忙碌状态的下载按钮
+                const busyButtons = document.querySelectorAll('[data-clm-busy="1"]');
+                for (const btn of busyButtons) {
+                    btn.dataset.clmBusy = '0';
+                    if (typeof btn.__clmRefreshDownloadState === 'function') {
+                        btn.__clmRefreshDownloadState();
+                    } else {
+                        btn.disabled = false;
                     }
                 }
-                console.warn('草榴Manager: 未找到 DOWNLOAD 按钮');
-                return false;
-            } catch (e) {
-                console.error('草榴Manager: 模拟点击 DOWNLOAD 按钮失败', e);
-                return false;
             }
-        }
-        
-        // 暂时隐藏下载窗口，以便浏览器的文件保存对话框显示在最上层
-        function hideForDownload() {
-            // 使用 display: none 而不是 visibility，确保完全隐藏
-            mask.style.display = 'none';
-            mask.style.zIndex = '1'; // 降低 z-index
-            // 10秒后恢复显示（给文件保存对话框足够的时间）
-            setTimeout(() => {
-                if (state.open) {
-                    mask.style.display = '';
-                    mask.style.zIndex = ''; // 恢复 z-index
+
+            closeBtn.addEventListener('click', () => close());
+            mask.addEventListener('click', (ev) => {
+                if (ev.target === mask) {
+                    close();
                 }
-            }, 10000);
+            });
+            preview.addEventListener('click', (ev) => ev.stopPropagation());
+            
+            // ESC 键关闭下载窗口
+            document.addEventListener('keydown', (ev) => {
+                if (ev.key === 'Escape' && state.open) {
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                    close();
+                }
+            });
+
+            return {
+                open,
+                close,
+                setTitle,
+                setSubtitle,
+                setLink,
+                setPageUrl,
+                setStatus,
+                waitForLoad,
+                simulateDownloadClick,
+                isOpen: () => state.open,
+                getFrame: () => frame
+            };
         }
 
-        function setStatus(text, variant = 'info') {
-            status.textContent = text || '準備中…';
-            if (variant === 'success' || variant === 'error') {
-                status.dataset.variant = variant;
+        const searchDialog = createSearchDialog();
+        // 将searchDialog存储到全局变量，以便在闭包中访问
+        window.clmSearchDialog = searchDialog;
+        const galleryOverlay = createGalleryOverlay();
+        const inlineDownloadWindow = createInlineDownloadWindow();
+        // 将 inlineDownloadWindow 存储到全局变量，以便在闭包中访问
+        window.clmInlineDownloadWindow = inlineDownloadWindow;
+
+        function closeInlineDownloadWindowIfOpen() {
+            if (inlineDownloadWindow.isOpen()) {
+                inlineDownloadWindow.close();
+                return true;
+            }
+            return false;
+        }
+        let galleryLoadToken = 0;
+
+        async function fetchThreadData(threadUrl) {
+            if (!threadUrl) return null;
+            const normalized = getAbsoluteUrl(threadUrl);
+            if (!normalized) return null;
+            if (threadDataCache.has(normalized)) {
+                return threadDataCache.get(normalized);
+            }
+            const fetchPromise = (async () => {
+                try {
+                    const resp = await fetch(normalized, { credentials: 'include' });
+                    if (!resp.ok) {
+                        throw new Error(`HTTP ${resp.status}`);
+                    }
+                    const html = await resp.text();
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(html, 'text/html');
+                    
+                    // 兼容手机端和电脑端的内容选择器
+                    let threadContent = doc.querySelector('.tpc_content');
+                    if (!threadContent) {
+                        // 手机端使用 .tpc_cont 或 #main
+                        threadContent = doc.querySelector('.tpc_cont') || doc.querySelector('#main') || doc.body;
+                    }
+                    
+                    const gallery = collectGalleryImages(threadContent, normalized);
+                    // 先恢复广告（执行 spinit），这样 tips 中的表格会被生成
+                    const adsWithFallback = await collectThreadAdsWithScriptFallback(doc, normalized, html);
+                    // 然后再提取 tips（此时 tips 已经包含完整的表格内容）
+                    const { topic, comments, ads: contextAds } = collectThreadContext(doc);
+                    const ads = adsWithFallback.length > 0 ? adsWithFallback : contextAds;
+                    const download = extractThreadDownloadInfo(doc, normalized);
+                    const smallDownload = extractSmallFormatDownloadInfo(doc, normalized);
+                    const qualityTag = resolveQualityTagFromDocument(doc);
+                    return { gallery, topic, comments, download, smallDownload, qualityTag, ads };
+                } catch (err) {
+                    console.error('clm 論壇畫廊載入失敗', normalized, err);
+                    return { gallery: [], topic: null, comments: [], smallDownload: null, ads: [] };
+                }
+            })();
+            threadDataCache.set(normalized, fetchPromise);
+            return fetchPromise;
+        }
+
+        async function openGalleryForThread(threadUrl, options = {}) {
+            if (!threadUrl) return null;
+            const { instant = false, qualityTag: requestedQualityTag = null } = options;
+            focusGallerySource(threadUrl, currentListHoverCtx);
+            const loadToken = ++galleryLoadToken;
+            if (instant) {
+                galleryOverlay.showLoading();
+            }
+            const data = await fetchThreadData(threadUrl);
+            if (loadToken !== galleryLoadToken) {
+                return null;
+            }
+            if (!data || !data.gallery.length) {
+                clearGallerySourceHighlight();
+                if (instant && galleryOverlay.isOpen()) {
+                    galleryOverlay.close();
+                }
+                alert('未找到該帖子的畫廊內容');
+                return null;
+            }
+            const hoverQualityTag = requestedQualityTag ?? currentListHoverCtx?.qualityTag ?? null;
+            galleryOverlay.open(data.gallery, {
+                startIndex: 0,
+                topic: data.topic || null,
+                comments: data.comments || [],
+                download: data.download || null,
+                smallDownload: data.smallDownload || null,
+                threadUrl,
+                qualityTag: data.qualityTag || hoverQualityTag || null,
+                ads: data.ads || []
+            });
+            markThreadGalleryVisited(threadUrl);
+            return data;
+        }
+
+        function setupThreadDownloadButton(btn, options = {}) {
+            const defaultLabel = options.label || '下載';
+            const downloadedLabel = options.downloadedLabel || '已下載';
+            btn.textContent = defaultLabel;
+            const threadUrl = getAbsoluteUrl(options.threadUrl) || options.threadUrl;
+            const threadKey = normalizeThreadKey(threadUrl);
+            if (!threadKey || !threadUrl) {
+                btn.disabled = true;
+                btn.title = '無法解析帖子地址';
+                return;
+            }
+            const container = options.container || null;
+            const containerClass = options.containerClass || '';
+            const defaultTitle = '下載到 qBittorrent';
+            const downloadedTitle = '已下載，可再次發送到 qBittorrent';
+            if (options.threadTitle) {
+                btn.dataset.clmThreadTitle = options.threadTitle;
             } else {
-                delete status.dataset.variant;
+                delete btn.dataset.clmThreadTitle;
             }
+
+            const updateState = () => {
+                const downloaded = hasDownloadedThread(threadKey);
+                btn.classList.toggle('clm-downloaded', downloaded);
+                btn.textContent = downloaded ? downloadedLabel : defaultLabel;
+                btn.title = downloaded ? downloadedTitle : defaultTitle;
+                if (container && containerClass) {
+                    container.classList.toggle(containerClass, downloaded);
+                }
+                if (btn.dataset.clmBusy !== '1') {
+                    btn.disabled = false;
+                }
+            };
+
+            btn.dataset.clmThreadKey = threadKey;
+            btn.dataset.clmThreadUrl = threadUrl;
+            btn.__clmRefreshDownloadState = updateState;
+            updateState();
+            subscribeDownloadStatus(threadKey, () => updateState());
+
+            btn.addEventListener('click', (ev) => {
+                ev.preventDefault();
+                ev.stopPropagation();
+                if (btn.dataset.clmBusy === '1') return;
+                handleThreadDownloadButtonClick(btn);
+            });
         }
 
-        function open(options = {}) {
-            debugLog('========== 打开下载窗口 ==========');
-            debugLog('options:', options);
-            debugLog('当前state.open:', state.open);
-            debugLog('window.innerWidth:', window.innerWidth);
-            debugLog('window.innerHeight:', window.innerHeight);
-            
-            if (!state.open) {
-                state.open = true;
-                debugLog('添加clm-active类到mask');
-                mask.classList.add('clm-active');
-                debugLog('mask.classList:', Array.from(mask.classList));
-            }
-            
-            debugLog('添加clm-active类到preview');
-            preview.classList.add('clm-active');
-            debugLog('preview.classList:', Array.from(preview.classList));
-            
-            // 检查CSS样式
-            const previewStyles = window.getComputedStyle(preview);
-            debugLog('preview计算后的样式:');
-            debugLog('  - position:', previewStyles.position);
-            debugLog('  - inset:', previewStyles.inset);
-            debugLog('  - top:', previewStyles.top);
-            debugLog('  - left:', previewStyles.left);
-            debugLog('  - right:', previewStyles.right);
-            debugLog('  - bottom:', previewStyles.bottom);
-            debugLog('  - width:', previewStyles.width);
-            debugLog('  - height:', previewStyles.height);
-            debugLog('  - border-radius:', previewStyles.borderRadius);
-            
-            setTitle(options.title || null);
-            setSubtitle(options.subtitle || '');
-            if (options.pageUrl) {
-                setPageUrl(options.pageUrl);
-                setLink(options.pageUrl);
-            } else if (state.currentUrl) {
-                setLink(state.currentUrl);
-            } else if (options.link) {
-                setLink(options.link);
-            } else {
-                setLink('');
-                setPageUrl('');
-            }
-            setStatus(options.status || '正在初始化下載窗口…');
-            
-            debugLog('下载窗口打开完成');
-        }
-
-        function close() {
-            if (!state.open) return;
-            state.open = false;
-            mask.classList.remove('clm-active');
-            preview.classList.remove('clm-active');
-            state.currentUrl = '';
-            setLink('');
-            setStatus('準備載入下載頁面…');
-            frame.removeAttribute('src');
-            // 重置加载 Promise
-            if (state.loadResolve) {
-                state.loadResolve = null;
-            }
-            state.loadPromise = null;
-            
-            // 重置所有处于忙碌状态的下载按钮
-            const busyButtons = document.querySelectorAll('[data-clm-busy="1"]');
-            for (const btn of busyButtons) {
+        async function handleThreadDownloadButtonClick(btn) {
+            const threadKey = btn.dataset.clmThreadKey;
+            const threadUrl = btn.dataset.clmThreadUrl || threadKey;
+            if (!threadKey || !threadUrl) return;
+            btn.dataset.clmBusy = '1';
+            btn.disabled = true;
+            inlineDownloadWindow.open({
+                subtitle: btn.dataset.clmThreadTitle || '',
+                status: '正在載入帖子內容…'
+            });
+            const restore = () => {
                 btn.dataset.clmBusy = '0';
                 if (typeof btn.__clmRefreshDownloadState === 'function') {
                     btn.__clmRefreshDownloadState();
                 } else {
                     btn.disabled = false;
                 }
-            }
-        }
-
-        closeBtn.addEventListener('click', () => close());
-        mask.addEventListener('click', (ev) => {
-            if (ev.target === mask) {
-                close();
-            }
-        });
-        preview.addEventListener('click', (ev) => ev.stopPropagation());
-        
-        // ESC 键关闭下载窗口
-        document.addEventListener('keydown', (ev) => {
-            if (ev.key === 'Escape' && state.open) {
-                ev.preventDefault();
-                ev.stopPropagation();
-                close();
-            }
-        });
-
-        return {
-            open,
-            close,
-            setTitle,
-            setSubtitle,
-            setLink,
-            setPageUrl,
-            setStatus,
-            waitForLoad,
-            simulateDownloadClick,
-            isOpen: () => state.open,
-            getFrame: () => frame
-        };
-    }
-
-    const searchDialog = createSearchDialog();
-    // 将searchDialog存储到全局变量，以便在闭包中访问
-    window.clmSearchDialog = searchDialog;
-    const galleryOverlay = createGalleryOverlay();
-    const inlineDownloadWindow = createInlineDownloadWindow();
-    // 将 inlineDownloadWindow 存储到全局变量，以便在闭包中访问
-    window.clmInlineDownloadWindow = inlineDownloadWindow;
-
-    function closeInlineDownloadWindowIfOpen() {
-        if (inlineDownloadWindow.isOpen()) {
-            inlineDownloadWindow.close();
-            return true;
-        }
-        return false;
-    }
-    let galleryLoadToken = 0;
-
-    async function fetchThreadData(threadUrl) {
-        if (!threadUrl) return null;
-        const normalized = getAbsoluteUrl(threadUrl);
-        if (!normalized) return null;
-        if (threadDataCache.has(normalized)) {
-            return threadDataCache.get(normalized);
-        }
-        const fetchPromise = (async () => {
+            };
             try {
-                const resp = await fetch(normalized, { credentials: 'include' });
-                if (!resp.ok) {
-                    throw new Error(`HTTP ${resp.status}`);
-                }
-                const html = await resp.text();
-                const parser = new DOMParser();
-                const doc = parser.parseFromString(html, 'text/html');
-                
-                // 兼容手机端和电脑端的内容选择器
-                let threadContent = doc.querySelector('.tpc_content');
-                if (!threadContent) {
-                    // 手机端使用 .tpc_cont 或 #main
-                    threadContent = doc.querySelector('.tpc_cont') || doc.querySelector('#main') || doc.body;
-                }
-                
-                const gallery = collectGalleryImages(threadContent, normalized);
-                // 先恢复广告（执行 spinit），这样 tips 中的表格会被生成
-                const adsWithFallback = await collectThreadAdsWithScriptFallback(doc, normalized, html);
-                // 然后再提取 tips（此时 tips 已经包含完整的表格内容）
-                const { topic, comments, ads: contextAds } = collectThreadContext(doc);
-                const ads = adsWithFallback.length > 0 ? adsWithFallback : contextAds;
-                const download = extractThreadDownloadInfo(doc, normalized);
-                const qualityTag = resolveQualityTagFromDocument(doc);
-                return { gallery, topic, comments, download, qualityTag, ads };
-            } catch (err) {
-                console.error('clm 論壇畫廊載入失敗', normalized, err);
-                return { gallery: [], topic: null, comments: [], ads: [] };
-            }
-        })();
-        threadDataCache.set(normalized, fetchPromise);
-        return fetchPromise;
-    }
-
-    async function openGalleryForThread(threadUrl, options = {}) {
-        if (!threadUrl) return null;
-        const { instant = false, qualityTag: requestedQualityTag = null } = options;
-        focusGallerySource(threadUrl, currentListHoverCtx);
-        const loadToken = ++galleryLoadToken;
-        if (instant) {
-            galleryOverlay.showLoading();
-        }
-        const data = await fetchThreadData(threadUrl);
-        if (loadToken !== galleryLoadToken) {
-            return null;
-        }
-        if (!data || !data.gallery.length) {
-            clearGallerySourceHighlight();
-            if (instant && galleryOverlay.isOpen()) {
-                galleryOverlay.close();
-            }
-            alert('未找到該帖子的畫廊內容');
-            return null;
-        }
-        const hoverQualityTag = requestedQualityTag ?? currentListHoverCtx?.qualityTag ?? null;
-        galleryOverlay.open(data.gallery, {
-            startIndex: 0,
-            topic: data.topic || null,
-            comments: data.comments || [],
-            download: data.download || null,
-            threadUrl,
-            qualityTag: data.qualityTag || hoverQualityTag || null,
-            ads: data.ads || []
-        });
-        markThreadGalleryVisited(threadUrl);
-        return data;
-    }
-
-    function setupThreadDownloadButton(btn, options = {}) {
-        const defaultLabel = options.label || '下載';
-        const downloadedLabel = options.downloadedLabel || '已下載';
-        btn.textContent = defaultLabel;
-        const threadUrl = getAbsoluteUrl(options.threadUrl) || options.threadUrl;
-        const threadKey = normalizeThreadKey(threadUrl);
-        if (!threadKey || !threadUrl) {
-            btn.disabled = true;
-            btn.title = '無法解析帖子地址';
-            return;
-        }
-        const container = options.container || null;
-        const containerClass = options.containerClass || '';
-        const defaultTitle = '下載到 qBittorrent';
-        const downloadedTitle = '已下載，可再次發送到 qBittorrent';
-        if (options.threadTitle) {
-            btn.dataset.clmThreadTitle = options.threadTitle;
-        } else {
-            delete btn.dataset.clmThreadTitle;
-        }
-
-        const updateState = () => {
-            const downloaded = hasDownloadedThread(threadKey);
-            btn.classList.toggle('clm-downloaded', downloaded);
-            btn.textContent = downloaded ? downloadedLabel : defaultLabel;
-            btn.title = downloaded ? downloadedTitle : defaultTitle;
-            if (container && containerClass) {
-                container.classList.toggle(containerClass, downloaded);
-            }
-            if (btn.dataset.clmBusy !== '1') {
-                btn.disabled = false;
-            }
-        };
-
-        btn.dataset.clmThreadKey = threadKey;
-        btn.dataset.clmThreadUrl = threadUrl;
-        btn.__clmRefreshDownloadState = updateState;
-        updateState();
-        subscribeDownloadStatus(threadKey, () => updateState());
-
-        btn.addEventListener('click', (ev) => {
-            ev.preventDefault();
-            ev.stopPropagation();
-            if (btn.dataset.clmBusy === '1') return;
-            handleThreadDownloadButtonClick(btn);
-        });
-    }
-
-    async function handleThreadDownloadButtonClick(btn) {
-        const threadKey = btn.dataset.clmThreadKey;
-        const threadUrl = btn.dataset.clmThreadUrl || threadKey;
-        if (!threadKey || !threadUrl) return;
-        btn.dataset.clmBusy = '1';
-        btn.disabled = true;
-        inlineDownloadWindow.open({
-            subtitle: btn.dataset.clmThreadTitle || '',
-            status: '正在載入帖子內容…'
-        });
-        const restore = () => {
-            btn.dataset.clmBusy = '0';
-            if (typeof btn.__clmRefreshDownloadState === 'function') {
-                btn.__clmRefreshDownloadState();
-            } else {
-                btn.disabled = false;
-            }
-        };
-        try {
-            btn.textContent = '載入帖子…';
-            inlineDownloadWindow.setStatus('正在解析帖子與下載資訊…');
-            const threadData = await fetchThreadData(threadUrl);
-            if (!threadData || !threadData.download || !threadData.download.pageUrl) {
-                inlineDownloadWindow.setStatus('該帖子沒有可解析的下載連結。', 'error');
-                alert('該帖子沒有可解析的下載連結。');
-                return;
-            }
-            inlineDownloadWindow.setPageUrl(threadData.download.pageUrl);
-            inlineDownloadWindow.setLink(threadData.download.pageUrl);
-            inlineDownloadWindow.setStatus('正在載入下載頁面，請稍候…');
-            btn.textContent = '載入中…';
-            
-            // 等待下载窗口完全加载
-            try {
-                await inlineDownloadWindow.waitForLoad();
-                // 检查下载窗口是否仍然打开
-                if (!inlineDownloadWindow.isOpen()) {
+                btn.textContent = '載入帖子…';
+                inlineDownloadWindow.setStatus('正在解析帖子與下載資訊…');
+                const threadData = await fetchThreadData(threadUrl);
+                if (!threadData || !threadData.download || !threadData.download.pageUrl) {
+                    inlineDownloadWindow.setStatus('該帖子沒有可解析的下載連結。', 'error');
+                    alert('該帖子沒有可解析的下載連結。');
                     return;
                 }
-                inlineDownloadWindow.setStatus('下載頁面已載入，準備模擬點擊 DOWNLOAD…');
-                // 等待一小段时间确保页面完全渲染
-                await new Promise(resolve => setTimeout(resolve, 500));
-                // 检查下载窗口是否仍然打开
-                if (!inlineDownloadWindow.isOpen()) {
-                    return;
-                }
-                // 模拟点击 DOWNLOAD 按钮
-                const clicked = inlineDownloadWindow.simulateDownloadClick();
-                if (clicked) {
-                    inlineDownloadWindow.setStatus('已模擬點擊 DOWNLOAD，等待頁面跳轉…');
-                    // 等待页面跳转（通常跳转到广告页面）
-                    await new Promise(resolve => setTimeout(resolve, 1000));
+                inlineDownloadWindow.setPageUrl(threadData.download.pageUrl);
+                inlineDownloadWindow.setLink(threadData.download.pageUrl);
+                inlineDownloadWindow.setStatus('正在載入下載頁面，請稍候…');
+                btn.textContent = '載入中…';
+                
+                // 等待下载窗口完全加载
+                try {
+                    await inlineDownloadWindow.waitForLoad();
                     // 检查下载窗口是否仍然打开
                     if (!inlineDownloadWindow.isOpen()) {
                         return;
                     }
-                } else {
-                    inlineDownloadWindow.setStatus('未找到 DOWNLOAD 按鈕，嘗試直接解析下載連結…');
-                }
-            } catch (err) {
-                console.error('草榴Manager: 等待下載頁面載入失敗', err);
-                // 即使失败也继续，给用户一个超时保护
-            }
-            
-            // 检查下载窗口是否仍然打开
-            if (!inlineDownloadWindow.isOpen()) {
-                return;
-            }
-            
-            btn.textContent = '選擇儲存位置…';
-            let settings;
-            try {
-                settings = loadSettings();
-            } catch (err) {
-                console.error('草榴Manager: 設置讀取失敗', err);
-                inlineDownloadWindow.setStatus('無法讀取設置，請稍後再試。', 'error');
-                alert('無法讀取設置，請稍後再試。');
-                return;
-            }
-            if (!settings.qb.enabled) {
-                inlineDownloadWindow.setStatus('請先在設置中啟用 qBittorrent 集成。', 'error');
-                alert('請先在草榴Manager 設置中啟用 qBittorrent 集成。');
-                return;
-            }
-            inlineDownloadWindow.setStatus('請選擇 qBittorrent 儲存預設…');
-            const preset = await openPresetPickerDialog(settings);
-            if (!preset) {
-                inlineDownloadWindow.setStatus('已取消發送至 qBittorrent。');
-                return;
-            }
-            // 检查下载窗口是否仍然打开
-            if (!inlineDownloadWindow.isOpen()) {
-                return;
-            }
-            btn.textContent = '解析下載連結…';
-            inlineDownloadWindow.setStatus('正在獲取種子…');
-            const resolved = await resolveThreadDownloadTarget(threadData.download);
-            inlineDownloadWindow.setStatus('正在發送到 qBittorrent…');
-            const ok = await sendToQbittorrent(resolved, preset.id);
-            if (ok) {
-                inlineDownloadWindow.setStatus('已自動點擊 DOWNLOAD 並發送至 qBittorrent。', 'success');
-                markThreadDownloaded(threadKey);
-            } else {
-                inlineDownloadWindow.setStatus('發送到 qBittorrent 失敗。', 'error');
-            }
-        } catch (err) {
-            console.error('草榴Manager: 列表下載按鈕執行失敗', err);
-            inlineDownloadWindow.setStatus('下載流程失敗：' + (err?.message || err), 'error');
-            alert('下載發送失敗：' + (err?.message || err));
-        } finally {
-            restore();
-        }
-    }
-
-    document.addEventListener('keydown', (ev) => {
-        if (galleryOverlay.isOpen()) return;
-        if (ev.key !== 'ArrowRight' && ev.key !== 'ArrowLeft') return;
-        if (!currentListHoverCtx || !currentListHoverCtx.threadUrl) return;
-        ev.preventDefault();
-        openGalleryForThread(currentListHoverCtx.threadUrl, {
-            instant: true,
-            qualityTag: currentListHoverCtx.qualityTag || null
-        });
-    });
-
-    injectStyle(`
-        .clm-quality-badge {
-            position: absolute;
-            left: 12px;
-            bottom: 12px;
-            padding: 3px 8px 4px;
-            font-size: 11px;
-            line-height: 1.2;
-            border-radius: 999px;
-            border: 1px solid rgba(255, 255, 255, 0.5);
-            background: rgba(12, 12, 20, 0.82);
-            color: #fff;
-            font-weight: 700;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-            pointer-events: none;
-            display: none;
-            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
-            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
-            align-items: center;
-            justify-content: center;
-            min-width: 48px;
-            max-width: 80px;
-            max-height: 24px;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-        .clm-quality-badge:empty {
-            display: none !important;
-        }
-        #tail .clm-tail-quality {
-            left: 12px;
-            bottom: 12px;
-            top: auto;
-            right: auto;
-            transform-origin: bottom left;
-            transform: translate(
-                calc(var(--clm-tail-extra-x, 0px) * -1),
-                var(--clm-tail-extra-y, 0px)
-            ) scale(var(--clm-tail-scale, 1));
-            font-size: 13px;
-            padding: 4px 12px 5px;
-            min-width: 64px;
-        }
-        .clm-gallery-quality {
-            left: 24px;
-            bottom: 24px;
-            font-size: 14px;
-            padding: 5px 16px 6px;
-        }
-        .wf_item .image-big.clm-gallery-focus-cover,
-        .wf_item .image-big.clm-gallery-focus-cover:hover,
-        .wf_item .image-big.clm-gallery-visited-cover,
-        .wf_item .image-big.clm-gallery-visited-cover:hover {
-            box-shadow: 0 0 0 3px rgba(251, 146, 60, 0.85), 0 0 18px rgba(251, 146, 60, 0.45);
-            border-radius: 8px;
-        }
-        .wf_item .image-big.clm-gallery-focus-cover img,
-        .wf_item .image-big.clm-gallery-visited-cover img {
-            outline: 3px solid rgba(249, 115, 22, 0.85);
-            outline-offset: 2px;
-        }
-        .clm-gallery-focus-title,
-        .clm-gallery-visited-title {
-            color: #f97316 !important;
-            text-shadow: 0 0 6px rgba(0, 0, 0, 0.35);
-            font-weight: 700 !important;
-        }
-    `);
-
-    const QUALITY_TAG_PATTERNS = [
-        { tag: '2160P', regex: /\b(2160p|4k|uhd)\b/i },
-        { tag: '1440P', regex: /\b(1440p|2k)\b/i },
-        { tag: '1080P', regex: /\b1080p\b/i },
-        { tag: '720P', regex: /\b720p\b/i },
-        { tag: 'BluRay', regex: /\b(bluray|blu-ray|bd)\b/i },
-        { tag: 'HDR', regex: /\bHDR\b/i },
-        { tag: 'VR', regex: /\bVR\b/i },
-        { tag: 'HD', regex: /\bHD\b/i },
-        { tag: 'SD', regex: /\bSD\b/i }
-    ];
-
-    function detectQualityTagFromTitle(titleText) {
-        if (!titleText) return null;
-        for (const { tag, regex } of QUALITY_TAG_PATTERNS) {
-            if (regex.test(titleText)) {
-                return tag;
-            }
-        }
-        return null;
-    }
-
-    function resolveQualityTagFromDocument(doc) {
-        if (!doc) return null;
-        const pieces = [];
-        const selectors = [
-            '.tpc_title h1',
-            '.tpc_title .h',
-            '.t table .tr1 h4',
-            '.t table .tr2 h4',
-            '.t table .tr3 h4',
-            '.t table .tr4 h4',
-            '.t table .tr5 h4',
-            '.tpc_content h1',
-            '.tpc_content .tpc_title',
-            '.tpc_content strong',
-            '.tpc_content b'
-        ];
-        selectors.forEach((sel) => {
-            const el = doc.querySelector(sel);
-            if (el?.textContent) {
-                pieces.push(el.textContent);
-            }
-        });
-        const keywords = doc.querySelector('meta[name="keywords"]')?.getAttribute('content');
-        if (keywords) {
-            pieces.push(keywords);
-        }
-        const description = doc.querySelector('meta[name="description"]')?.getAttribute('content');
-        if (description) {
-            pieces.push(description);
-        }
-        if (doc.title) {
-            pieces.push(doc.title);
-        } else {
-            const titleEl = doc.querySelector('title');
-            if (titleEl?.textContent) {
-                pieces.push(titleEl.textContent);
-            }
-        }
-        return detectQualityTagFromTitle(pieces.join(' '));
-    }
-
-    function resolveQualityTagFromListItem(wfItem, threadAnchor = null) {
-        if (!wfItem) return null;
-        const selectors = [
-            '.title a',
-            '.title',
-            '.subject a',
-            '.subject',
-            '.t_subject',
-            '.tsubject',
-            '.wf_text tl',
-            '.wf_text .tl',
-            '.wf_text a',
-            '.wf_text'
-        ];
-        const pieces = [];
-        selectors.forEach((sel) => {
-            const el = wfItem.querySelector(sel);
-            if (!el) return;
-            if (el.textContent) {
-                pieces.push(el.textContent);
-            }
-            if (el.getAttribute) {
-                const attrTitle = el.getAttribute('title');
-                if (attrTitle) {
-                    pieces.push(attrTitle);
-                }
-            }
-        });
-        if (threadAnchor) {
-            if (threadAnchor.textContent) {
-                pieces.push(threadAnchor.textContent);
-            }
-            const anchorTitle = threadAnchor.getAttribute('title');
-            if (anchorTitle) {
-                pieces.push(anchorTitle);
-            }
-        }
-        const combined = pieces.join(' ').trim();
-        return detectQualityTagFromTitle(combined);
-    }
-
-    function updateQualityBadgeElement(badgeEl, tag) {
-        if (!badgeEl) return;
-        if (tag) {
-            badgeEl.textContent = tag.toUpperCase();
-            badgeEl.style.display = 'inline-flex';
-        } else {
-            badgeEl.textContent = '';
-            badgeEl.style.display = 'none';
-        }
-    }
-
-    // 搜索页面（search.php）- 电脑端和手机端通用处理
-    if (href.indexOf('search.php') !== -1) {
-        const isSearchMobile = isMobilePage();
-        
-        // 手机端搜索页：缓存电脑端搜索结果，避免重复请求
-        let desktopSearchCache = null;
-        let desktopSearchPromise = null;
-
-        // 封面批次加載配置：每批 10 個，單張超時 60 秒
-        const COVER_BATCH_SIZE = 10;
-        const COVER_LOAD_TIMEOUT_MS = 60000;
-        // searchCoverTasks 現在保存 { task, d, threadUrl }
-        let searchCoverTasks = [];
-
-        async function runCoverBatchesSequential() {
-            if (!searchCoverTasks.length) {
-                return;
-            }
-            const total = searchCoverTasks.length;
-            let index = 0;
-            while (index < total) {
-                const start = index;
-                const end = Math.min(start + COVER_BATCH_SIZE, total);
-                const batchIndex = Math.floor(start / COVER_BATCH_SIZE);
-                const batchItems = searchCoverTasks.slice(start, end);
-                const dList = batchItems.map((item) => item && item.d).filter((d) => !!d);
-                console.log('草榴Manager: 封面批次入隊', {
-                    start,
-                    end,
-                    total,
-                    batchIndex,
-                    batchType: 'sequential',
-                    dList
-                });
-                const promises = batchItems.map((item) => {
-                    if (!item || typeof item.task !== 'function') {
-                        return Promise.resolve();
+                    inlineDownloadWindow.setStatus('下載頁面已載入，準備模擬點擊 DOWNLOAD…');
+                    // 等待一小段时间确保页面完全渲染
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                    // 检查下载窗口是否仍然打开
+                    if (!inlineDownloadWindow.isOpen()) {
+                        return;
                     }
-                    return Promise.resolve(item.task())
-                        .catch((err) => {
-                            console.warn('草榴Manager: 封面加载任务异常', err);
-                        });
-                });
-                // 等待當前批次全部完成（成功、失敗或超時）後再進入下一批
-                await Promise.all(promises);
-                index = end;
+                    // 模拟点击 DOWNLOAD 按钮
+                    const clicked = inlineDownloadWindow.simulateDownloadClick();
+                    if (clicked) {
+                        inlineDownloadWindow.setStatus('已模擬點擊 DOWNLOAD，等待頁面跳轉…');
+                        // 等待页面跳转（通常跳转到广告页面）
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        // 检查下载窗口是否仍然打开
+                        if (!inlineDownloadWindow.isOpen()) {
+                            return;
+                        }
+                    } else {
+                        inlineDownloadWindow.setStatus('未找到 DOWNLOAD 按鈕，嘗試直接解析下載連結…');
+                    }
+                } catch (err) {
+                    console.error('草榴Manager: 等待下載頁面載入失敗', err);
+                    // 即使失败也继续，给用户一个超时保护
+                }
+                
+                // 检查下载窗口是否仍然打开
+                if (!inlineDownloadWindow.isOpen()) {
+                    return;
+                }
+                
+                btn.textContent = '選擇儲存位置…';
+                let settings;
+                try {
+                    settings = loadSettings();
+                } catch (err) {
+                    console.error('草榴Manager: 設置讀取失敗', err);
+                    inlineDownloadWindow.setStatus('無法讀取設置，請稍後再試。', 'error');
+                    alert('無法讀取設置，請稍後再試。');
+                    return;
+                }
+                if (!settings.qb.enabled) {
+                    inlineDownloadWindow.setStatus('請先在設置中啟用 qBittorrent 集成。', 'error');
+                    alert('請先在草榴Manager 設置中啟用 qBittorrent 集成。');
+                    return;
+                }
+                inlineDownloadWindow.setStatus('請選擇 qBittorrent 儲存預設…');
+                const preset = await openPresetPickerDialog(settings);
+                if (!preset) {
+                    inlineDownloadWindow.setStatus('已取消發送至 qBittorrent。');
+                    return;
+                }
+                // 检查下载窗口是否仍然打开
+                if (!inlineDownloadWindow.isOpen()) {
+                    return;
+                }
+                btn.textContent = '解析下載連結…';
+                inlineDownloadWindow.setStatus('正在獲取種子…');
+                const resolved = await resolveThreadDownloadTarget(threadData.download);
+                inlineDownloadWindow.setStatus('正在發送到 qBittorrent…');
+                const ok = await sendToQbittorrent(resolved, preset.id);
+                if (ok) {
+                    inlineDownloadWindow.setStatus('已自動點擊 DOWNLOAD 並發送至 qBittorrent。', 'success');
+                    markThreadDownloaded(threadKey);
+                } else {
+                    inlineDownloadWindow.setStatus('發送到 qBittorrent 失敗。', 'error');
+                }
+            } catch (err) {
+                console.error('草榴Manager: 列表下載按鈕執行失敗', err);
+                inlineDownloadWindow.setStatus('下載流程失敗：' + (err?.message || err), 'error');
+                alert('下載發送失敗：' + (err?.message || err));
+            } finally {
+                restore();
             }
         }
-        
-        // 将搜索结果转换为类似板块页的卡片布局
+
+        async function handleThreadSmallDownloadButtonClick(btn, smallDownloadInfo) {
+            const threadKey = btn.dataset.clmThreadKey;
+            const threadUrl = btn.dataset.clmThreadUrl || threadKey;
+            if (!threadKey || !threadUrl) return;
+            btn.dataset.clmBusy = '1';
+            btn.disabled = true;
+            inlineDownloadWindow.open({
+                subtitle: btn.dataset.clmThreadTitle || '',
+                status: '正在載入小格式下載資訊…'
+            });
+            const restore = () => {
+                btn.dataset.clmBusy = '0';
+                if (typeof btn.__clmRefreshDownloadState === 'function') {
+                    btn.__clmRefreshDownloadState();
+                } else {
+                    btn.disabled = false;
+                }
+            };
+            try {
+                inlineDownloadWindow.setStatus('正在解析小格式種子下載連結…');
+                let effectiveDownloadInfo = smallDownloadInfo || null;
+                if (!effectiveDownloadInfo || !effectiveDownloadInfo.pageUrl) {
+                    // 回退到重新抓取帖子資料並解析小格式
+                    const threadData = await fetchThreadData(threadUrl);
+                    if (threadData && threadData.smallDownload && threadData.smallDownload.pageUrl) {
+                        effectiveDownloadInfo = threadData.smallDownload;
+                    }
+                }
+                if (!effectiveDownloadInfo || !effectiveDownloadInfo.pageUrl) {
+                    inlineDownloadWindow.setStatus('該帖子沒有可用的小格式下載連結（by555 樓層未找到）。', 'error');
+                    alert('該帖子沒有可用的小格式下載連結（可能沒有 by555 小格式樓層）。');
+                    return;
+                }
+
+                inlineDownloadWindow.setPageUrl(effectiveDownloadInfo.pageUrl);
+                inlineDownloadWindow.setLink(effectiveDownloadInfo.pageUrl);
+                inlineDownloadWindow.setStatus('正在載入小格式下載頁面，請稍候…');
+
+                try {
+                    await inlineDownloadWindow.waitForLoad();
+                    if (!inlineDownloadWindow.isOpen()) {
+                        return;
+                    }
+                    inlineDownloadWindow.setStatus('小格式下載頁面已載入，準備模擬點擊 DOWNLOAD…');
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                    if (!inlineDownloadWindow.isOpen()) {
+                        return;
+                    }
+                    const clicked = inlineDownloadWindow.simulateDownloadClick();
+                    if (clicked) {
+                        inlineDownloadWindow.setStatus('已模擬點擊 DOWNLOAD，等待頁面跳轉…');
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        if (!inlineDownloadWindow.isOpen()) {
+                            return;
+                        }
+                    } else {
+                        inlineDownloadWindow.setStatus('未找到 DOWNLOAD 按鈕，嘗試直接解析下載連結…');
+                    }
+                } catch (err) {
+                    console.error('草榴Manager: 小格式下載頁面載入失敗', err);
+                }
+
+                if (!inlineDownloadWindow.isOpen()) {
+                    return;
+                }
+
+                let settings;
+                try {
+                    settings = loadSettings();
+                } catch (err) {
+                    console.error('草榴Manager: 小格式設置讀取失敗', err);
+                    inlineDownloadWindow.setStatus('無法讀取設置，請稍後再試。', 'error');
+                    alert('無法讀取設置，請稍後再試。');
+                    return;
+                }
+                if (!settings.qb.enabled) {
+                    inlineDownloadWindow.setStatus('請先在設置中啟用 qBittorrent 集成。', 'error');
+                    alert('請先在草榴Manager 設置中啟用 qBittorrent 集成。');
+                    return;
+                }
+
+                inlineDownloadWindow.setStatus('請選擇 qBittorrent 儲存預設（小格式）…');
+                const preset = await openPresetPickerDialog(settings);
+                if (!preset) {
+                    inlineDownloadWindow.setStatus('已取消發送小格式至 qBittorrent。');
+                    return;
+                }
+                if (!inlineDownloadWindow.isOpen()) {
+                    return;
+                }
+
+                inlineDownloadWindow.setStatus('正在獲取小格式種子…');
+                const resolved = await resolveThreadDownloadTarget(effectiveDownloadInfo);
+                inlineDownloadWindow.setStatus('正在發送小格式到 qBittorrent…');
+                const ok = await sendToQbittorrent(resolved, preset.id);
+                if (ok) {
+                    inlineDownloadWindow.setStatus('已發送小格式種子至 qBittorrent。', 'success');
+                    markThreadDownloaded(threadKey);
+                } else {
+                    inlineDownloadWindow.setStatus('小格式發送到 qBittorrent 失敗。', 'error');
+                }
+            } catch (err) {
+                console.error('草榴Manager: 小格式下載按鈕執行失敗', err);
+                inlineDownloadWindow.setStatus('小格式下載流程失敗：' + (err?.message || err), 'error');
+                alert('小格式下載發送失敗：' + (err?.message || err));
+            } finally {
+                restore();
+            }
+        }
+
+        document.addEventListener('keydown', (ev) => {
+            if (galleryOverlay.isOpen()) return;
+            if (ev.key !== 'ArrowRight' && ev.key !== 'ArrowLeft') return;
+            if (!currentListHoverCtx || !currentListHoverCtx.threadUrl) return;
+            ev.preventDefault();
+            openGalleryForThread(currentListHoverCtx.threadUrl, {
+                instant: true,
+                qualityTag: currentListHoverCtx.qualityTag || null
+            });
+        });
+
         injectStyle(`
-            /* 只隐藏已转换为卡片布局的结果表格 */
-            div.t table[data-clm-converted="1"] {
-                display: none !important;
-            }
-            
-            /* 创建卡片网格容器 */
-            .clm-search-grid {
-                display: grid;
-                grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-                gap: 16px;
-                padding: 16px;
-                max-width: 1400px;
-                margin: 0 auto;
-            }
-            
-            /* 搜索结果卡片 - 类似wf_item */
-            .clm-search-item {
-                background: #fff;
-                border-radius: 8px;
-                overflow: visible;
-                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-                transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
-                display: flex;
-                flex-direction: column;
-                position: relative;
-            }
-            
-            .clm-search-item:hover {
-                transform: translateY(-4px);
-                box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
-                z-index: 10000;
-            }
-            
-            /* 封面容器 - 類似板塊圖文頁的 .image-big */
-            .clm-search-cover {
-                width: 100%;
-                height: 280px;
-                background: #f3f4f6;
-                position: relative;
-                overflow: visible !important;
-                isolation: isolate;
-                --clm-cover-scale: 1;
-                transition: transform 0.2s ease-in-out;
-                transform-origin: center center;
-            }
-            
-            .clm-search-cover img {
-                width: 100%;
-                height: 100%;
-                object-fit: cover;
-                display: block;
-            }
-            
-            /* 电脑端封面放大效果：整個封面容器放大，包含畫廊/清晰度/下載按鈕 */
-            .clm-search-cover:not(.clm-mobile-search):hover {
-                transform: scale(2);
-                z-index: 9999;
-            }
-            
-            .clm-search-cover-loading {
-                display: flex;
+            .clm-quality-badge {
+                position: absolute;
+                left: 12px;
+                bottom: 12px;
+                padding: 3px 8px 4px;
+                font-size: 11px;
+                line-height: 1.2;
+                border-radius: 999px;
+                border: 1px solid rgba(255, 255, 255, 0.5);
+                background: rgba(12, 12, 20, 0.82);
+                color: #fff;
+                font-weight: 700;
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+                pointer-events: none;
+                display: none;
+                box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+                text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
                 align-items: center;
                 justify-content: center;
-                width: 100%;
-                height: 100%;
-                color: #9ca3af;
-                font-size: 12px;
-                text-align: center;
-                padding: 8px;
-            }
-            /* 搜索页使用与板块页相同的按钮样式 */
-            .clm-search-cover .clm-cover-gallery-btn {
-                position: absolute;
-                left: 50%;
-                bottom: 30%;
-                transform: translateX(-50%);
-                padding: 8px 16px;
-                font-size: 13px;
-                font-weight: 600;
-                border-radius: 6px;
-                border: 1px solid rgba(255, 255, 255, 0.6);
-                background: rgba(0, 0, 0, 0.85);
-                color: #fff;
-                cursor: pointer;
-                display: inline-flex;
-                align-items: center;
-                z-index: 10;
-                white-space: nowrap;
-                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-                transition: background 0.15s ease-in-out;
-                pointer-events: auto;
-            }
-            .clm-search-cover .clm-cover-gallery-btn:hover {
-                background: rgba(0, 0, 0, 0.95);
-            }
-            .clm-search-cover .clm-cover-download {
-                position: absolute;
-                top: 8px;
-                right: 8px;
-                padding: 4px 8px;
-                font-size: 11px;
-                border-radius: 4px;
-                border: 1px solid rgba(255, 255, 255, 0.3);
-                background: rgba(0, 0, 0, 0.7);
-                color: #fff;
-                cursor: pointer;
-                display: inline-flex;
-                align-items: center;
-                gap: 4px;
-                z-index: 10;
-                transition: background 0.15s ease-in-out;
-                pointer-events: auto;
-            }
-            .clm-search-cover .clm-cover-download.clm-downloaded {
-                background: rgba(16, 185, 129, 0.9);
-                border-color: rgba(255, 255, 255, 0.55);
-            }
-            .clm-search-cover .clm-cover-download::before {
-                content: '⬇';
-                font-size: inherit;
-            }
-            .clm-search-cover .clm-cover-download:hover {
-                background: rgba(0, 0, 0, 0.9);
-            }
-            .clm-search-cover .clm-cover-quality {
-                position: absolute;
-                left: 8px;
-                top: 8px;
-                z-index: 10;
-                max-width: 55px;
-                font-size: 9px;
-                padding: 2px 5px;
-                pointer-events: none;
-            }
-            
-            /* 文本信息区域 - 类似wf_text */
-            .clm-search-text {
-                padding: 12px;
-                background: #fff;
-                flex: 1;
-                display: flex;
-                flex-direction: column;
-                gap: 8px;
-            }
-            
-            .clm-search-title {
-                font-size: 14px;
-                font-weight: 600;
-                color: #1f2937;
-                line-height: 1.4;
-                display: -webkit-box;
-                -webkit-line-clamp: 2;
-                -webkit-box-orient: vertical;
+                min-width: 48px;
+                max-width: 80px;
+                max-height: 24px;
                 overflow: hidden;
                 text-overflow: ellipsis;
-                margin: 0;
+                white-space: nowrap;
             }
-            
-            .clm-search-title a {
-                color: #1f2937;
-                text-decoration: none;
-            }
-            
-            .clm-search-title a:hover {
-                color: #3b82f6;
-            }
-            
-            .clm-search-meta {
-                font-size: 12px;
-                color: #6b7280;
-                display: flex;
-                flex-wrap: wrap;
-                gap: 8px;
-            }
-            
-            .clm-search-meta span {
-                display: inline-flex;
-                align-items: center;
-                gap: 4px;
-            }
-            
-            .clm-search-item.clm-thread-downloaded {
-                background: rgba(34, 197, 94, 0.05);
-                border: 2px solid rgba(34, 197, 94, 0.2);
-            }
-            
-            /* 手机端适配 */
-            @media (max-width: 768px) {
-                .clm-search-grid {
-                    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-                    gap: 12px;
-                    padding: 12px;
-                }
-                
-                .clm-search-cover {
-                    height: 200px;
-                }
-                
-                .clm-search-cover:hover {
-                    transform: none !important;
-                }
-                
-                /* 手机端搜索页按钮样式 */
-                .clm-search-cover .clm-cover-gallery-btn {
-                    padding: 10px 20px;
-                    font-size: 15px;
-                    bottom: 35%;
-                    touch-action: manipulation;
-                    -webkit-tap-highlight-color: transparent;
-                }
-                .clm-search-cover .clm-cover-gallery-btn:active {
-                    transform: translateX(-50%) scale(0.95);
-                }
-                .clm-search-cover .clm-cover-download {
-                    padding: 6px 12px;
-                    font-size: 13px;
-                    touch-action: manipulation;
-                    -webkit-tap-highlight-color: transparent;
-                }
-                .clm-search-cover .clm-cover-download:active {
-                    transform: scale(0.95);
-                }
-            }
-            
-            /* 原有的tail预览框样式 */
-            #tail {
-                /* 保持原站腳本行為，不改位置邏輯，只增加放大效果所需樣式 */
-                overflow: visible !important;
-                z-index: 9999 !important;
-                position: absolute !important;
-                --clm-tail-scale: 1;
-                --clm-tail-extra-x: 0px;
-                --clm-tail-extra-y: 0px;
-            }
-            #tail img {
-                transition: transform 0.2s ease-in-out;
-                transform-origin: center center;
-                border-radius: 4px;
-            }
-            #tail:not(.clm-mobile-tail) img:hover,
-            #tail.clm-tail-force-zoom:not(.clm-mobile-tail) img {
-                transform: scale(2);
-                position: relative;
-                z-index: 10000;
-                box-shadow: 0 0 12px rgba(0, 0, 0, 0.7);
-                border: 2px solid #ffffff;
-            }
-            .clm-title-download {
-                margin-left: 8px;
-                padding: 2px 6px;
-                font-size: 11px;
-                border-radius: 4px;
-                border: 1px solid rgba(255, 255, 255, 0.3);
-                background: rgba(0, 0, 0, 0.65);
-                color: #fff;
-                cursor: pointer;
-                display: inline-flex;
-                align-items: center;
-                gap: 4px;
-            }
-            .clm-title-download.clm-downloaded {
-                background: rgba(16, 185, 129, 0.85);
-                border-color: rgba(255, 255, 255, 0.6);
-                color: #fff;
-            }
-            tr.tr3.t_one.clm-thread-downloaded {
-                background: rgba(34, 197, 94, 0.12);
-            }
-            .clm-title-download::before {
-                content: '⬇';
-                font-size: 11px;
-            }
-            .clm-title-download:hover {
-                background: rgba(0, 0, 0, 0.85);
+            .clm-quality-badge:empty {
+                display: none !important;
             }
             #tail .clm-tail-quality {
-                z-index: 10002;
+                left: 12px;
+                bottom: 12px;
+                top: auto;
+                right: auto;
+                transform-origin: bottom left;
+                transform: translate(
+                    calc(var(--clm-tail-extra-x, 0px) * -1),
+                    var(--clm-tail-extra-y, 0px)
+                ) scale(var(--clm-tail-scale, 1));
+                font-size: 13px;
+                padding: 4px 12px 5px;
+                min-width: 64px;
+            }
+            .clm-gallery-quality {
+                left: 24px;
+                bottom: 24px;
+                font-size: 14px;
+                padding: 5px 16px 6px;
+            }
+            .wf_item .image-big.clm-gallery-focus-cover,
+            .wf_item .image-big.clm-gallery-focus-cover:hover,
+            .wf_item .image-big.clm-gallery-visited-cover,
+            .wf_item .image-big.clm-gallery-visited-cover:hover {
+                box-shadow: 0 0 0 3px rgba(251, 146, 60, 0.85), 0 0 18px rgba(251, 146, 60, 0.45);
+                border-radius: 8px;
+            }
+            .wf_item .image-big.clm-gallery-focus-cover img,
+            .wf_item .image-big.clm-gallery-visited-cover img {
+                outline: 3px solid rgba(249, 115, 22, 0.85);
+                outline-offset: 2px;
+            }
+            .clm-gallery-focus-title,
+            .clm-gallery-visited-title {
+                color: #f97316 !important;
+                text-shadow: 0 0 6px rgba(0, 0, 0, 0.35);
+                font-weight: 700 !important;
             }
         `);
 
-        function updateTailQualityFollow() {
-            const tail = document.getElementById('tail');
-            if (!tail) return;
-            const img = tail.querySelector('img');
-            if (!img) {
-                tail.style.removeProperty('--clm-tail-extra-x');
-                tail.style.removeProperty('--clm-tail-extra-y');
-                tail.style.removeProperty('--clm-tail-scale');
-                return;
-            }
-            const baseWidth = img.clientWidth || img.naturalWidth;
-            const baseHeight = img.clientHeight || img.naturalHeight;
-            if (!baseWidth || !baseHeight) return;
-            const scaleActive = tail.classList.contains('clm-tail-force-zoom') || tail.matches(':hover');
-            const scale = scaleActive ? 2 : 1;
-            if (scale <= 1) {
-                tail.style.removeProperty('--clm-tail-extra-x');
-                tail.style.removeProperty('--clm-tail-extra-y');
-                tail.style.removeProperty('--clm-tail-scale');
-                return;
-            }
-            const extraX = (baseWidth * (scale - 1)) / 2;
-            const extraY = (baseHeight * (scale - 1)) / 2;
-            tail.style.setProperty('--clm-tail-extra-x', `${extraX}px`);
-            tail.style.setProperty('--clm-tail-extra-y', `${extraY}px`);
-            tail.style.setProperty('--clm-tail-scale', `${scale}`);
-        }
+        const QUALITY_TAG_PATTERNS = [
+            { tag: '2160P', regex: /\b(2160p|4k|uhd)\b/i },
+            { tag: '1440P', regex: /\b(1440p|2k)\b/i },
+            { tag: '1080P', regex: /\b1080p\b/i },
+            { tag: '720P', regex: /\b720p\b/i },
+            { tag: 'BluRay', regex: /\b(bluray|blu-ray|bd)\b/i },
+            { tag: 'HDR', regex: /\bHDR\b/i },
+            { tag: 'VR', regex: /\bVR\b/i },
+            { tag: 'HD', regex: /\bHD\b/i },
+            { tag: 'SD', regex: /\bSD\b/i }
+        ];
 
-        function setTailZoomState(force) {
-            const tailEl = document.getElementById('tail');
-            if (!tailEl) return null;
-            tailEl.classList.toggle('clm-tail-force-zoom', !!force);
-            requestAnimationFrame(() => updateTailQualityFollow());
-            return tailEl;
-        }
-
-        function getTailControls() {
-            const tail = document.getElementById('tail');
-            if (!tail) return null;
-
-            if (tail.__clmControls) {
-                return tail.__clmControls;
-            }
-
-            let tailHideTimer = null;
-
-            function cancelHide() {
-                if (tailHideTimer) {
-                    clearTimeout(tailHideTimer);
-                    tailHideTimer = null;
+        function detectQualityTagFromTitle(titleText) {
+            if (!titleText) return null;
+            for (const { tag, regex } of QUALITY_TAG_PATTERNS) {
+                if (regex.test(titleText)) {
+                    return tag;
                 }
             }
+            return null;
+        }
 
-            function scheduleHide() {
-                cancelHide();
-                tailHideTimer = setTimeout(() => {
-                    tail.style.display = 'none';
-                    tail.classList.remove('clm-tail-force-zoom');
+        function resolveQualityTagFromDocument(doc) {
+            if (!doc) return null;
+            const pieces = [];
+            const selectors = [
+                '.tpc_title h1',
+                '.tpc_title .h',
+                '.t table .tr1 h4',
+                '.t table .tr2 h4',
+                '.t table .tr3 h4',
+                '.t table .tr4 h4',
+                '.t table .tr5 h4',
+                '.tpc_content h1',
+                '.tpc_content .tpc_title',
+                '.tpc_content strong',
+                '.tpc_content b'
+            ];
+            selectors.forEach((sel) => {
+                const el = doc.querySelector(sel);
+                if (el?.textContent) {
+                    pieces.push(el.textContent);
+                }
+            });
+            const keywords = doc.querySelector('meta[name="keywords"]')?.getAttribute('content');
+            if (keywords) {
+                pieces.push(keywords);
+            }
+            const description = doc.querySelector('meta[name="description"]')?.getAttribute('content');
+            if (description) {
+                pieces.push(description);
+            }
+            if (doc.title) {
+                pieces.push(doc.title);
+            } else {
+                const titleEl = doc.querySelector('title');
+                if (titleEl?.textContent) {
+                    pieces.push(titleEl.textContent);
+                }
+            }
+            return detectQualityTagFromTitle(pieces.join(' '));
+        }
+
+        function resolveQualityTagFromListItem(wfItem, threadAnchor = null) {
+            if (!wfItem) return null;
+            const selectors = [
+                '.title a',
+                '.title',
+                '.subject a',
+                '.subject',
+                '.t_subject',
+                '.tsubject',
+                '.wf_text tl',
+                '.wf_text .tl',
+                '.wf_text a',
+                '.wf_text'
+            ];
+            const pieces = [];
+            selectors.forEach((sel) => {
+                const el = wfItem.querySelector(sel);
+                if (!el) return;
+                if (el.textContent) {
+                    pieces.push(el.textContent);
+                }
+                if (el.getAttribute) {
+                    const attrTitle = el.getAttribute('title');
+                    if (attrTitle) {
+                        pieces.push(attrTitle);
+                    }
+                }
+            });
+            if (threadAnchor) {
+                if (threadAnchor.textContent) {
+                    pieces.push(threadAnchor.textContent);
+                }
+                const anchorTitle = threadAnchor.getAttribute('title');
+                if (anchorTitle) {
+                    pieces.push(anchorTitle);
+                }
+            }
+            const combined = pieces.join(' ').trim();
+            return detectQualityTagFromTitle(combined);
+        }
+
+        function updateQualityBadgeElement(badgeEl, tag) {
+            if (!badgeEl) return;
+            if (tag) {
+                badgeEl.textContent = tag.toUpperCase();
+                badgeEl.style.display = 'inline-flex';
+            } else {
+                badgeEl.textContent = '';
+                badgeEl.style.display = 'none';
+            }
+        }
+
+        // 搜索页面（search.php）- 电脑端和手机端通用处理
+        if (href.indexOf('search.php') !== -1) {
+            const isSearchMobile = isMobilePage();
+            
+            // 手机端搜索页：缓存电脑端搜索结果，避免重复请求
+            let desktopSearchCache = null;
+            let desktopSearchPromise = null;
+
+            // 封面批次加載配置：每批 10 個，單張超時 60 秒
+            const COVER_BATCH_SIZE = 10;
+            const COVER_LOAD_TIMEOUT_MS = 60000;
+            // searchCoverTasks 現在保存 { task, d, threadUrl }
+            let searchCoverTasks = [];
+
+            async function runCoverBatchesSequential() {
+                if (!searchCoverTasks.length) {
+                    return;
+                }
+                const total = searchCoverTasks.length;
+                let index = 0;
+                while (index < total) {
+                    const start = index;
+                    const end = Math.min(start + COVER_BATCH_SIZE, total);
+                    const batchIndex = Math.floor(start / COVER_BATCH_SIZE);
+                    const batchItems = searchCoverTasks.slice(start, end);
+                    const dList = batchItems.map((item) => item && item.d).filter((d) => !!d);
+                    console.log('草榴Manager: 封面批次入隊', {
+                        start,
+                        end,
+                        total,
+                        batchIndex,
+                        batchType: 'sequential',
+                        dList
+                    });
+                    const promises = batchItems.map((item) => {
+                        if (!item || typeof item.task !== 'function') {
+                            return Promise.resolve();
+                        }
+                        return Promise.resolve(item.task())
+                            .catch((err) => {
+                                console.warn('草榴Manager: 封面加载任务异常', err);
+                            });
+                    });
+                    // 等待當前批次全部完成（成功、失敗或超時）後再進入下一批
+                    await Promise.all(promises);
+                    index = end;
+                }
+            }
+            
+            // 将搜索结果转换为类似板块页的卡片布局
+            injectStyle(`
+                /* 只隐藏已转换为卡片布局的结果表格 */
+                div.t table[data-clm-converted="1"] {
+                    display: none !important;
+                }
+                
+                /* 创建卡片网格容器 */
+                .clm-search-grid {
+                    display: grid;
+                    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+                    gap: 16px;
+                    padding: 16px;
+                    max-width: 1400px;
+                    margin: 0 auto;
+                }
+                
+                /* 搜索结果卡片 - 类似wf_item */
+                .clm-search-item {
+                    background: #fff;
+                    border-radius: 8px;
+                    overflow: visible;
+                    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+                    transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+                    display: flex;
+                    flex-direction: column;
+                    position: relative;
+                }
+                
+                .clm-search-item:hover {
+                    transform: translateY(-4px);
+                    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+                    z-index: 10000;
+                }
+                
+                /* 封面容器 - 類似板塊圖文頁的 .image-big */
+                .clm-search-cover {
+                    width: 100%;
+                    height: 280px;
+                    background: #f3f4f6;
+                    position: relative;
+                    overflow: visible !important;
+                    isolation: isolate;
+                    --clm-cover-scale: 1;
+                    transition: transform 0.2s ease-in-out;
+                    transform-origin: center center;
+                }
+                
+                .clm-search-cover img {
+                    width: 100%;
+                    height: 100%;
+                    object-fit: cover;
+                    display: block;
+                }
+                
+                /* 电脑端封面放大效果：整個封面容器放大，包含畫廊/清晰度/下載按鈕 */
+                .clm-search-cover:not(.clm-mobile-search):hover {
+                    transform: scale(2);
+                    z-index: 9999;
+                }
+                
+                .clm-search-cover-loading {
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    width: 100%;
+                    height: 100%;
+                    color: #9ca3af;
+                    font-size: 12px;
+                    text-align: center;
+                    padding: 8px;
+                }
+                /* 搜索页使用与板块页相同的按钮样式 */
+                .clm-search-cover .clm-cover-gallery-btn {
+                    position: absolute;
+                    left: 50%;
+                    bottom: 30%;
+                    transform: translateX(-50%);
+                    padding: 8px 16px;
+                    font-size: 13px;
+                    font-weight: 600;
+                    border-radius: 6px;
+                    border: 1px solid rgba(255, 255, 255, 0.6);
+                    background: rgba(0, 0, 0, 0.85);
+                    color: #fff;
+                    cursor: pointer;
+                    display: inline-flex;
+                    align-items: center;
+                    z-index: 10;
+                    white-space: nowrap;
+                    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+                    transition: background 0.15s ease-in-out;
+                    pointer-events: auto;
+                }
+                .clm-search-cover .clm-cover-gallery-btn:hover {
+                    background: rgba(0, 0, 0, 0.95);
+                }
+                .clm-search-cover .clm-cover-download {
+                    position: absolute;
+                    top: 8px;
+                    right: 8px;
+                    padding: 4px 8px;
+                    font-size: 11px;
+                    border-radius: 4px;
+                    border: 1px solid rgba(255, 255, 255, 0.3);
+                    background: rgba(0, 0, 0, 0.7);
+                    color: #fff;
+                    cursor: pointer;
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 4px;
+                    z-index: 10;
+                    transition: background 0.15s ease-in-out;
+                    pointer-events: auto;
+                }
+                .clm-search-cover .clm-cover-download.clm-downloaded {
+                    background: rgba(16, 185, 129, 0.9);
+                    border-color: rgba(255, 255, 255, 0.55);
+                }
+                .clm-search-cover .clm-cover-download::before {
+                    content: '⬇';
+                    font-size: inherit;
+                }
+                .clm-search-cover .clm-cover-download:hover {
+                    background: rgba(0, 0, 0, 0.9);
+                }
+                .clm-search-cover .clm-cover-quality {
+                    position: absolute;
+                    left: 8px;
+                    top: 8px;
+                    z-index: 10;
+                    max-width: 55px;
+                    font-size: 9px;
+                    padding: 2px 5px;
+                    pointer-events: none;
+                }
+                
+                /* 文本信息区域 - 类似wf_text */
+                .clm-search-text {
+                    padding: 12px;
+                    background: #fff;
+                    flex: 1;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 8px;
+                }
+                
+                .clm-search-title {
+                    font-size: 14px;
+                    font-weight: 600;
+                    color: #1f2937;
+                    line-height: 1.4;
+                    display: -webkit-box;
+                    -webkit-line-clamp: 2;
+                    -webkit-box-orient: vertical;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    margin: 0;
+                }
+                
+                .clm-search-title a {
+                    color: #1f2937;
+                    text-decoration: none;
+                }
+                
+                .clm-search-title a:hover {
+                    color: #3b82f6;
+                }
+                
+                .clm-search-meta {
+                    font-size: 12px;
+                    color: #6b7280;
+                    display: flex;
+                    flex-wrap: wrap;
+                    gap: 8px;
+                }
+                
+                .clm-search-meta span {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 4px;
+                }
+                
+                .clm-search-item.clm-thread-downloaded {
+                    background: rgba(34, 197, 94, 0.05);
+                    border: 2px solid rgba(34, 197, 94, 0.2);
+                }
+                
+                /* 手机端适配 */
+                @media (max-width: 768px) {
+                    .clm-search-grid {
+                        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+                        gap: 12px;
+                        padding: 12px;
+                    }
+                    
+                    .clm-search-cover {
+                        height: 200px;
+                    }
+                    
+                    .clm-search-cover:hover {
+                        transform: none !important;
+                    }
+                    
+                    /* 手机端搜索页按钮样式 */
+                    .clm-search-cover .clm-cover-gallery-btn {
+                        padding: 10px 20px;
+                        font-size: 15px;
+                        bottom: 35%;
+                        touch-action: manipulation;
+                        -webkit-tap-highlight-color: transparent;
+                    }
+                    .clm-search-cover .clm-cover-gallery-btn:active {
+                        transform: translateX(-50%) scale(0.95);
+                    }
+                    .clm-search-cover .clm-cover-download {
+                        padding: 6px 12px;
+                        font-size: 13px;
+                        touch-action: manipulation;
+                        -webkit-tap-highlight-color: transparent;
+                    }
+                    .clm-search-cover .clm-cover-download:active {
+                        transform: scale(0.95);
+                    }
+                }
+                
+                /* 原有的tail预览框样式 */
+                #tail {
+                    /* 保持原站腳本行為，不改位置邏輯，只增加放大效果所需樣式 */
+                    overflow: visible !important;
+                    z-index: 9999 !important;
+                    position: absolute !important;
+                    --clm-tail-scale: 1;
+                    --clm-tail-extra-x: 0px;
+                    --clm-tail-extra-y: 0px;
+                }
+                #tail img {
+                    transition: transform 0.2s ease-in-out;
+                    transform-origin: center center;
+                    border-radius: 4px;
+                }
+                #tail:not(.clm-mobile-tail) img:hover,
+                #tail.clm-tail-force-zoom:not(.clm-mobile-tail) img {
+                    transform: scale(2);
+                    position: relative;
+                    z-index: 10000;
+                    box-shadow: 0 0 12px rgba(0, 0, 0, 0.7);
+                    border: 2px solid #ffffff;
+                }
+                .clm-title-download {
+                    margin-left: 8px;
+                    padding: 2px 6px;
+                    font-size: 11px;
+                    border-radius: 4px;
+                    border: 1px solid rgba(255, 255, 255, 0.3);
+                    background: rgba(0, 0, 0, 0.65);
+                    color: #fff;
+                    cursor: pointer;
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 4px;
+                }
+                .clm-title-download.clm-downloaded {
+                    background: rgba(16, 185, 129, 0.85);
+                    border-color: rgba(255, 255, 255, 0.6);
+                    color: #fff;
+                }
+                tr.tr3.t_one.clm-thread-downloaded {
+                    background: rgba(34, 197, 94, 0.12);
+                }
+                .clm-title-download::before {
+                    content: '⬇';
+                    font-size: 11px;
+                }
+                .clm-title-download:hover {
+                    background: rgba(0, 0, 0, 0.85);
+                }
+                #tail .clm-tail-quality {
+                    z-index: 10002;
+                }
+            `);
+
+            function updateTailQualityFollow() {
+                const tail = document.getElementById('tail');
+                if (!tail) return;
+                const img = tail.querySelector('img');
+                if (!img) {
+                    tail.style.removeProperty('--clm-tail-extra-x');
+                    tail.style.removeProperty('--clm-tail-extra-y');
+                    tail.style.removeProperty('--clm-tail-scale');
+                    return;
+                }
+                const baseWidth = img.clientWidth || img.naturalWidth;
+                const baseHeight = img.clientHeight || img.naturalHeight;
+                if (!baseWidth || !baseHeight) return;
+                const scaleActive = tail.classList.contains('clm-tail-force-zoom') || tail.matches(':hover');
+                const scale = scaleActive ? 2 : 1;
+                if (scale <= 1) {
+                    tail.style.removeProperty('--clm-tail-extra-x');
+                    tail.style.removeProperty('--clm-tail-extra-y');
+                    tail.style.removeProperty('--clm-tail-scale');
+                    return;
+                }
+                const extraX = (baseWidth * (scale - 1)) / 2;
+                const extraY = (baseHeight * (scale - 1)) / 2;
+                tail.style.setProperty('--clm-tail-extra-x', `${extraX}px`);
+                tail.style.setProperty('--clm-tail-extra-y', `${extraY}px`);
+                tail.style.setProperty('--clm-tail-scale', `${scale}`);
+            }
+
+            function setTailZoomState(force) {
+                const tailEl = document.getElementById('tail');
+                if (!tailEl) return null;
+                tailEl.classList.toggle('clm-tail-force-zoom', !!force);
+                requestAnimationFrame(() => updateTailQualityFollow());
+                return tailEl;
+            }
+
+            function getTailControls() {
+                const tail = document.getElementById('tail');
+                if (!tail) return null;
+
+                if (tail.__clmControls) {
+                    return tail.__clmControls;
+                }
+
+                let tailHideTimer = null;
+
+                function cancelHide() {
+                    if (tailHideTimer) {
+                        clearTimeout(tailHideTimer);
+                        tailHideTimer = null;
+                    }
+                }
+
+                function scheduleHide() {
+                    cancelHide();
+                    tailHideTimer = setTimeout(() => {
+                        tail.style.display = 'none';
+                        tail.classList.remove('clm-tail-force-zoom');
+                        if (currentTailHoverCtx && currentListHoverCtx === currentTailHoverCtx) {
+                            setCurrentListHover(null);
+                        }
+                        currentTailHoverCtx = null;
+                        currentTailAnchorEl = null;
+                        setTailQualityLabel(null);
+                    }, 200);
+                }
+
+                tail.addEventListener('mouseenter', cancelHide);
+                tail.addEventListener('mouseleave', scheduleHide);
+                tail.addEventListener('mouseenter', () => {
+                    if (currentTailHoverCtx) {
+                        setCurrentListHover(currentTailHoverCtx);
+                        setTailQualityLabel(currentTailHoverCtx.qualityTag || null);
+                    }
+                    updateTailQualityFollow();
+                });
+                tail.addEventListener('mouseleave', () => {
                     if (currentTailHoverCtx && currentListHoverCtx === currentTailHoverCtx) {
                         setCurrentListHover(null);
                     }
-                    currentTailHoverCtx = null;
-                    currentTailAnchorEl = null;
-                    setTailQualityLabel(null);
-                }, 200);
-            }
-
-            tail.addEventListener('mouseenter', cancelHide);
-            tail.addEventListener('mouseleave', scheduleHide);
-            tail.addEventListener('mouseenter', () => {
-                if (currentTailHoverCtx) {
-                    setCurrentListHover(currentTailHoverCtx);
-                    setTailQualityLabel(currentTailHoverCtx.qualityTag || null);
-                }
-                updateTailQualityFollow();
-            });
-            tail.addEventListener('mouseleave', () => {
-                if (currentTailHoverCtx && currentListHoverCtx === currentTailHoverCtx) {
-                    setCurrentListHover(null);
-                }
-                updateTailQualityFollow();
-            });
-            tail.addEventListener('load', (ev) => {
-                if (ev.target && ev.target.tagName === 'IMG') {
                     updateTailQualityFollow();
-                }
-            }, true);
-
-            tail.__clmControls = { scheduleHide, cancelHide };
-            return tail.__clmControls;
-        }
-
-        let currentTailAnchorEl = null;
-        let currentTailHoverCtx = null;
-        function ensureTailQualityElement() {
-            const tail = document.getElementById('tail');
-            if (!tail) return null;
-            let badge = tail.querySelector('.clm-tail-quality');
-            if (!badge) {
-                badge = document.createElement('div');
-                badge.className = 'clm-quality-badge clm-tail-quality';
-                badge.style.display = 'none';
-                tail.appendChild(badge);
-            }
-            return badge;
-        }
-
-        function setTailQualityLabel(tag) {
-            const badge = ensureTailQualityElement();
-            if (!badge) return;
-            updateQualityBadgeElement(badge, tag);
-        }
-
-        function adjustTailPositionForElement(anchorEl) {
-            const tail = document.getElementById('tail');
-            if (!tail || !anchorEl) return;
-            const style = window.getComputedStyle(tail);
-            if (style.display === 'none') {
-                return;
-            }
-            const anchorRect = anchorEl.getBoundingClientRect();
-            const scrollX = window.scrollX || document.documentElement.scrollLeft || 0;
-            const scrollY = window.scrollY || document.documentElement.scrollTop || 0;
-            const viewportWidth = document.documentElement.clientWidth || window.innerWidth || 0;
-            const viewportHeight = document.documentElement.clientHeight || window.innerHeight || 0;
-            const tailRect = tail.getBoundingClientRect();
-            let tailWidth = tailRect.width || tail.offsetWidth || 360;
-            let tailHeight = tailRect.height || tail.offsetHeight || 240;
-            if (!tailWidth) {
-                tailWidth = 360;
-            }
-            if (!tailHeight) {
-                tailHeight = 240;
-            }
-            const viewportLeft = scrollX + 12;
-            const viewportRight = scrollX + Math.max(0, viewportWidth) - 12;
-            let left = anchorRect.right + scrollX + 12;
-            if (left + tailWidth > viewportRight) {
-                left = anchorRect.left + scrollX - tailWidth - 12;
-            }
-            if (left < viewportLeft) {
-                left = Math.max(viewportLeft, viewportRight - tailWidth);
-            }
-            let top = anchorRect.top + scrollY;
-            const minTop = scrollY + 12;
-            const maxTop = scrollY + Math.max(0, viewportHeight) - tailHeight - 12;
-            if (top < minTop) {
-                top = minTop;
-            }
-            if (top > maxTop) {
-                top = maxTop;
-            }
-            tail.style.position = 'absolute';
-            tail.style.left = `${Math.round(left)}px`;
-            tail.style.top = `${Math.round(top)}px`;
-        }
-
-        function scheduleTailPositionUpdate(anchorEl) {
-            if (!anchorEl) return;
-            requestAnimationFrame(() => {
-                requestAnimationFrame(() => adjustTailPositionForElement(anchorEl));
-            });
-        }
-
-        function refreshTailPositionIfNeeded() {
-            if (!currentTailAnchorEl) return;
-            adjustTailPositionForElement(currentTailAnchorEl);
-            updateTailQualityFollow();
-        }
-
-        window.addEventListener('scroll', refreshTailPositionIfNeeded, { passive: true });
-        window.addEventListener('resize', refreshTailPositionIfNeeded);
-
-        // 預先嘗試初始化（若 tail 尚未生成，後續 getTailControls 會再處理）
-        getTailControls();
-
-        // 将搜索结果转换为卡片布局
-        function convertSearchToCards() {
-            const search = window.location.search || '';
-            let isSearchResultPage = false;
-            try {
-                const searchParams = new URLSearchParams(search);
-                const stepParam = searchParams.get('step');
-                const sidParam = searchParams.get('sid');
-                if (stepParam === '2' || !!sidParam) {
-                    isSearchResultPage = true;
-                }
-            } catch (e) {
-                debugLog('convertSearchToCards: 解析 URLSearchParams 失败，fallback 到内容检测', e);
-            }
-            if (!isSearchResultPage) {
-                debugLog('convertSearchToCards: 检测到搜索选项页或非结果页，跳过转换', search);
-                return;
-            }
-
-            const tableContainer = document.querySelector('div.t');
-            if (!tableContainer) return;
-            const table = tableContainer.querySelector('table');
-            if (!table || table.dataset.clmConverted === '1') return;
-
-            const rows = Array.from(table.querySelectorAll('tr.tr3')).filter(row =>
-                row.querySelector('a[href*="htm_data"], a[href*="htm_mob"], a[href*="read.php?tid="]')
-            );
-            if (rows.length === 0) {
-                debugLog('convertSearchToCards: 未找到包含帖子链接的结果行，跳过');
-                return;
-            }
-
-            table.dataset.clmConverted = '1';
-
-            // 重置本頁面的封面任務隊列
-            searchCoverTasks = [];
-
-            const grid = document.createElement('div');
-            grid.className = 'clm-search-grid';
-
-            rows.forEach((row) => {
-                const link = row.querySelector('a[href*="htm_data"], a[href*="htm_mob"], a[href*="read.php?tid="]');
-                if (!link) return;
-
-                const threadUrl = getAbsoluteUrl(link.getAttribute('href') || link.href);
-                if (!threadUrl) return;
-
-                const threadTitle = link.textContent.trim();
-                const qualityTag = detectQualityTagFromTitle(threadTitle);
-                
-                // 提取其他信息
-                const cells = row.querySelectorAll('td');
-                let author = '';
-                let replies = '';
-                let views = '';
-                
-                if (cells.length >= 4) {
-                    author = cells[1]?.textContent.trim() || '';
-                    replies = cells[2]?.textContent.trim() || '';
-                    views = cells[3]?.textContent.trim() || '';
-                }
-                
-                // 创建卡片
-                const card = document.createElement('div');
-                card.className = 'clm-search-item';
-                
-                // 创建封面容器
-                const coverDiv = document.createElement('div');
-                coverDiv.className = 'clm-search-cover';
-                if (isSearchMobile) {
-                    coverDiv.classList.add('clm-mobile-search');
-                }
-                
-                // 鼠标悬停时设置CSS变量
-                coverDiv.addEventListener('mouseenter', () => {
-                    coverDiv.style.setProperty('--clm-cover-scale', '2');
                 });
-                coverDiv.addEventListener('mouseleave', () => {
-                    coverDiv.style.setProperty('--clm-cover-scale', '1');
-                });
-                
-                const loadingDiv = document.createElement('div');
-                loadingDiv.className = 'clm-search-cover-loading';
-                loadingDiv.textContent = '加载中...';
-                coverDiv.appendChild(loadingDiv);
-                
-                // 创建画廊按钮 - 使用与板块页相同的类名
-                const galleryBtn = document.createElement('button');
-                galleryBtn.type = 'button';
-                galleryBtn.className = 'clm-cover-gallery-btn';
-                galleryBtn.textContent = '画廊';
-                const openGallery = (e) => {
-                    if (e) {
-                        e.preventDefault();
-                        e.stopPropagation();
+                tail.addEventListener('load', (ev) => {
+                    if (ev.target && ev.target.tagName === 'IMG') {
+                        updateTailQualityFollow();
                     }
-                    openGalleryForThread(threadUrl, { instant: true, qualityTag });
-                };
-                galleryBtn.addEventListener('click', openGallery);
-                coverDiv.appendChild(galleryBtn);
-                
-                // 创建下载按钮 - 使用与板块页相同的类名
-                const downloadBtn = document.createElement('button');
-                downloadBtn.type = 'button';
-                downloadBtn.className = 'clm-cover-download';
-                coverDiv.appendChild(downloadBtn);
-                
-                // 创建品质徽章 - 使用与板块页相同的类名
-                const qualityBadge = document.createElement('div');
-                qualityBadge.className = 'clm-quality-badge clm-cover-quality';
-                updateQualityBadgeElement(qualityBadge, qualityTag);
-                coverDiv.appendChild(qualityBadge);
-                
-                // 支持方向键进入画廊模式
-                card.addEventListener('keydown', (e) => {
-                    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
-                        e.preventDefault();
-                        openGallery();
-                    }
-                });
-                // 让卡片可以获得焦点
-                card.tabIndex = 0;
-                
-                // 创建文本信息区域
-                const textDiv = document.createElement('div');
-                textDiv.className = 'clm-search-text';
-                
-                const titleDiv = document.createElement('h3');
-                titleDiv.className = 'clm-search-title';
-                const titleLink = document.createElement('a');
-                titleLink.href = threadUrl;
-                titleLink.textContent = threadTitle;
-                titleLink.target = '_blank';
-                titleDiv.appendChild(titleLink);
-                
-                const metaDiv = document.createElement('div');
-                metaDiv.className = 'clm-search-meta';
-                if (author) {
-                    const authorSpan = document.createElement('span');
-                    authorSpan.textContent = `👤 ${author}`;
-                    metaDiv.appendChild(authorSpan);
-                }
-                if (replies) {
-                    const repliesSpan = document.createElement('span');
-                    repliesSpan.textContent = `💬 ${replies}`;
-                    metaDiv.appendChild(repliesSpan);
-                }
-                if (views) {
-                    const viewsSpan = document.createElement('span');
-                    viewsSpan.textContent = `👁 ${views}`;
-                    metaDiv.appendChild(viewsSpan);
-                }
-                
-                textDiv.appendChild(titleDiv);
-                textDiv.appendChild(metaDiv);
-                
-                // 组装卡片
-                card.appendChild(coverDiv);
-                card.appendChild(textDiv);
-                
-                // 设置下载按钮
-                setupThreadDownloadButton(downloadBtn, {
-                    threadUrl,
-                    container: card,
-                    containerClass: 'clm-thread-downloaded',
-                    label: '下載',
-                    downloadedLabel: '已下載',
-                    threadTitle
-                });
-                
-                // 绑定画廊访问指示器
-                bindGalleryVisitedIndicator(coverDiv, threadUrl, 'cover');
-                
-                // 添加到网格
-                grid.appendChild(card);
-                
-                // 预先讀取 [圖] d 值，用於批次日誌
-                const preSpanForTask = row.querySelector('span.pre[d], span.sgreen.pre[d]');
-                const initialDValue = preSpanForTask ? preSpanForTask.getAttribute('d') : null;
+                }, true);
 
-                // 异步加载封面图 - 优先从[圖]标签获取（仅电脑端有），批次順序加載
-                const coverTask = async () => {
-                    // 如已經有封面圖（例如之前加載成功或從帖子內容兜底），則直接跳過
-                    if (coverDiv.querySelector('img')) {
-                        return;
-                    }
-
-                    // 內部幫助函數：給定 d 值，按統一策略從 a.gac2 加載封面
-                    const loadCoverByD = (dValueToUse) => {
-                        if (!dValueToUse) return;
-                        const imgUrl = `https://a.gac2.xyz/${dValueToUse}.jpg`;
-                        const img = document.createElement('img');
-                        img.alt = threadTitle;
-                        img.loading = 'lazy';
-                        img.src = imgUrl;
-
-                        // 一開始就將圖片節點插入封面容器，確保每批實際有對應的 <img> 出現在搜索結果中
-                        coverDiv.insertBefore(img, coverDiv.firstChild);
-
-                        let finished = false;
-                        const timeoutId = setTimeout(() => {
-                            if (finished) return;
-                            finished = true;
-                            console.warn('草榴Manager: 封面加載超時，標記為無法獲取', {
-                                threadUrl,
-                                d: dValueToUse,
-                                imgUrl
-                            });
-                            loadingDiv.textContent = '無法獲取封面';
-                        }, COVER_LOAD_TIMEOUT_MS);
-
-                        const handleLoad = () => {
-                            if (finished) return;
-                            finished = true;
-                            clearTimeout(timeoutId);
-                            loadingDiv.remove();
-                        };
-
-                        img.onload = handleLoad;
-
-                        img.onerror = (ev) => {
-                            if (finished) return;
-                            finished = true;
-                            clearTimeout(timeoutId);
-                            console.warn('草榴Manager: [圖]封面加载失败', {
-                                imgUrl,
-                                threadUrl,
-                                d: dValueToUse,
-                                event: ev
-                            });
-                            loadingDiv.textContent = '無法獲取封面';
-                        };
-
-                        if (img.complete && img.naturalWidth > 0) {
-                            handleLoad();
-                        }
-                    };
-
-                    try {
-                        const dValue = initialDValue;
-
-                        // 有 d 值時：直接通過統一的 a.gac2 加載管線加載封面
-                        if (dValue) {
-                            loadCoverByD(dValue);
-                            return;
-                        }
-
-                        // 如果没有[圖]标签（手机端），通过切换页面获取电脑端搜索页
-                        debugLog('草榴Manager: 未找到[圖]标签，尝试从缓存或电脑端获取', {
-                            threadUrl
-                        });
-
-                        try {
-                            // 使用缓存或共享的Promise，避免重复请求
-                            if (!desktopSearchPromise) {
-                                desktopSearchPromise = (async () => {
-                                    // 1. 访问切换页面，设置电脑端cookie
-                                    console.log('草榴Manager: 切换到电脑端...');
-                                    await fetch('https://t66y.com/mobile.php?ismobile=no', {
-                                        credentials: 'include'
-                                    });
-
-                                    // 等待一段時間讓 cookie 生效，並避免觸發論壇 2 秒刷新限制
-                                    await new Promise(resolve => setTimeout(resolve, 2500));
-
-                                    // 2. 构造电脑端搜索URL
-                                    const desktopSearchUrl = window.location.href.replace(/\?.*$/, '') + window.location.search;
-                                    console.log('草榴Manager: 获取电脑端搜索页:', desktopSearchUrl);
-
-                                    // 3. 获取电脑端搜索页HTML
-                                    const response = await fetch(desktopSearchUrl, {
-                                        credentials: 'include'
-                                    });
-                                    const html = await response.text();
-
-                                    // 4. 立即切换回手机端
-                                    await fetch('https://t66y.com/mobile.php?ismobile=yes', {
-                                        credentials: 'include'
-                                    });
-
-                                    // 5. 解析HTML并缓存
-                                    const parser = new DOMParser();
-                                    const doc = parser.parseFromString(html, 'text/html');
-                                    desktopSearchCache = doc;
-                                    return doc;
-                                })();
-                            }
-
-                            // 等待获取完成
-                            const doc = await desktopSearchPromise;
-
-                            // 6. 提取帖子ID用于匹配
-                            const threadIdMatch = threadUrl.match(/\/(\d+)\.html$/);
-                            const threadId = threadIdMatch ? threadIdMatch[1] : null;
-
-                            // 7. 在电脑端搜索页中查找对应的帖子行
-                            const desktopRows = Array.from(doc.querySelectorAll('tr.tr3'));
-                            const matchingRow = desktopRows.find(r => {
-                                const link = r.querySelector('a[href*="htm_data"], a[href*="htm_mob"]');
-                                if (link) {
-                                    const linkHref = link.getAttribute('href');
-                                    return threadId && linkHref.includes(threadId + '.html');
-                                }
-                                return false;
-                            });
-
-                            if (matchingRow) {
-                                const preSpan = matchingRow.querySelector('span.pre[d], span.sgreen.pre[d]');
-                                if (preSpan) {
-                                    const desktopDValue = preSpan.getAttribute('d');
-                                    if (desktopDValue) {
-                                        const imgUrl = `https://a.gac2.xyz/${desktopDValue}.jpg`;
-                                        console.log('草榴Manager: 從電腦端搜索頁獲取 [圖] 封面', {
-                                            d: desktopDValue,
-                                            imgUrl,
-                                            threadUrl
-                                        });
-                                        // 使用與電腦端相同的 a.gac2 加載策略
-                                        loadCoverByD(desktopDValue);
-                                        return;
-                                    }
-                                }
-                            }
-
-                            // 如果电脑端也没有找到[圖]标签，直接標記為無圖（不再從帖子內容兜底）
-                            console.warn('草榴Manager: 电脑端搜索页也未找到[圖]标签');
-                            loadingDiv.textContent = '无图';
-                        } catch (err) {
-                            console.warn('草榴Manager: 获取电脑端搜索页失败:', err);
-                            // 确保切换回手机端
-                            try {
-                                await fetch('https://t66y.com/mobile.php?ismobile=yes', {
-                                    credentials: 'include'
-                                });
-                            } catch (e) {
-                                console.error('草榴Manager: 切换回手机端失败:', e);
-                            }
-                            // 無法獲取電腦端搜索頁時，同樣僅標記為無圖
-                            loadingDiv.textContent = '无图';
-                        }
-                    } catch (err) {
-                        console.warn('草榴Manager: 加载封面失败:', threadUrl, err);
-                        loadingDiv.textContent = '失败';
-                    }
-                };
-
-                searchCoverTasks.push({
-                    task: coverTask,
-                    d: initialDValue,
-                    threadUrl
-                });
-            });
-
-            table.parentNode.insertBefore(grid, table);
-
-            // 初始化封面加載批次：先加載前 20 張，並預加載後 20 張
-            runCoverBatchesSequential();
-        }
-        
-        // 初始转换
-        convertSearchToCards();
-        
-        // 监听DOM变化
-        const searchObserver = new MutationObserver(() => {
-            convertSearchToCards();
-        });
-        searchObserver.observe(document.body, { childList: true, subtree: true });
-    }
-
-    // 电脑端板块图文模式页面（thread0806.php 图文模式）
-    // 只在电脑端应用，手机端有单独的样式
-    if (!isMobilePage() && href.indexOf('thread0806.php') !== -1) {
-        // 圖文模式封面在 .wf_item .image-big img 中
-        // 鼠標懸停封面圖時，放大約 2 倍（約 100% 放大），並保證不被父元素裁切
-        injectStyle(`
-            /* 封面容器 - 允许内容溢出，创建独立层叠上下文 */
-            .wf_item .image-big {
-                position: relative;
-                overflow: visible !important;
-                isolation: isolate;
-                transition: transform 0.2s ease-in-out;
-                transform-origin: center center;
+                tail.__clmControls = { scheduleHide, cancelHide };
+                return tail.__clmControls;
             }
-            
-            /* 悬停时整个容器放大 - 这样图片和按钮都会一起放大 */
-            .wf_item .image-big:hover {
-                transform: scale(2);
-                z-index: 9999;
-            }
-            
-            /* 图片样式 */
-            .wf_item .image-big img {
-                display: block;
-                border-radius: 4px;
-                transition: box-shadow 0.2s ease-in-out, border 0.2s ease-in-out;
-            }
-            
-            /* 悬停时图片添加阴影和边框 */
-            .wf_item .image-big:hover img {
-                box-shadow: 0 0 12px rgba(0, 0, 0, 0.7);
-                border: 2px solid #ffffff;
-            }
-            
-            /* 画廊按钮 - 位于容器内部 */
-            .wf_item .clm-cover-gallery-btn {
-                position: absolute;
-                left: 50%;
-                bottom: 30%;
-                transform: translateX(-50%);
-                padding: 8px 16px;
-                font-size: 13px;
-                font-weight: 600;
-                border-radius: 6px;
-                border: 1px solid rgba(255, 255, 255, 0.6);
-                background: rgba(0, 0, 0, 0.40);
-                color: #fff;
-                cursor: pointer;
-                display: inline-flex;
-                align-items: center;
-                z-index: 10;
-                white-space: nowrap;
-                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-                transition: background 0.15s ease-in-out;
-                pointer-events: auto;
-            }
-            
-            .wf_item .clm-cover-gallery-btn:hover {
-                background: rgba(0, 0, 0, 0.95);
-            }
-            
-            /* 下载按钮 - 位于容器内部 */
-            .wf_item .clm-cover-download {
-                position: absolute;
-                top: 8px;
-                right: 8px;
-                padding: 4px 8px;
-                font-size: 11px;
-                border-radius: 4px;
-                border: 1px solid rgba(255, 255, 255, 0.3);
-                background: rgba(0, 0, 0, 0.7);
-                color: #fff;
-                cursor: pointer;
-                display: inline-flex;
-                align-items: center;
-                gap: 4px;
-                z-index: 10;
-                transition: background 0.15s ease-in-out;
-                pointer-events: auto;
-            }
-            
-            .wf_item .clm-cover-download.clm-downloaded {
-                background: rgba(16, 185, 129, 0.9);
-                border-color: rgba(255, 255, 255, 0.55);
-            }
-            
-            .wf_item .clm-cover-download::before {
-                content: '⬇';
-                font-size: inherit;
-            }
-            
-            .wf_item .clm-cover-download:hover {
-                background: rgba(0, 0, 0, 0.9);
-            }
-            
-            /* 清晰度标签 - 位于容器内部 */
-            .wf_item .clm-cover-quality {
-                position: absolute;
-                left: 8px;
-                top: 8px;
-                z-index: 10;
-                max-width: 55px;
-                font-size: 9px;
-                padding: 2px 5px;
-                pointer-events: none;
-            }
-            .wf_item .clm-text-quality {
-                position: relative;
-                left: auto;
-                bottom: auto;
-                display: inline-flex;
-                margin-top: 6px;
-                transform: none;
-            }
-            .wf_item.clm-thread-downloaded {
-                position: relative;
-                box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.25);
-                border-radius: 6px;
-            }
-            .wf_item.clm-thread-downloaded::after {
-                content: '已下載';
-                position: absolute;
-                top: 8px;
-                left: 8px;
-                background: rgba(34, 197, 94, 0.85);
-                color: #fff;
-                font-size: 10px;
-                padding: 2px 6px;
-                border-radius: 999px;
-                letter-spacing: 0.08em;
-                z-index: 2;
-            }
-        `);
 
-        const COVER_SCALE = 2;
-
-        function attachCoverDownloadButtons() {
-            const covers = document.querySelectorAll('.wf_item .image-big');
-            covers.forEach(cover => {
-                if (cover.dataset.clmCoverBtnAttached === '1') return;
-                cover.dataset.clmCoverBtnAttached = '1';
-                const wfItem = cover.closest('.wf_item');
-
-                // 创建画廊按钮
-                const galleryBtn = document.createElement('button');
-                galleryBtn.type = 'button';
-                galleryBtn.className = 'clm-cover-gallery-btn';
-                galleryBtn.textContent = '画廊';
-                cover.appendChild(galleryBtn);
-
-                // 创建下载按钮
-                const btn = document.createElement('button');
-                btn.type = 'button';
-                btn.className = 'clm-cover-download';
-                cover.appendChild(btn);
-
-                // 创建品质徽章
-                const qualityBadge = document.createElement('div');
-                qualityBadge.className = 'clm-quality-badge clm-cover-quality';
-                qualityBadge.style.display = 'none';
-                cover.appendChild(qualityBadge);
-
-                const img = cover.querySelector('img');
-
-                // 鼠标悬停时设置CSS变量，让按钮和品质标识随封面放大
-                cover.addEventListener('mouseenter', () => {
-                    cover.style.setProperty('--clm-cover-scale', COVER_SCALE);
-                });
-                cover.addEventListener('mouseleave', () => {
-                    cover.style.setProperty('--clm-cover-scale', '1');
-                });
-
-                let threadUrl = null;
-                const threadAnchor = cover.querySelector('a[href]') ||
-                    wfItem?.querySelector('a[href]');
-                if (threadAnchor) {
-                    const rawHref = threadAnchor.getAttribute('href') || threadAnchor.href;
-                    threadUrl = getAbsoluteUrl(rawHref);
-                    if (threadUrl) {
-                        bindGalleryVisitedIndicator(cover, threadUrl, 'cover');
-                    }
-                    if (threadUrl) {
-                        cover.addEventListener('mouseenter', () => {
-                            const hoverQuality = ensureCoverQuality();
-                            setCurrentListHover({
-                                source: 'board',
-                                threadUrl,
-                                cover,
-                                qualityTag: hoverQuality
-                            });
-                        });
-                        cover.addEventListener('mouseleave', () => {
-                            if (currentListHoverCtx?.cover === cover) {
-                                setCurrentListHover(null);
-                            }
-                        });
-                    }
-                }
-
-                const resolveCoverQuality = () => {
-                    return resolveQualityTagFromListItem(wfItem, threadAnchor);
-                };
-                let cachedCoverQuality = null;
-                const ensureCoverQuality = () => {
-                    cachedCoverQuality = resolveCoverQuality();
-                    updateQualityBadgeElement(qualityBadge, cachedCoverQuality);
-                    return cachedCoverQuality;
-                };
-                ensureCoverQuality();
-
-                // 画廊按钮点击事件
-                if (threadUrl) {
-                    galleryBtn.addEventListener('click', (e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        const qualityTag = ensureCoverQuality();
-                        openGalleryForThread(threadUrl, { instant: true, qualityTag });
-                    });
-                }
-
-                setupThreadDownloadButton(btn, {
-                    threadUrl,
-                    container: wfItem,
-                    containerClass: 'clm-thread-downloaded',
-                    label: '下載',
-                    downloadedLabel: '已下載',
-                    threadTitle: (threadAnchor?.textContent || '').trim()
-                });
-            });
-        }
-
-        function attachTextOnlyQualityBadges() {
-            const items = document.querySelectorAll('.wf_item');
-            items.forEach(item => {
-                if (item.querySelector('.image-big')) {
-                    return;
-                }
-                const threadAnchor = item.querySelector('a[href]');
-                const qualityTag = resolveQualityTagFromListItem(item, threadAnchor);
-                let badge = item.querySelector('.clm-text-quality');
-                if (!qualityTag) {
-                    if (badge) {
-                        badge.remove();
-                    }
-                    return;
-                }
-                const textContainer = item.querySelector('.wf_text');
-                if (!textContainer) {
-                    return;
-                }
+            let currentTailAnchorEl = null;
+            let currentTailHoverCtx = null;
+            function ensureTailQualityElement() {
+                const tail = document.getElementById('tail');
+                if (!tail) return null;
+                let badge = tail.querySelector('.clm-tail-quality');
                 if (!badge) {
                     badge = document.createElement('div');
-                    badge.className = 'clm-quality-badge clm-text-quality';
-                    textContainer.appendChild(badge);
+                    badge.className = 'clm-quality-badge clm-tail-quality';
+                    badge.style.display = 'none';
+                    tail.appendChild(badge);
                 }
-                updateQualityBadgeElement(badge, qualityTag);
-            });
-        }
+                return badge;
+            }
 
-        attachCoverDownloadButtons();
-        attachTextOnlyQualityBadges();
+            function setTailQualityLabel(tag) {
+                const badge = ensureTailQualityElement();
+                if (!badge) return;
+                updateQualityBadgeElement(badge, tag);
+            }
 
-        const coverObserver = new MutationObserver(() => {
-            attachCoverDownloadButtons();
-            attachTextOnlyQualityBadges();
-        });
-        coverObserver.observe(document.body, { childList: true, subtree: true });
-    }
+            function adjustTailPositionForElement(anchorEl) {
+                const tail = document.getElementById('tail');
+                if (!tail || !anchorEl) return;
+                const style = window.getComputedStyle(tail);
+                if (style.display === 'none') {
+                    return;
+                }
+                const anchorRect = anchorEl.getBoundingClientRect();
+                const scrollX = window.scrollX || document.documentElement.scrollLeft || 0;
+                const scrollY = window.scrollY || document.documentElement.scrollTop || 0;
+                const viewportWidth = document.documentElement.clientWidth || window.innerWidth || 0;
+                const viewportHeight = document.documentElement.clientHeight || window.innerHeight || 0;
+                const tailRect = tail.getBoundingClientRect();
+                let tailWidth = tailRect.width || tail.offsetWidth || 360;
+                let tailHeight = tailRect.height || tail.offsetHeight || 240;
+                if (!tailWidth) {
+                    tailWidth = 360;
+                }
+                if (!tailHeight) {
+                    tailHeight = 240;
+                }
+                const viewportLeft = scrollX + 12;
+                const viewportRight = scrollX + Math.max(0, viewportWidth) - 12;
+                let left = anchorRect.right + scrollX + 12;
+                if (left + tailWidth > viewportRight) {
+                    left = anchorRect.left + scrollX - tailWidth - 12;
+                }
+                if (left < viewportLeft) {
+                    left = Math.max(viewportLeft, viewportRight - tailWidth);
+                }
+                let top = anchorRect.top + scrollY;
+                const minTop = scrollY + 12;
+                const maxTop = scrollY + Math.max(0, viewportHeight) - tailHeight - 12;
+                if (top < minTop) {
+                    top = minTop;
+                }
+                if (top > maxTop) {
+                    top = maxTop;
+                }
+                tail.style.position = 'absolute';
+                tail.style.left = `${Math.round(left)}px`;
+                tail.style.top = `${Math.round(top)}px`;
+            }
 
-    /**
-     * -------------------------------
-     *   手机端支持
-     * -------------------------------
-     */
-    const pageType = detectPageType();
-    const isMobile = isMobilePage();
+            function scheduleTailPositionUpdate(anchorEl) {
+                if (!anchorEl) return;
+                requestAnimationFrame(() => {
+                    requestAnimationFrame(() => adjustTailPositionForElement(anchorEl));
+                });
+            }
 
-    // 手机端板块页面（thread0806.php 图文模式）
-    if (isMobile && href.indexOf('thread0806.php') !== -1) {
-        // 手机端图文模式，添加触控优化的画廊按钮，禁用放大
-        injectStyle(`
-            .wf_item .image-big {
-                overflow: hidden !important;
-                position: relative;
+            function refreshTailPositionIfNeeded() {
+                if (!currentTailAnchorEl) return;
+                adjustTailPositionForElement(currentTailAnchorEl);
+                updateTailQualityFollow();
             }
-            .wf_item .image-big img {
-                transition: none !important;
-                transform: none !important;
-            }
-            .wf_item .image-big:hover img {
-                transform: none !important;
-            }
-            .wf_item .clm-cover-gallery-btn {
-                position: absolute;
-                left: 50%;
-                bottom: 35%;
-                transform: translateX(-50%);
-                padding: 10px 20px;
-                font-size: 15px;
-                font-weight: 600;
-                border-radius: 8px;
-                border: 1px solid rgba(255, 255, 255, 0.6);
-                background: rgba(0, 0, 0, 0.85);
-                color: #fff;
-                cursor: pointer;
-                display: inline-flex;
-                align-items: center;
-                z-index: 10000;
-                touch-action: manipulation;
-                -webkit-tap-highlight-color: transparent;
-                box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
-            }
-            .wf_item .clm-cover-gallery-btn:active {
-                background: rgba(0, 0, 0, 0.95);
-                transform: translateX(-50%) scale(0.95);
-            }
-            .wf_item .clm-cover-download {
-                position: absolute;
-                top: 8px;
-                right: 8px;
-                padding: 6px 12px;
-                font-size: 13px;
-                border-radius: 6px;
-                border: 1px solid rgba(255, 255, 255, 0.4);
-                background: rgba(0, 0, 0, 0.75);
-                color: #fff;
-                cursor: pointer;
-                display: inline-flex;
-                align-items: center;
-                gap: 6px;
-                z-index: 2;
-                touch-action: manipulation;
-                -webkit-tap-highlight-color: transparent;
-            }
-            .wf_item .clm-cover-download:active {
-                background: rgba(0, 0, 0, 0.9);
-                transform: scale(0.95);
-            }
-            .wf_item .clm-cover-download.clm-downloaded {
-                background: rgba(16, 185, 129, 0.9);
-                border-color: rgba(255, 255, 255, 0.55);
-            }
-            .wf_item .clm-cover-download::before {
-                content: '⬇';
-                font-size: 13px;
-            }
-            .wf_item .clm-cover-quality {
-                position: absolute;
-                left: 8px;
-                top: 8px;
-                z-index: 10000;
-                max-width: 50px;
-                font-size: 9px;
-                padding: 2px 5px;
-            }
-            .wf_item .clm-text-quality {
-                position: relative;
-                left: auto;
-                bottom: auto;
-                display: inline-flex;
-                margin-top: 6px;
-                transform: none;
-            }
-            .wf_item.clm-thread-downloaded {
-                position: relative;
-                box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.25);
-                border-radius: 6px;
-            }
-            .wf_item.clm-thread-downloaded::after {
-                content: '已下載';
-                position: absolute;
-                top: 8px;
-                left: 8px;
-                background: rgba(34, 197, 94, 0.85);
-                color: #fff;
-                font-size: 10px;
-                padding: 2px 6px;
-                border-radius: 999px;
-                letter-spacing: 0.08em;
-                z-index: 2;
-            }
-        `);
 
-        function attachMobileCoverButtons() {
-            const covers = document.querySelectorAll('.wf_item .image-big');
-            covers.forEach(cover => {
-                if (cover.dataset.clmMobileBtnAttached === '1') return;
-                cover.dataset.clmMobileBtnAttached = '1';
-                const wfItem = cover.closest('.wf_item');
+            window.addEventListener('scroll', refreshTailPositionIfNeeded, { passive: true });
+            window.addEventListener('resize', refreshTailPositionIfNeeded);
 
-                // 添加画廊按钮
-                const galleryBtn = document.createElement('button');
-                galleryBtn.type = 'button';
-                galleryBtn.className = 'clm-cover-gallery-btn';
-                galleryBtn.textContent = '画廊';
-                cover.appendChild(galleryBtn);
+            // 預先嘗試初始化（若 tail 尚未生成，後續 getTailControls 會再處理）
+            getTailControls();
 
-                // 添加下载按钮
-                const downloadBtn = document.createElement('button');
-                downloadBtn.type = 'button';
-                downloadBtn.className = 'clm-cover-download';
-                downloadBtn.textContent = '下載';
-                cover.appendChild(downloadBtn);
+            // 将搜索结果转换为卡片布局
+            function convertSearchToCards() {
+                const search = window.location.search || '';
+                let isSearchResultPage = false;
+                try {
+                    const searchParams = new URLSearchParams(search);
+                    const stepParam = searchParams.get('step');
+                    const sidParam = searchParams.get('sid');
+                    if (stepParam === '2' || !!sidParam) {
+                        isSearchResultPage = true;
+                    }
+                } catch (e) {
+                    debugLog('convertSearchToCards: 解析 URLSearchParams 失败，fallback 到内容检测', e);
+                }
+                if (!isSearchResultPage) {
+                    debugLog('convertSearchToCards: 检测到搜索选项页或非结果页，跳过转换', search);
+                    return;
+                }
 
-                // 添加品质徽章
-                const qualityBadge = document.createElement('div');
-                qualityBadge.className = 'clm-quality-badge clm-cover-quality';
-                cover.appendChild(qualityBadge);
+                const tableContainer = document.querySelector('div.t');
+                if (!tableContainer) return;
+                const table = tableContainer.querySelector('table');
+                if (!table || table.dataset.clmConverted === '1') return;
 
-                const threadAnchor = wfItem.querySelector('a[href]');
-                const threadUrl = threadAnchor ? getAbsoluteUrl(threadAnchor.getAttribute('href') || threadAnchor.href) : null;
-                const qualityTag = resolveQualityTagFromListItem(wfItem, threadAnchor);
-                updateQualityBadgeElement(qualityBadge, qualityTag);
+                const rows = Array.from(table.querySelectorAll('tr.tr3')).filter(row =>
+                    row.querySelector('a[href*="htm_data"], a[href*="htm_mob"], a[href*="read.php?tid="]')
+                );
+                if (rows.length === 0) {
+                    debugLog('convertSearchToCards: 未找到包含帖子链接的结果行，跳过');
+                    return;
+                }
 
-                if (threadUrl) {
-                    cover.dataset.clmThreadKey = threadUrl;
-                    bindGalleryVisitedIndicator(cover, threadUrl, 'cover');
+                table.dataset.clmConverted = '1';
 
-                    // 画廊按钮点击事件
-                    galleryBtn.addEventListener('click', (ev) => {
-                        ev.preventDefault();
-                        ev.stopPropagation();
-                        openGalleryForThread(threadUrl, { instant: true, qualityTag });
+                // 重置本頁面的封面任務隊列
+                searchCoverTasks = [];
+
+                const grid = document.createElement('div');
+                grid.className = 'clm-search-grid';
+
+                rows.forEach((row) => {
+                    const link = row.querySelector('a[href*="htm_data"], a[href*="htm_mob"], a[href*="read.php?tid="]');
+                    if (!link) return;
+
+                    const threadUrl = getAbsoluteUrl(link.getAttribute('href') || link.href);
+                    if (!threadUrl) return;
+
+                    const threadTitle = link.textContent.trim();
+                    const qualityTag = detectQualityTagFromTitle(threadTitle);
+                    
+                    // 提取其他信息
+                    const cells = row.querySelectorAll('td');
+                    let author = '';
+                    let replies = '';
+                    let views = '';
+                    
+                    if (cells.length >= 4) {
+                        author = cells[1]?.textContent.trim() || '';
+                        replies = cells[2]?.textContent.trim() || '';
+                        views = cells[3]?.textContent.trim() || '';
+                    }
+                    
+                    // 创建卡片
+                    const card = document.createElement('div');
+                    card.className = 'clm-search-item';
+                    
+                    // 创建封面容器
+                    const coverDiv = document.createElement('div');
+                    coverDiv.className = 'clm-search-cover';
+                    if (isSearchMobile) {
+                        coverDiv.classList.add('clm-mobile-search');
+                    }
+                    
+                    // 鼠标悬停时设置CSS变量
+                    coverDiv.addEventListener('mouseenter', () => {
+                        coverDiv.style.setProperty('--clm-cover-scale', '2');
                     });
-
+                    coverDiv.addEventListener('mouseleave', () => {
+                        coverDiv.style.setProperty('--clm-cover-scale', '1');
+                    });
+                    
+                    const loadingDiv = document.createElement('div');
+                    loadingDiv.className = 'clm-search-cover-loading';
+                    loadingDiv.textContent = '加载中...';
+                    coverDiv.appendChild(loadingDiv);
+                    
+                    // 创建画廊按钮 - 使用与板块页相同的类名
+                    const galleryBtn = document.createElement('button');
+                    galleryBtn.type = 'button';
+                    galleryBtn.className = 'clm-cover-gallery-btn';
+                    galleryBtn.textContent = '画廊';
+                    const openGallery = (e) => {
+                        if (e) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                        }
+                        openGalleryForThread(threadUrl, { instant: true, qualityTag });
+                    };
+                    galleryBtn.addEventListener('click', openGallery);
+                    coverDiv.appendChild(galleryBtn);
+                    
+                    // 创建下载按钮 - 使用与板块页相同的类名
+                    const downloadBtn = document.createElement('button');
+                    downloadBtn.type = 'button';
+                    downloadBtn.className = 'clm-cover-download';
+                    coverDiv.appendChild(downloadBtn);
+                    
+                    // 创建品质徽章 - 使用与板块页相同的类名
+                    const qualityBadge = document.createElement('div');
+                    qualityBadge.className = 'clm-quality-badge clm-cover-quality';
+                    updateQualityBadgeElement(qualityBadge, qualityTag);
+                    coverDiv.appendChild(qualityBadge);
+                    
+                    // 支持方向键进入画廊模式
+                    card.addEventListener('keydown', (e) => {
+                        if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+                            e.preventDefault();
+                            openGallery();
+                        }
+                    });
+                    // 让卡片可以获得焦点
+                    card.tabIndex = 0;
+                    
+                    // 创建文本信息区域
+                    const textDiv = document.createElement('div');
+                    textDiv.className = 'clm-search-text';
+                    
+                    const titleDiv = document.createElement('h3');
+                    titleDiv.className = 'clm-search-title';
+                    const titleLink = document.createElement('a');
+                    titleLink.href = threadUrl;
+                    titleLink.textContent = threadTitle;
+                    titleLink.target = '_blank';
+                    titleDiv.appendChild(titleLink);
+                    
+                    const metaDiv = document.createElement('div');
+                    metaDiv.className = 'clm-search-meta';
+                    if (author) {
+                        const authorSpan = document.createElement('span');
+                        authorSpan.textContent = `👤 ${author}`;
+                        metaDiv.appendChild(authorSpan);
+                    }
+                    if (replies) {
+                        const repliesSpan = document.createElement('span');
+                        repliesSpan.textContent = `💬 ${replies}`;
+                        metaDiv.appendChild(repliesSpan);
+                    }
+                    if (views) {
+                        const viewsSpan = document.createElement('span');
+                        viewsSpan.textContent = `👁 ${views}`;
+                        metaDiv.appendChild(viewsSpan);
+                    }
+                    
+                    textDiv.appendChild(titleDiv);
+                    textDiv.appendChild(metaDiv);
+                    
+                    // 组装卡片
+                    card.appendChild(coverDiv);
+                    card.appendChild(textDiv);
+                    
                     // 设置下载按钮
-                    const threadTitle = (threadAnchor?.textContent || '').trim();
                     setupThreadDownloadButton(downloadBtn, {
                         threadUrl,
-                        container: wfItem,
+                        container: card,
                         containerClass: 'clm-thread-downloaded',
                         label: '下載',
                         downloadedLabel: '已下載',
                         threadTitle
                     });
-                }
+                    
+                    // 绑定画廊访问指示器
+                    bindGalleryVisitedIndicator(coverDiv, threadUrl, 'cover');
+                    
+                    // 添加到网格
+                    grid.appendChild(card);
+                    
+                    // 预先讀取 [圖] d 值，用於批次日誌
+                    const preSpanForTask = row.querySelector('span.pre[d], span.sgreen.pre[d]');
+                    const initialDValue = preSpanForTask ? preSpanForTask.getAttribute('d') : null;
+
+                    // 异步加载封面图 - 优先从[圖]标签获取（仅电脑端有），批次順序加載
+                    const coverTask = async () => {
+                        // 如已經有封面圖（例如之前加載成功或從帖子內容兜底），則直接跳過
+                        if (coverDiv.querySelector('img')) {
+                            return;
+                        }
+
+                        // 內部幫助函數：給定 d 值，按統一策略從 a.gac2 加載封面
+                        const loadCoverByD = (dValueToUse) => {
+                            if (!dValueToUse) return;
+                            const imgUrl = `https://a.gac2.xyz/${dValueToUse}.jpg`;
+                            const img = document.createElement('img');
+                            img.alt = threadTitle;
+                            img.loading = 'lazy';
+                            img.src = imgUrl;
+
+                            // 一開始就將圖片節點插入封面容器，確保每批實際有對應的 <img> 出現在搜索結果中
+                            coverDiv.insertBefore(img, coverDiv.firstChild);
+
+                            let finished = false;
+                            const timeoutId = setTimeout(() => {
+                                if (finished) return;
+                                finished = true;
+                                console.warn('草榴Manager: 封面加載超時，標記為無法獲取', {
+                                    threadUrl,
+                                    d: dValueToUse,
+                                    imgUrl
+                                });
+                                loadingDiv.textContent = '無法獲取封面';
+                            }, COVER_LOAD_TIMEOUT_MS);
+
+                            const handleLoad = () => {
+                                if (finished) return;
+                                finished = true;
+                                clearTimeout(timeoutId);
+                                loadingDiv.remove();
+                            };
+
+                            img.onload = handleLoad;
+
+                            img.onerror = (ev) => {
+                                if (finished) return;
+                                finished = true;
+                                clearTimeout(timeoutId);
+                                console.warn('草榴Manager: [圖]封面加载失败', {
+                                    imgUrl,
+                                    threadUrl,
+                                    d: dValueToUse,
+                                    event: ev
+                                });
+                                loadingDiv.textContent = '無法獲取封面';
+                            };
+
+                            if (img.complete && img.naturalWidth > 0) {
+                                handleLoad();
+                            }
+                        };
+
+                        try {
+                            const dValue = initialDValue;
+
+                            // 有 d 值時：直接通過統一的 a.gac2 加載管線加載封面
+                            if (dValue) {
+                                loadCoverByD(dValue);
+                                return;
+                            }
+
+                            // 如果没有[圖]标签（手机端），通过切换页面获取电脑端搜索页
+                            debugLog('草榴Manager: 未找到[圖]标签，尝试从缓存或电脑端获取', {
+                                threadUrl
+                            });
+
+                            try {
+                                // 使用缓存或共享的Promise，避免重复请求
+                                if (!desktopSearchPromise) {
+                                    desktopSearchPromise = (async () => {
+                                        // 1. 访问切换页面，设置电脑端cookie
+                                        console.log('草榴Manager: 切换到电脑端...');
+                                        await fetch('https://t66y.com/mobile.php?ismobile=no', {
+                                            credentials: 'include'
+                                        });
+
+                                        // 等待一段時間讓 cookie 生效，並避免觸發論壇 2 秒刷新限制
+                                        await new Promise(resolve => setTimeout(resolve, 2500));
+
+                                        // 2. 构造电脑端搜索URL
+                                        const desktopSearchUrl = window.location.href.replace(/\?.*$/, '') + window.location.search;
+                                        console.log('草榴Manager: 获取电脑端搜索页:', desktopSearchUrl);
+
+                                        // 3. 获取电脑端搜索页HTML
+                                        const response = await fetch(desktopSearchUrl, {
+                                            credentials: 'include'
+                                        });
+                                        const html = await response.text();
+
+                                        // 4. 立即切换回手机端
+                                        await fetch('https://t66y.com/mobile.php?ismobile=yes', {
+                                            credentials: 'include'
+                                        });
+
+                                        // 5. 解析HTML并缓存
+                                        const parser = new DOMParser();
+                                        const doc = parser.parseFromString(html, 'text/html');
+                                        desktopSearchCache = doc;
+                                        return doc;
+                                    })();
+                                }
+
+                                // 等待获取完成
+                                const doc = await desktopSearchPromise;
+
+                                // 6. 提取帖子ID用于匹配
+                                const threadIdMatch = threadUrl.match(/\/(\d+)\.html$/);
+                                const threadId = threadIdMatch ? threadIdMatch[1] : null;
+
+                                // 7. 在电脑端搜索页中查找对应的帖子行
+                                const desktopRows = Array.from(doc.querySelectorAll('tr.tr3'));
+                                const matchingRow = desktopRows.find(r => {
+                                    const link = r.querySelector('a[href*="htm_data"], a[href*="htm_mob"]');
+                                    if (link) {
+                                        const linkHref = link.getAttribute('href');
+                                        return threadId && linkHref.includes(threadId + '.html');
+                                    }
+                                    return false;
+                                });
+
+                                if (matchingRow) {
+                                    const preSpan = matchingRow.querySelector('span.pre[d], span.sgreen.pre[d]');
+                                    if (preSpan) {
+                                        const desktopDValue = preSpan.getAttribute('d');
+                                        if (desktopDValue) {
+                                            const imgUrl = `https://a.gac2.xyz/${desktopDValue}.jpg`;
+                                            console.log('草榴Manager: 從電腦端搜索頁獲取 [圖] 封面', {
+                                                d: desktopDValue,
+                                                imgUrl,
+                                                threadUrl
+                                            });
+                                            // 使用與電腦端相同的 a.gac2 加載策略
+                                            loadCoverByD(desktopDValue);
+                                            return;
+                                        }
+                                    }
+                                }
+
+                                // 如果电脑端也没有找到[圖]标签，直接標記為無圖（不再從帖子內容兜底）
+                                console.warn('草榴Manager: 电脑端搜索页也未找到[圖]标签');
+                                loadingDiv.textContent = '无图';
+                            } catch (err) {
+                                console.warn('草榴Manager: 获取电脑端搜索页失败:', err);
+                                // 确保切换回手机端
+                                try {
+                                    await fetch('https://t66y.com/mobile.php?ismobile=yes', {
+                                        credentials: 'include'
+                                    });
+                                } catch (e) {
+                                    console.error('草榴Manager: 切换回手机端失败:', e);
+                                }
+                                // 無法獲取電腦端搜索頁時，同樣僅標記為無圖
+                                loadingDiv.textContent = '无图';
+                            }
+                        } catch (err) {
+                            console.warn('草榴Manager: 加载封面失败:', threadUrl, err);
+                            loadingDiv.textContent = '失败';
+                        }
+                    };
+
+                    searchCoverTasks.push({
+                        task: coverTask,
+                        d: initialDValue,
+                        threadUrl
+                    });
+                });
+
+                table.parentNode.insertBefore(grid, table);
+
+                // 初始化封面加載批次：先加載前 20 張，並預加載後 20 張
+                runCoverBatchesSequential();
+            }
+            
+            // 初始转换
+            convertSearchToCards();
+            
+            // 监听DOM变化
+            const searchObserver = new MutationObserver(() => {
+                convertSearchToCards();
             });
+            searchObserver.observe(document.body, { childList: true, subtree: true });
         }
 
-        function attachMobileTextOnlyQualityBadges() {
-            const items = document.querySelectorAll('.wf_item');
-            items.forEach(item => {
-                if (item.querySelector('.image-big')) {
-                    return;
+        // 电脑端板块图文模式页面（thread0806.php 图文模式）
+        // 只在电脑端应用，手机端有单独的样式
+        if (!isMobilePage() && href.indexOf('thread0806.php') !== -1) {
+            // 圖文模式封面在 .wf_item .image-big img 中
+            // 鼠標懸停封面圖時，放大約 2 倍（約 100% 放大），並保證不被父元素裁切
+            injectStyle(`
+                /* 封面容器 - 允许内容溢出，创建独立层叠上下文 */
+                .wf_item .image-big {
+                    position: relative;
+                    overflow: visible !important;
+                    isolation: isolate;
+                    transition: transform 0.2s ease-in-out;
+                    transform-origin: center center;
                 }
-                const threadAnchor = item.querySelector('a[href]');
-                const qualityTag = resolveQualityTagFromListItem(item, threadAnchor);
-                let badge = item.querySelector('.clm-text-quality');
-                if (!qualityTag) {
-                    if (badge) {
-                        badge.remove();
-                    }
-                    return;
+                
+                /* 悬停时整个容器放大 - 这样图片和按钮都会一起放大 */
+                .wf_item .image-big:hover {
+                    transform: scale(2);
+                    z-index: 9999;
                 }
-                const textContainer = item.querySelector('.wf_text');
-                if (!textContainer) {
-                    return;
+                
+                /* 图片样式 */
+                .wf_item .image-big img {
+                    display: block;
+                    border-radius: 4px;
+                    transition: box-shadow 0.2s ease-in-out, border 0.2s ease-in-out;
                 }
-                if (!badge) {
-                    badge = document.createElement('div');
-                    badge.className = 'clm-quality-badge clm-text-quality';
-                    textContainer.appendChild(badge);
+                
+                /* 悬停时图片添加阴影和边框 */
+                .wf_item .image-big:hover img {
+                    box-shadow: 0 0 12px rgba(0, 0, 0, 0.7);
+                    border: 2px solid #ffffff;
                 }
-                updateQualityBadgeElement(badge, qualityTag);
-            });
-        }
-
-        attachMobileCoverButtons();
-        attachMobileTextOnlyQualityBadges();
-
-        const mobileObserver = new MutationObserver(() => {
-            attachMobileCoverButtons();
-            attachMobileTextOnlyQualityBadges();
-        });
-        mobileObserver.observe(document.body, { childList: true, subtree: true });
-    }
-
-    // 手机端页面 - 画廊模式适配
-    // 只要是手机端，就注入抖音风格样式（不限于 htm_mob 页面）
-    if (isMobile) {
-        // 手机端画廊模式适配 - 抖音短视频风格
-        injectStyle(`
-            html.clm-mobile-gallery-root,
-            html.clm-mobile-gallery-root body {
-                overflow: hidden !important;
-                overscroll-behavior: none !important;
-                height: 100% !important;
-            }
-            body.clm-mobile-gallery {
-                overflow: hidden !important;
-                overscroll-behavior: contain !important;
-            }
-            /* 手机端画廊模式 - 抖音风格布局 - 覆盖所有桌面端样式 */
-            body.clm-mobile-gallery .clm-gallery-overlay {
-                padding: 0 !important;
-                background: #000 !important;
-                transform: none !important;
-                align-items: stretch !important;
-                justify-content: stretch !important;
-            }
-            body.clm-mobile-gallery .clm-gallery-layout {
-                display: flex !important;
-                flex-direction: column !important;
-                gap: 0 !important;
-                width: 100vw !important;
-                height: 100vh !important;
-                max-width: 100vw !important;
-                max-height: 100vh !important;
-                position: relative !important;
-                grid-template-columns: none !important;
-            }
-            
-            /* 隐藏所有桌面端元素（手机端下保留 actions 作为下载按钮区域） */
-            body.clm-mobile-gallery .clm-gallery-panel-topic,
-            body.clm-mobile-gallery .clm-gallery-panel-comments {
-                display: none !important;
-            }
-            body.clm-mobile-gallery .clm-gallery-arrow,
-            body.clm-mobile-gallery .clm-gallery-meta,
-            body.clm-mobile-gallery .clm-gallery-hint,
-            /* 隐藏底部的viewer广告区域 */
-            .clm-gallery-ads-slot-viewer-bottom {
-                display: none !important;
-            }
-            
-            /* 顶部广告区域 - ftad-ct（手机端：带浅色背景条，类似 footer 效果） */
-            body.clm-mobile-gallery .clm-gallery-ads-slot-viewer-top {
-                position: fixed !important;
-                top: 50px !important;
-                left: 0 !important;
-                right: 0 !important;
-                width: 100% !important;
-                max-width: 100vw !important;
-                background: #f9f9ec !important;
-                z-index: 100001 !important;
-                padding: 6px 8px !important;
-                max-height: 110px !important;
-                overflow-y: hidden !important;
-                box-sizing: border-box !important;
-            }
-            
-            /* 修复手机端帖子内广告样式 */
-            body.clm-mobile-gallery .clm-panel-entry-tips {
-                width: 100% !important;
-                margin-top: 10px !important;
-            }
-            
-            body.clm-mobile-gallery .clm-panel-entry-tips .sptable_do_not_remove {
-                width: 100% !important;
-                background: rgba(255, 255, 255, 0.05) !important;
-                border-radius: 8px !important;
-                overflow: hidden !important;
-                margin-bottom: 8px !important;
-            }
-            
-            body.clm-mobile-gallery .clm-panel-entry-tips .f_one {
-                padding: 10px !important;
-                background: rgba(255, 255, 255, 0.08) !important;
-                border-radius: 8px !important;
-                margin-bottom: 8px !important;
-                cursor: pointer !important;
-            }
-            
-            body.clm-mobile-gallery .clm-panel-entry-tips .f_one:active {
-                background: rgba(255, 255, 255, 0.12) !important;
-            }
-            
-            body.clm-mobile-gallery .clm-gallery-ads table.sptable_do_not_remove {
-                width: 100% !important;
-                background: rgba(255, 255, 255, 0.05) !important;
-                border-radius: 8px !important;
-                overflow: hidden !important;
-            }
-            
-            body.clm-mobile-gallery .clm-panel-entry-tips table.sptable_do_not_remove td,
-            body.clm-mobile-gallery .clm-gallery-ads table.sptable_do_not_remove td {
-                padding: 10px !important;
-                font-size: 13px !important;
-                line-height: 1.4 !important;
-                color: #fff !important;
-                background: transparent !important;
-            }
-            
-            body.clm-mobile-gallery .clm-panel-entry-tips #ti,
-            body.clm-mobile-gallery .clm-gallery-ads table.sptable_do_not_remove #ti {
-                font-weight: 600 !important;
-                margin-bottom: 4px !important;
-                font-size: 14px !important;
-            }
-            
-            body.clm-mobile-gallery .clm-panel-entry-tips #ti a,
-            body.clm-mobile-gallery .clm-gallery-ads table.sptable_do_not_remove #ti a {
-                color: #fff !important;
-                text-decoration: none !important;
-            }
-            
-            body.clm-mobile-gallery .clm-panel-entry-tips a,
-            body.clm-mobile-gallery .clm-gallery-panel-comments .clm-panel-entry-tips a,
-            body.clm-mobile-gallery .clm-gallery-ads table.sptable_do_not_remove a {
-                color: #9db4ff !important;
-                text-decoration: none !important;
-            }
-            
-            /* 不再在手机端展示 sptable_info AD 小标签（DOM 层已不创建） */
-            
-            /* 关闭按钮移到顶部右上角 */
-            body.clm-mobile-gallery .clm-gallery-close {
-                position: fixed !important;
-                top: 8px !important;
-                right: 8px !important;
-                z-index: 100004 !important;
-                width: 40px !important;
-                height: 40px !important;
-                background: rgba(0, 0, 0, 0.7) !important;
-                border-radius: 50% !important;
-                font-size: 22px !important;
-                border: none !important;
-                color: #fff !important;
-                display: flex !important;
-                align-items: center !important;
-                justify-content: center !important;
-                touch-action: manipulation !important;
-                -webkit-tap-highlight-color: transparent !important;
-            }
-            
-            body.clm-mobile-gallery .clm-gallery-close:active {
-                transform: scale(0.9) !important;
-                background: rgba(0, 0, 0, 0.9) !important;
-            }
-            
-            /* 中央图片查看器 - 屏幕正中央 */
-            body.clm-mobile-gallery .clm-gallery-viewer-column {
-                position: fixed !important;
-                left: 0 !important;
-                top: 0 !important;
-                width: 100vw !important;
-                height: 100vh !important;
-                display: flex !important;
-                flex-direction: column !important;
-                align-items: center !important;
-                justify-content: center !important;
-                z-index: 1 !important;
-                gap: 0 !important;
-                min-height: 100vh !important;
-            }
-            
-            body.clm-mobile-gallery .clm-gallery-viewer {
-                width: 100% !important;
-                height: 100% !important;
-                max-width: 100vw !important;
-                max-height: 100vh !important;
-                display: flex !important;
-                align-items: center !important;
-                justify-content: center !important;
-                position: relative !important;
-                flex: 1 !important;
-                background: transparent !important;
-                border-radius: 0 !important;
-            }
-            
-            body.clm-mobile-gallery .clm-gallery-viewer img {
-                max-width: 100vw !important;
-                max-height: 100vh !important;
-                width: auto !important;
-                height: auto !important;
-                object-fit: contain !important;
-                touch-action: pan-x pan-y pinch-zoom !important;
-                border-radius: 0 !important;
-                box-shadow: none !important;
-                cursor: default !important;
-            }
-            
-            /* 隐藏加载指示器和其他viewer内元素，只保留图片 */
-            body.clm-mobile-gallery .clm-gallery-loading-indicator {
-                position: fixed !important;
-                top: 50% !important;
-                left: 50% !important;
-                transform: translate(-50%, -50%) !important;
-                z-index: 100002 !important;
-                color: #fff !important;
-                font-size: 16px !important;
-            }
-            
-            /* 主题内容底部抽屉（Bottom Sheet） - 黑色毛玻璃渐变背景 */
-            body.clm-mobile-gallery .clm-gallery-panel-topic {
-                display: block !important;
-                position: fixed !important;
-                left: 0 !important;
-                bottom: 0 !important;
-                width: 100% !important;
-                max-width: 100vw !important;
-                background: linear-gradient(to top, rgba(15, 23, 42, 0.96), rgba(15, 23, 42, 0.6)) !important;
-                backdrop-filter: blur(16px) !important;
-                -webkit-backdrop-filter: blur(16px) !important;
-                border-radius: 0 !important;
-                padding: 0 30px 24px !important;
-                z-index: 100002 !important;
-                overflow: visible !important;
-                color: #f9fafb !important;
-                box-shadow: 0 -5px 30px rgba(0, 0, 0, 0.5) !important;
-                border: none !important;
-                flex-direction: column !important;
-                cursor: pointer !important;
-                transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
-                transform-origin: bottom !important;
-                user-select: none !important;
-                -webkit-user-select: none !important;
-                -moz-user-select: none !important;
-                -ms-user-select: none !important;
-            }
-            
-            /* 折叠状态下：高度约占屏幕底部四分之一，便于点击 */
-            body.clm-mobile-gallery .clm-gallery-panel-topic.clm-topic-collapsed {
-                min-height: 25vh !important;
-                max-height: 25vh !important;
-                transform: translateY(0) !important;
-            }
-            
-            /* 展开状态下：根据内容自适应高度，最大70vh */
-            body.clm-mobile-gallery .clm-gallery-panel-topic.clm-topic-expanded {
-                min-height: auto !important;
-                max-height: 70vh !important;
-                height: auto !important;
-                transform: translateY(0) !important;
-            }
-
-            /* 顶部中间的箭头图标（与手机端画廊.html 的 arrow-large 风格一致） */
-            body.clm-mobile-gallery .clm-gallery-panel-topic.clm-topic-collapsed::after,
-            body.clm-mobile-gallery .clm-gallery-panel-topic.clm-topic-expanded::after {
-                content: '' !important;
-                position: absolute !important;
-                top: 0 !important;
-                left: 50% !important;
-                width: 24px !important;
-                height: 24px !important;
-                border-radius: 0 !important;
-                border-right: 4px solid #333 !important;
-                border-bottom: 4px solid #333 !important;
-                transform: translate(-50%, -50%) rotate(225deg) !important;
-                background: transparent !important;
-                box-shadow: none !important;
-                pointer-events: none !important;
-                opacity: 0.7 !important;
-                transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
-            }
-
-            /* 展开状态：箭头向上（整体图标旋转） */
-            body.clm-mobile-gallery .clm-gallery-panel-topic.clm-topic-expanded::after {
-                transform: translate(-50%, -50%) rotate(45deg) !important;
-            }
-            
-            body.clm-mobile-gallery .clm-gallery-panel-topic .clm-gallery-panel-header {
-                display: none !important;
-            }
-            
-            body.clm-mobile-gallery .clm-gallery-panel-topic .clm-gallery-panel-body {
-                font-size: 14px !important;
-                line-height: 1.5 !important;
-                color: #f9fafb !important;
-                text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9) !important;
-                overflow-y: auto !important;
-                max-height: 100% !important;
-                padding: 24px 0 24px !important;
-                background: transparent !important;
-                border-radius: 0 !important;
-                border: none !important;
-                backdrop-filter: none !important;
-                -webkit-backdrop-filter: none !important;
-                position: relative !important;
-            }
-            
-            body.clm-mobile-gallery .clm-gallery-panel-topic.clm-topic-collapsed .clm-gallery-panel-body {
-                overflow: hidden !important;
-                max-height: 25vh !important; /* 抽屉收起时约显示屏幕 1/4 的内容 */
-            }
-            
-            /* 渐变遮罩，提示下方还有更多内容（深色渐变） */
-            body.clm-mobile-gallery .clm-gallery-panel-topic .clm-gallery-panel-body::after {
-                content: '' !important;
-                position: absolute !important;
-                bottom: 0 !important;
-                left: 0 !important;
-                width: 100% !important;
-                height: 80px !important;
-                background: linear-gradient(to bottom, rgba(15, 23, 42, 0) 0%, rgba(15, 23, 42, 0.95) 100%) !important;
-                pointer-events: none !important;
-                opacity: 1 !important;
-                transition: opacity 0.4s ease !important;
-            }
-            
-            body.clm-mobile-gallery .clm-gallery-panel-topic.clm-topic-expanded .clm-gallery-panel-body::after {
-                opacity: 0 !important;
-            }
-            
-            body.clm-mobile-gallery .clm-gallery-panel-topic .clm-gallery-panel-body p {
-                margin: 4px 0 !important;
-            }
-            
-            body.clm-mobile-gallery .clm-gallery-panel-topic .clm-gallery-panel-body .clm-panel-entry-title {
-                margin-bottom: 8px !important;
-            }
-            
-            body.clm-mobile-gallery .clm-gallery-panel-topic .clm-gallery-panel-body .clm-panel-entry-title-tags {
-                display: flex !important;
-                flex-wrap: wrap !important;
-                gap: 6px !important;
-                margin-bottom: 6px !important;
-            }
-            
-            body.clm-mobile-gallery .clm-gallery-panel-topic .clm-gallery-panel-body .clm-panel-entry-title-tag {
-                padding: 3px 8px !important;
-                border-radius: 4px !important;
-                font-size: 12px !important;
-                font-weight: 600 !important;
-                text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8) !important;
-            }
-            
-            body.clm-mobile-gallery .clm-gallery-panel-topic .clm-gallery-panel-body .clm-panel-entry-title-text {
-                font-size: 16px !important;
-                font-weight: 700 !important;
-                line-height: 1.4 !important;
-                color: #f9fafb !important;
-                text-shadow: 0 2px 6px rgba(0, 0, 0, 0.9) !important;
-            }
-            
-            /* 隐藏评论面板（不再作为按钮容器使用） */
-            body.clm-mobile-gallery .clm-gallery-panel-comments {
-                display: none !important;
-            }
-            
-            /* 评论按钮样式（与下载按钮统一） */
-            .clm-mobile-comment-btn {
-                width: 72px !important;
-                height: 72px !important;
-                min-width: 72px !important;
-                max-width: 72px !important;
-                min-height: 72px !important;
-                max-height: 72px !important;
-                border-radius: 50% !important;
-                background: rgba(40, 40, 40, 0.8) !important;
-                backdrop-filter: blur(10px) !important;
-                -webkit-backdrop-filter: blur(10px) !important;
-                border: 2px solid rgba(255, 255, 255, 0.25) !important;
-                color: #fff !important;
-                display: flex !important;
-                flex-direction: column !important;
-                align-items: center !important;
-                justify-content: center !important;
-                cursor: pointer !important;
-                touch-action: manipulation !important;
-                -webkit-tap-highlight-color: transparent !important;
-                box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5) !important;
-                transition: all 0.2s ease !important;
-                pointer-events: auto !important;
-                overflow: hidden !important;
-                box-sizing: border-box !important;
-                font-size: 11px !important;
-                font-weight: 500 !important;
-            }
-            
-            .clm-mobile-comment-btn:active {
-                transform: scale(0.9) !important;
-                background: rgba(60, 60, 60, 0.9) !important;
-            }
-            
-            /* 点击评论按钮后展开的评论面板 */
-            body.clm-mobile-gallery .clm-gallery-panel-comments.clm-comments-expanded {
-                display: block !important;
-                position: fixed !important;
-                left: 0 !important;
-                bottom: 0 !important;
-                right: 0 !important;
-                top: 30% !important;
-                width: 100% !important;
-                max-width: 100vw !important;
-                max-height: 70vh !important;
-                background: rgba(255, 255, 255, 0.98) !important;
-                backdrop-filter: none !important;
-                -webkit-backdrop-filter: none !important;
-                border-radius: 20px 20px 0 0 !important;
-                padding: 20px !important;
-                z-index: 100004 !important;
-                overflow-y: auto !important;
-                overflow-x: hidden !important;
-                transform: none !important;
-                box-sizing: border-box !important;
-                margin: 0 !important;
-            }
-            
-            body.clm-mobile-gallery .clm-gallery-panel-comments.clm-comments-expanded .clm-gallery-panel-header {
-                display: flex !important;
-                justify-content: space-between !important;
-                align-items: center !important;
-                margin-bottom: 16px !important;
-                padding-bottom: 12px !important;
-                border-bottom: 1px solid rgba(0, 0, 0, 0.1) !important;
-                font-size: 18px !important;
-                font-weight: 600 !important;
-                color: #333 !important;
-            }
-            
-            body.clm-mobile-gallery .clm-gallery-panel-comments.clm-comments-expanded .clm-gallery-panel-body {
-                display: block !important;
-                max-height: 50vh !important;
-                overflow-y: auto !important;
-                padding: 0 !important;
-                background: transparent !important;
-                backdrop-filter: none !important;
-                -webkit-backdrop-filter: none !important;
-            }
-            
-            body.clm-mobile-gallery .clm-gallery-panel-comments .clm-panel-entry {
-                background: transparent !important;
-                border-radius: 0 !important;
-                padding: 12px 0 !important;
-                margin-bottom: 0 !important;
-                border-bottom: 1px solid rgba(0, 0, 0, 0.08) !important;
-            }
-            
-            body.clm-mobile-gallery .clm-gallery-panel-comments .clm-panel-entry:last-child {
-                border-bottom: none !important;
-            }
-            
-            body.clm-mobile-gallery .clm-gallery-panel-comments .clm-panel-entry-user {
-                color: #666 !important;
-                font-size: 12px !important;
-                margin-bottom: 6px !important;
-                font-weight: 500 !important;
-            }
-            
-            body.clm-mobile-gallery .clm-gallery-panel-comments .clm-panel-entry-content {
-                color: #333 !important;
-                font-size: 14px !important;
-                line-height: 1.6 !important;
-            }
-            
-            body.clm-mobile-gallery .clm-gallery-panel-comments.clm-comments-expanded .clm-gallery-panel-body .clm-panel-entry {
-                margin-bottom: 20px !important;
-                padding-bottom: 16px !important;
-                border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
-            }
-            
-            .clm-gallery-panel-comments.clm-comments-expanded .clm-gallery-panel-body .clm-panel-entry:last-child {
-                border-bottom: none !important;
-            }
-            
-            .clm-gallery-panel-comments.clm-comments-expanded .clm-gallery-panel-body .clm-panel-entry-user {
-                color: rgba(255, 255, 255, 0.7) !important;
-                font-size: 13px !important;
-                margin-bottom: 8px !important;
-            }
-            
-            .clm-gallery-panel-comments.clm-comments-expanded .clm-gallery-panel-body .clm-panel-entry-text {
-                color: #fff !important;
-                font-size: 15px !important;
-                line-height: 1.6 !important;
-            }
-            
-            .clm-gallery-panel-comments.clm-comments-expanded .clm-gallery-ads {
-                margin: 12px 0 !important;
-                padding: 12px !important;
-                background: rgba(255, 255, 255, 0.05) !important;
-                border-radius: 8px !important;
-            }
-            
-            .clm-gallery-panel-comments.clm-comments-expanded .clm-mobile-comment-btn {
-                position: absolute !important;
-                top: 16px !important;
-                right: 16px !important;
-                width: 36px !important;
-                height: 36px !important;
-                font-size: 20px !important;
-            }
-            
-            /* 隐藏翻页箭头按钮（使用滑动手势） */
-            .clm-gallery-arrow-left,
-            .clm-gallery-arrow-right {
-                display: none !important;
-            }
-            
-            /* 隐藏底部的viewer广告区域 */
-            .clm-gallery-ads-slot-viewer-bottom {
-                display: none !important;
-            }
-            
-            /* 隐藏 meta、hint 等桌面端提示元素（下载按钮 actions 在手机端保留） */
-            .clm-gallery-meta,
-            .clm-gallery-hint {
-                display: none !important;
-            }
-
-            /* 手机端：将下载和评论按钮一起放在右侧中下，采用圆形样式 */
-            body.clm-mobile-gallery .clm-gallery-actions {
-                position: fixed !important;
-                right: 16px !important;
-                bottom: 35% !important;
-                top: auto !important;
-                width: auto !important;
-                max-width: none !important;
-                padding: 0 !important;
-                box-sizing: border-box !important;
-                display: flex !important;
-                flex-direction: column !important;
-                justify-content: center !important;
-                align-items: center !important;
-                gap: 16px !important;
-                z-index: 100003 !important;
-                pointer-events: none !important;
-            }
-
-            body.clm-mobile-gallery .clm-gallery-actions .clm-gallery-download-btn {
-                pointer-events: auto !important;
-                width: 72px !important;
-                height: 72px !important;
-                min-width: 72px !important;
-                max-width: 72px !important;
-                min-height: 72px !important;
-                max-height: 72px !important;
-                padding: 0 !important;
-                border-radius: 50% !important;
-                background: rgba(40, 40, 40, 0.8) !important;
-                backdrop-filter: blur(10px) !important;
-                -webkit-backdrop-filter: blur(10px) !important;
-                box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5) !important;
-                border: 2px solid rgba(255, 255, 255, 0.25) !important;
-                color: #fff !important;
-                font-weight: 600 !important;
-                font-size: 11px !important;
-                display: flex !important;
-                flex-direction: column !important;
-                align-items: center !important;
-                justify-content: center !important;
-                transition: all 0.2s ease !important;
-                touch-action: manipulation !important;
-                -webkit-tap-highlight-color: transparent !important;
-                overflow: hidden !important;
-                box-sizing: border-box !important;
-            }
-            
-            body.clm-mobile-gallery .clm-gallery-actions .clm-gallery-download-btn:active {
-                transform: scale(0.9) !important;
-                background: rgba(60, 60, 60, 0.9) !important;
-            }
-            
-            body.clm-mobile-gallery .clm-gallery-actions .clm-gallery-download-btn:disabled {
-                opacity: 0.5 !important;
-                cursor: not-allowed !important;
-            }
-            
-            /* 手机端：下载窗口占满全屏 */
-            body.clm-mobile-gallery .clm-gallery-download-preview {
-                inset: 0 !important;
-                border-radius: 0 !important;
-            }
-            
-            /* 使用媒体查询确保手机端下载窗口全屏 */
-            @media (max-width: 768px) {
-                .clm-gallery-download-preview {
-                    position: fixed !important;
-                    inset: 0 !important;
-                    top: 0 !important;
-                    left: 0 !important;
-                    right: 0 !important;
-                    bottom: 0 !important;
-                    width: 100vw !important;
-                    height: 100vh !important;
-                    border-radius: 0 !important;
-                    margin: 0 !important;
+                
+                /* 画廊按钮 - 位于容器内部 */
+                .wf_item .clm-cover-gallery-btn {
+                    position: absolute;
+                    left: 50%;
+                    bottom: 30%;
+                    transform: translateX(-50%);
+                    padding: 8px 16px;
+                    font-size: 13px;
+                    font-weight: 600;
+                    border-radius: 6px;
+                    border: 1px solid rgba(255, 255, 255, 0.6);
+                    background: rgba(0, 0, 0, 0.40);
+                    color: #fff;
+                    cursor: pointer;
+                    display: inline-flex;
+                    align-items: center;
+                    z-index: 10;
+                    white-space: nowrap;
+                    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+                    transition: background 0.15s ease-in-out;
+                    pointer-events: auto;
                 }
-            }
-            
-            /* 手机端：preset-picker适配小屏幕 */
-            body.clm-mobile-gallery .clm-preset-picker {
-                width: 95vw !important;
-                max-width: 95vw !important;
-                margin: 10px !important;
-            }
-            
-            /* 品质徽章 */
-            .clm-gallery-quality {
-                position: fixed !important;
-                top: 60px !important;
-                left: 12px !important;
-                z-index: 100002 !important;
-                font-size: 11px !important;
-                padding: 4px 8px !important;
-                border-radius: 6px !important;
-                background: rgba(0, 0, 0, 0.7) !important;
-                color: #fff !important;
-                backdrop-filter: blur(8px) !important;
-                -webkit-backdrop-filter: blur(8px) !important;
-            }
-            
-            /* 下载预览面板 */
-            @media (min-width: 769px) {
-                body:not(.clm-mobile-gallery) .clm-gallery-download-preview {
-                    position: fixed !important;
-                    left: 50% !important;
-                    top: 50% !important;
-                    transform: translate(-50%, -50%) !important;
-                    width: 90vw !important;
-                    max-width: 500px !important;
-                    max-height: 80vh !important;
-                    padding: 20px !important;
-                    background: rgba(0, 0, 0, 0.95) !important;
-                    backdrop-filter: blur(15px) !important;
-                    -webkit-backdrop-filter: blur(15px) !important;
-                    border-radius: 16px !important;
-                    z-index: 100004 !important;
-                    overflow-y: auto !important;
-                    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6) !important;
+                
+                .wf_item .clm-cover-gallery-btn:hover {
+                    background: rgba(0, 0, 0, 0.95);
                 }
-            }
-            
-            .clm-gallery-download-preview h3 {
-                font-size: 18px !important;
-                margin-bottom: 16px !important;
-                color: #fff !important;
-            }
-            
-            .clm-gallery-download-preview .clm-download-item {
-                padding: 12px !important;
-                margin-bottom: 12px !important;
-                font-size: 14px !important;
-            }
-            
-            .clm-gallery-download-preview button {
-                padding: 12px 18px !important;
-                font-size: 15px !important;
-                min-height: 48px !important;
-                border-radius: 12px !important;
-                touch-action: manipulation !important;
-                -webkit-tap-highlight-color: transparent !important;
-            }
-            
-            .clm-gallery-download-preview button:active {
-                transform: scale(0.97) !important;
-            }
-            
-            /* 点击指示器动画 */
-            @keyframes tapFade {
-                0% {
-                    opacity: 0;
-                    transform: translateY(-50%) scale(0.5);
+                
+                /* 下载按钮 - 位于容器内部 */
+                .wf_item .clm-cover-download {
+                    position: absolute;
+                    top: 8px;
+                    right: 8px;
+                    padding: 4px 8px;
+                    font-size: 11px;
+                    border-radius: 4px;
+                    border: 1px solid rgba(255, 255, 255, 0.3);
+                    background: rgba(0, 0, 0, 0.7);
+                    color: #fff;
+                    cursor: pointer;
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 4px;
+                    z-index: 10;
+                    transition: background 0.15s ease-in-out;
+                    pointer-events: auto;
                 }
-                50% {
-                    opacity: 1;
-                    transform: translateY(-50%) scale(1);
+                
+                .wf_item .clm-cover-download.clm-downloaded {
+                    background: rgba(16, 185, 129, 0.9);
+                    border-color: rgba(255, 255, 255, 0.55);
                 }
-                100% {
-                    opacity: 0;
-                    transform: translateY(-50%) scale(1.2);
+                
+                .wf_item .clm-cover-download::before {
+                    content: '⬇';
+                    font-size: inherit;
                 }
-            }
-        `);
-        injectStyle(`
-            /* 主题内容抽屉内边距：顶部保留空隙，底部尽量贴近屏幕 */
-            body.clm-mobile-gallery .clm-gallery-panel-topic {
-                padding: 0 0 0 !important; /* 减小左右留白，让内容更居中 */
-            }
-
-            body.clm-mobile-gallery .clm-gallery-panel-topic .clm-gallery-panel-body {
-                padding: 24px 16px 12px !important; /* 顶部 24px，左右 16px，底部 12px，更接近屏幕底部且留出左右空隙 */
-                overflow-x: hidden !important; /* 禁止出现左右滚动条 */
-            }
-
-            /* 主题内容：去掉内部卡片感，占满抽屉宽度，避免左侧/底部空白 */
-            body.clm-mobile-gallery .clm-gallery-panel-topic .clm-panel-entry {
-                background: transparent !important;
-                border-radius: 0 !important;
-                padding: 0 0 8px !important;
-                margin: 0 !important;
-                width: 100% !important;
-            }
-
-            body.clm-mobile-gallery .clm-gallery-panel-topic .clm-panel-entry-title {
-                margin-bottom: 6px !important;
-            }
-
-            body.clm-mobile-gallery .clm-gallery-panel-topic .clm-panel-entry-title-tags {
-                margin-bottom: 4px !important;
-            }
-
-            body.clm-mobile-gallery .clm-gallery-panel-topic .clm-panel-entry-title-tag {
-                text-shadow: none !important;
-            }
-
-            /* 标题文字使用浅色并带阴影，适配深色毛玻璃背景 */
-            body.clm-mobile-gallery .clm-gallery-panel-topic .clm-panel-entry-title-text {
-                color: #f9fafb !important;
-                text-shadow: 0 2px 6px rgba(0, 0, 0, 0.9) !important;
-            }
-
-            /* 去掉 tips 的上边框，避免在抽屉顶部看到一条“分割线” */
-            body.clm-mobile-gallery .clm-gallery-panel-topic .clm-panel-entry-tips {
-                border-top: none !important;
-                padding-top: 0 !important;
-                margin-top: 8px !important;
-                color: #e5e7eb !important;
-            }
-
-            /* 折叠状态下不再强制 25vh 高度，只让内容自己决定高度 */
-            body.clm-mobile-gallery .clm-gallery-panel-topic.clm-topic-collapsed {
-                min-height: 25vh !important;
-                max-height: 25vh !important;
-            }
-
-            /* 画廊 viewer 区域禁止文本选中和图片拖动，避免拖动时出现选中效果 */
-            body.clm-mobile-gallery .clm-gallery-viewer,
-            body.clm-mobile-gallery .clm-gallery-viewer * {
-                -webkit-user-select: none !important;
-                user-select: none !important;
-            }
-
-            body.clm-mobile-gallery .clm-gallery-viewer img {
-                -webkit-user-drag: none !important;
-                user-drag: none !important;
-            }
-
-            /* 评论抽屉：白底深色文字，提升可读性 */
-            body.clm-mobile-gallery .clm-gallery-panel-comments.clm-comments-expanded {
-                background: rgba(255, 255, 255, 0.98) !important;
-            }
-
-            body.clm-mobile-gallery .clm-gallery-panel-comments.clm-comments-expanded .clm-gallery-panel-body {
-                background: rgba(245, 245, 245, 0.95) !important;
-                border-radius: 12px !important;
-                overflow: hidden !important;
-            }
-
-            body.clm-mobile-gallery .clm-gallery-panel-comments.clm-comments-expanded .clm-gallery-panel-header {
-                color: #333 !important;
-            }
-
-            /* 手机端评论弹窗右上角关闭按钮样式 */
-            body.clm-mobile-gallery .clm-mobile-comment-close {
-                font-size: 22px !important;
-                margin-left: auto !important;
-                cursor: pointer !important;
-                padding: 0 6px !important;
-                color: #666 !important;
-            }
-
-            body.clm-mobile-gallery .clm-mobile-comment-close:active {
-                transform: scale(0.9) !important;
-            }
-
-
-            body.clm-mobile-gallery .clm-gallery-panel-comments .clm-panel-entry-user {
-                color: #666 !important;
-            }
-
-            body.clm-mobile-gallery .clm-gallery-panel-comments .clm-panel-entry-content {
-                color: #333 !important;
-            }
-
-            body.clm-mobile-gallery .clm-gallery-panel-comments.clm-comments-expanded .clm-gallery-panel-body .clm-panel-entry-user {
-                color: #666 !important;
-            }
-
-            body.clm-mobile-gallery .clm-gallery-panel-comments.clm-comments-expanded .clm-gallery-panel-body .clm-panel-entry-content,
-            body.clm-mobile-gallery .clm-gallery-panel-comments.clm-comments-expanded .clm-gallery-panel-body .clm-panel-entry-text {
-                color: #333 !important;
-            }
-
-
-            body.clm-mobile-gallery .clm-gallery-close {
-                top: 12px !important;
-                right: 12px !important;
-            }
-        `);
-    }
-
-    /**
-     * -------------------------------
-     *   全局：右下角設置面板 & qBittorrent
-     * -------------------------------
-     */
-
-    const STORAGE_KEY = '草榴ManagerSettings';
-
-    const DEFAULT_SETTINGS = {
-        qb: {
-            enabled: false,
-            baseUrl: '',
-            username: '',
-            password: '',
-            defaultCategory: '',
-            savePresets: [
-                {
-                    id: 'default',
-                    name: '預設下載目錄',
-                    savePath: '',
-                    tags: ''
+                
+                .wf_item .clm-cover-download:hover {
+                    background: rgba(0, 0, 0, 0.9);
                 }
-            ]
-        },
-        webdav: {
-            enabled: false,
-            url: '',
-            username: '',
-            password: ''
-        }
-    };
+                
+                /* 清晰度标签 - 位于容器内部 */
+                .wf_item .clm-cover-quality {
+                    position: absolute;
+                    left: 8px;
+                    top: 8px;
+                    z-index: 10;
+                    max-width: 55px;
+                    font-size: 9px;
+                    padding: 2px 5px;
+                    pointer-events: none;
+                }
+                .wf_item .clm-text-quality {
+                    position: relative;
+                    left: auto;
+                    bottom: auto;
+                    display: inline-flex;
+                    margin-top: 6px;
+                    transform: none;
+                }
+                .wf_item.clm-thread-downloaded {
+                    position: relative;
+                    box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.25);
+                    border-radius: 6px;
+                }
+                .wf_item.clm-thread-downloaded::after {
+                    content: '已下載';
+                    position: absolute;
+                    top: 8px;
+                    left: 8px;
+                    background: rgba(34, 197, 94, 0.85);
+                    color: #fff;
+                    font-size: 10px;
+                    padding: 2px 6px;
+                    border-radius: 999px;
+                    letter-spacing: 0.08em;
+                    z-index: 2;
+                }
+            `);
 
-    function loadSettings() {
-        let settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
-        try {
-            const raw = localStorage.getItem(STORAGE_KEY);
-            if (raw) {
-                const parsed = JSON.parse(raw);
-                if (parsed && typeof parsed === 'object') {
-                    if (parsed.qb) {
-                        Object.assign(settings.qb, parsed.qb);
-                        if (Array.isArray(parsed.qb.savePresets)) {
-                            settings.qb.savePresets = parsed.qb.savePresets.map((preset) => Object.assign({}, preset));
+            const COVER_SCALE = 2;
+
+            function attachCoverDownloadButtons() {
+                const covers = document.querySelectorAll('.wf_item .image-big');
+                covers.forEach(cover => {
+                    if (cover.dataset.clmCoverBtnAttached === '1') return;
+                    cover.dataset.clmCoverBtnAttached = '1';
+                    const wfItem = cover.closest('.wf_item');
+
+                    // 创建画廊按钮
+                    const galleryBtn = document.createElement('button');
+                    galleryBtn.type = 'button';
+                    galleryBtn.className = 'clm-cover-gallery-btn';
+                    galleryBtn.textContent = '画廊';
+                    cover.appendChild(galleryBtn);
+
+                    // 创建下载按钮
+                    const btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.className = 'clm-cover-download';
+                    cover.appendChild(btn);
+
+                    // 创建品质徽章
+                    const qualityBadge = document.createElement('div');
+                    qualityBadge.className = 'clm-quality-badge clm-cover-quality';
+                    qualityBadge.style.display = 'none';
+                    cover.appendChild(qualityBadge);
+
+                    const img = cover.querySelector('img');
+
+                    // 鼠标悬停时设置CSS变量，让按钮和品质标识随封面放大
+                    cover.addEventListener('mouseenter', () => {
+                        cover.style.setProperty('--clm-cover-scale', COVER_SCALE);
+                    });
+                    cover.addEventListener('mouseleave', () => {
+                        cover.style.setProperty('--clm-cover-scale', '1');
+                    });
+
+                    let threadUrl = null;
+                    const threadAnchor = cover.querySelector('a[href]') ||
+                        wfItem?.querySelector('a[href]');
+                    if (threadAnchor) {
+                        const rawHref = threadAnchor.getAttribute('href') || threadAnchor.href;
+                        threadUrl = getAbsoluteUrl(rawHref);
+                        if (threadUrl) {
+                            bindGalleryVisitedIndicator(cover, threadUrl, 'cover');
+                        }
+                        if (threadUrl) {
+                            cover.addEventListener('mouseenter', () => {
+                                const hoverQuality = ensureCoverQuality();
+                                setCurrentListHover({
+                                    source: 'board',
+                                    threadUrl,
+                                    cover,
+                                    qualityTag: hoverQuality
+                                });
+                            });
+                            cover.addEventListener('mouseleave', () => {
+                                if (currentListHoverCtx?.cover === cover) {
+                                    setCurrentListHover(null);
+                                }
+                            });
                         }
                     }
-                    if (parsed.webdav) {
-                        Object.assign(settings.webdav, parsed.webdav);
+
+                    const resolveCoverQuality = () => {
+                        return resolveQualityTagFromListItem(wfItem, threadAnchor);
+                    };
+                    let cachedCoverQuality = null;
+                    const ensureCoverQuality = () => {
+                        cachedCoverQuality = resolveCoverQuality();
+                        updateQualityBadgeElement(qualityBadge, cachedCoverQuality);
+                        return cachedCoverQuality;
+                    };
+                    ensureCoverQuality();
+
+                    // 画廊按钮点击事件
+                    if (threadUrl) {
+                        galleryBtn.addEventListener('click', (e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            const qualityTag = ensureCoverQuality();
+                            openGalleryForThread(threadUrl, { instant: true, qualityTag });
+                        });
                     }
-                }
-            }
-        } catch (e) {
-            console.error('草榴Manager: 設置讀取失敗，使用默認值', e);
-            settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
-        }
-        normalizeSavePresets(settings);
-        return settings;
-    }
 
-    function saveSettings(settings) {
-        try {
-            if (settings && typeof settings === 'object') {
-                settings.updatedAt = Date.now();
-                if (settings.webdav) {
-                    delete settings.webdav.username;
-                    delete settings.webdav.password;
-                }
+                    setupThreadDownloadButton(btn, {
+                        threadUrl,
+                        container: wfItem,
+                        containerClass: 'clm-thread-downloaded',
+                        label: '下載',
+                        downloadedLabel: '已下載',
+                        threadTitle: (threadAnchor?.textContent || '').trim()
+                    });
+                });
             }
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
-        } catch (e) {
-            console.error('草榴Manager: 設置保存失敗', e);
-        }
-    }
 
-    function normalizeSavePresets(settings) {
-        const list = Array.isArray(settings.qb.savePresets) ? settings.qb.savePresets : [];
-        if (!list.length) {
-            settings.qb.savePresets = DEFAULT_SETTINGS.qb.savePresets.map((preset) => Object.assign({}, preset));
-            return;
-        }
-        let mutated = false;
-        settings.qb.savePresets = list.map((preset, index) => {
-            const cloned = Object.assign({}, preset);
-            if (!cloned.id) {
-                cloned.id = index === 0 ? 'default' : `preset_${Date.now()}_${index}`;
-                mutated = true;
-            }
-            return cloned;
-        });
-        if (mutated) {
-            saveSettings(settings);
-        }
-    }
-
-    /**
-     * 向頁面注入右下角的設置按鈕與面板
-     */
-    function createSettingsUI() {
-        injectStyle(`
-            .clm-settings-btn {
-                position: fixed;
-                right: 16px;
-                bottom: 16px;
-                z-index: 10001;
-                background: rgba(0, 0, 0, 0.7);
-                color: #fff;
-                border-radius: 20px;
-                padding: 10px 18px;
-                cursor: pointer;
-                font-size: 16px;
-                line-height: 1.4;
-                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
-                user-select: none;
-            }
-            .clm-settings-btn.clm-settings-btn-hidden {
-                opacity: 0;
-                pointer-events: none;
-            }
-            .clm-settings-btn:hover {
-                background: rgba(0, 0, 0, 0.85);
-            }
-            .clm-settings-panel-mask {
-                position: fixed;
-                inset: 0;
-                background: rgba(0, 0, 0, 0.4);
-                z-index: 10000;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-            }
-            .clm-settings-panel {
-                width: 420px;
-                max-width: 95vw;
-                max-height: 85vh;
-                background: #f5f5f5;
-                color: #333;
-                border-radius: 8px;
-                box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
-                font-size: 12px;
-                display: flex;
-                flex-direction: column;
-            }
-            .clm-settings-header {
-                padding: 10px 12px;
-                border-bottom: 1px solid #ddd;
-                font-weight: bold;
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-                background: #fafafa;
-            }
-            .clm-settings-close {
-                cursor: pointer;
-                padding: 0 6px;
-            }
-            .clm-settings-body {
-                padding: 10px 12px;
-                overflow: auto;
-            }
-            .clm-settings-footer {
-                padding: 8px 12px;
-                border-top: 1px solid #ddd;
-                text-align: right;
-                background: #fafafa;
-            }
-            .clm-form-row {
-                margin-bottom: 8px;
-            }
-            .clm-form-row label {
-                display: block;
-                margin-bottom: 2px;
-                font-weight: bold;
-            }
-            .clm-form-row input[type="text"],
-            .clm-form-row input[type="password"] {
-                width: 100%;
-                box-sizing: border-box;
-                padding: 4px 6px;
-                border: 1px solid #ccc;
-                border-radius: 3px;
-                font-size: 12px;
-            }
-            .clm-form-row input[type="checkbox"] {
-                margin-right: 4px;
-            }
-            .clm-presets-list {
-                border: 1px solid #ddd;
-                border-radius: 4px;
-                padding: 6px;
-                background: #fff;
-                max-height: 200px;
-                overflow: auto;
-            }
-            .clm-test-row {
-                display: flex;
-                align-items: center;
-                gap: 8px;
-            }
-            .clm-test-status {
-                font-size: 11px;
-                color: #555;
-            }
-            .clm-test-status.clm-ok {
-                color: #15803d;
-            }
-            .clm-test-status.clm-failed {
-                color: #b91c1c;
-            }
-            .clm-preset-item {
-                border-bottom: 1px dashed #eee;
-                padding-bottom: 6px;
-                margin-bottom: 6px;
-            }
-            .clm-preset-item:last-child {
-                border-bottom: none;
-                padding-bottom: 0;
-                margin-bottom: 0;
-            }
-            .clm-preset-item-header {
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                margin-bottom: 4px;
-                font-weight: bold;
-            }
-            .clm-small-btn {
-                display: inline-block;
-                padding: 2px 6px;
-                font-size: 11px;
-                border-radius: 3px;
-                border: 1px solid #aaa;
-                background: #f7f7f7;
-                cursor: pointer;
-                margin-left: 4px;
-            }
-            .clm-small-btn:hover {
-                background: #eee;
-            }
-            .clm-primary-btn {
-                border-color: #2b7cff;
-                background: #2b7cff;
-                color: #fff;
-            }
-            .clm-primary-btn:hover {
-                background: #1f5ecc;
-            }
-            .clm-log-toolbar {
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                margin-bottom: 4px;
-            }
-            .clm-log-box {
-                max-height: 160px;
-                overflow: auto;
-                border: 1px solid #ddd;
-                border-radius: 4px;
-                padding: 6px;
-                background: #fff;
-                font-family: Consolas, monospace;
-                font-size: 11px;
-                line-height: 1.5;
-            }
-            .clm-log-entry {
-                display: flex;
-                gap: 6px;
-                border-bottom: 1px dotted #eee;
-                padding: 2px 0;
-            }
-            .clm-log-entry:last-child {
-                border-bottom: none;
-            }
-            .clm-log-time {
-                color: #6b7280;
-                flex: 0 0 52px;
-            }
-            .clm-log-message {
-                flex: 1;
-                color: #111827;
-            }
-            .clm-log-entry.clm-log-info .clm-log-message {
-                color: #1f2937;
-            }
-            .clm-log-entry.clm-log-success .clm-log-message {
-                color: #15803d;
-            }
-            .clm-log-entry.clm-log-warning .clm-log-message {
-                color: #b45309;
-            }
-            .clm-log-entry.clm-log-error .clm-log-message {
-                color: #b91c1c;
-            }
-            .clm-log-empty {
-                color: #9ca3af;
-                text-align: center;
-                padding: 8px 0;
-            }
-            .clm-transfer-textarea {
-                width: 100%;
-                box-sizing: border-box;
-                padding: 6px 8px;
-                border: 1px solid #ccc;
-                border-radius: 4px;
-                font-size: 11px;
-                font-family: Consolas, monospace;
-                resize: vertical;
-                min-height: 100px;
-                background: #fff;
-            }
-            .clm-transfer-buttons {
-                display: flex;
-                gap: 8px;
-                margin-top: 6px;
-            }
-        `);
-
-        const btn = document.createElement('div');
-        btn.className = 'clm-settings-btn';
-        btn.textContent = '草榴Manager 設置';
-        btn.addEventListener('click', () => {
-            btn.classList.add('clm-settings-btn-hidden');
-            openSettingsPanel();
-        });
-        document.body.appendChild(btn);
-    }
-
-    function openSettingsPanel() {
-        const settings = loadSettings();
-        const settingsBtn = document.querySelector('.clm-settings-btn');
-        let logUnsubscribe = null;
-        let connectivityStatusEl = null;
-        let webdavStatusEl = null;
-        const webdavAuth = loadWebdavAuth();
-        const webdavAuthDraft = {
-            username: (webdavAuth && webdavAuth.username) || settings.webdav.username || '',
-            password: (webdavAuth && webdavAuth.password) || settings.webdav.password || ''
-        };
-        settings.webdav.username = webdavAuthDraft.username;
-        settings.webdav.password = webdavAuthDraft.password;
-
-        function buildSettingsTransferSnapshot() {
-            const cloned = JSON.parse(JSON.stringify(settings));
-            if (cloned.webdav) {
-                delete cloned.webdav.username;
-                delete cloned.webdav.password;
-            }
-            return cloned;
-        }
-        function clearConnectivityStatus() {
-            if (!connectivityStatusEl) return;
-            connectivityStatusEl.textContent = '';
-            connectivityStatusEl.classList.remove('clm-ok', 'clm-failed');
-        }
-
-        const mask = document.createElement('div');
-        mask.className = 'clm-settings-panel-mask';
-
-        const panel = document.createElement('div');
-        panel.className = 'clm-settings-panel';
-
-        function closePanel() {
-            if (logUnsubscribe) {
-                logUnsubscribe();
-                logUnsubscribe = null;
-            }
-            if (settingsBtn) {
-                settingsBtn.classList.remove('clm-settings-btn-hidden');
-            }
-            mask.remove();
-        }
-
-        const header = document.createElement('div');
-        header.className = 'clm-settings-header';
-        header.innerHTML = '<span>草榴Manager 設置</span>';
-
-        const closeBtn = document.createElement('span');
-        closeBtn.className = 'clm-settings-close';
-        closeBtn.textContent = '✕';
-        closeBtn.addEventListener('click', () => {
-            closePanel();
-        });
-        header.appendChild(closeBtn);
-
-        const body = document.createElement('div');
-        body.className = 'clm-settings-body';
-
-        // qBittorrent 開關
-        const rowEnable = document.createElement('div');
-        rowEnable.className = 'clm-form-row';
-        const enableLabel = document.createElement('label');
-        const enableCheckbox = document.createElement('input');
-        enableCheckbox.type = 'checkbox';
-        enableCheckbox.checked = !!settings.qb.enabled;
-        enableCheckbox.addEventListener('change', () => clearConnectivityStatus());
-        enableLabel.appendChild(enableCheckbox);
-        enableLabel.appendChild(document.createTextNode('啟用 qBittorrent 集成'));
-        rowEnable.appendChild(enableLabel);
-        body.appendChild(rowEnable);
-
-        // 基本連接信息
-        body.appendChild(createInputRow('qBittorrent WebUI 地址（如：http://127.0.0.1:8080）', settings.qb.baseUrl, (val) => {
-            settings.qb.baseUrl = val.trim();
-            clearConnectivityStatus();
-        }));
-        body.appendChild(createInputRow('qBittorrent 用戶名', settings.qb.username, (val) => {
-            settings.qb.username = val.trim();
-            clearConnectivityStatus();
-        }));
-
-        const rowPwd = document.createElement('div');
-        rowPwd.className = 'clm-form-row';
-        const pwdLabel = document.createElement('label');
-        pwdLabel.textContent = 'qBittorrent 密碼';
-        const pwdInput = document.createElement('input');
-        pwdInput.type = 'password';
-        pwdInput.value = settings.qb.password || '';
-        pwdInput.addEventListener('input', () => {
-            settings.qb.password = pwdInput.value;
-            clearConnectivityStatus();
-        });
-        rowPwd.appendChild(pwdLabel);
-        rowPwd.appendChild(pwdInput);
-        body.appendChild(rowPwd);
-
-        body.appendChild(createInputRow('統一分類（category）', settings.qb.defaultCategory, (val) => {
-            settings.qb.defaultCategory = val.trim();
-            clearConnectivityStatus();
-        }));
-
-        const testRow = document.createElement('div');
-        testRow.className = 'clm-form-row clm-test-row';
-        const testBtn = document.createElement('button');
-        testBtn.type = 'button';
-        testBtn.className = 'clm-small-btn';
-        testBtn.textContent = '測試連通性';
-        const testStatus = document.createElement('span');
-        testStatus.className = 'clm-test-status';
-        connectivityStatusEl = testStatus;
-        testBtn.addEventListener('click', async () => {
-            clearConnectivityStatus();
-            testBtn.disabled = true;
-            testBtn.textContent = '測試中…';
-            try {
-                const snapshot = JSON.parse(JSON.stringify(settings));
-                snapshot.qb.enabled = enableCheckbox.checked;
-                const version = await testQbittorrentConnectivity(snapshot);
-                testStatus.textContent = '連通成功，版本：' + version;
-                testStatus.classList.add('clm-ok');
-            } catch (err) {
-                testStatus.textContent = '連通失敗：' + (err?.message || err);
-                testStatus.classList.add('clm-failed');
-            } finally {
-                testBtn.disabled = false;
-                testBtn.textContent = '測試連通性';
-            }
-        });
-        testRow.appendChild(testBtn);
-        testRow.appendChild(testStatus);
-        body.appendChild(testRow);
-
-        // 多個儲存位置預設
-        const presetsRow = document.createElement('div');
-        presetsRow.className = 'clm-form-row';
-        const presetsLabel = document.createElement('label');
-        presetsLabel.textContent = '儲存位置預設（可為每個路徑設置標籤）';
-        presetsRow.appendChild(presetsLabel);
-
-        const presetsWrap = document.createElement('div');
-        presetsWrap.className = 'clm-presets-list';
-
-        function renderPresets() {
-            presetsWrap.innerHTML = '';
-            settings.qb.savePresets.forEach((preset, index) => {
-                const item = document.createElement('div');
-                item.className = 'clm-preset-item';
-
-                const header = document.createElement('div');
-                header.className = 'clm-preset-item-header';
-                const title = document.createElement('span');
-                title.textContent = preset.name || ('預設路徑 ' + (index + 1));
-                const deleteBtn = document.createElement('span');
-                deleteBtn.className = 'clm-small-btn';
-                deleteBtn.textContent = '刪除';
-                deleteBtn.addEventListener('click', () => {
-                    if (settings.qb.savePresets.length <= 1) {
-                        alert('至少保留一個儲存位置。');
+            function attachTextOnlyQualityBadges() {
+                const items = document.querySelectorAll('.wf_item');
+                items.forEach(item => {
+                    if (item.querySelector('.image-big')) {
                         return;
                     }
-                    settings.qb.savePresets.splice(index, 1);
-                    renderPresets();
+                    const threadAnchor = item.querySelector('a[href]');
+                    const qualityTag = resolveQualityTagFromListItem(item, threadAnchor);
+                    let badge = item.querySelector('.clm-text-quality');
+                    if (!qualityTag) {
+                        if (badge) {
+                            badge.remove();
+                        }
+                        return;
+                    }
+                    const textContainer = item.querySelector('.wf_text');
+                    if (!textContainer) {
+                        return;
+                    }
+                    if (!badge) {
+                        badge = document.createElement('div');
+                        badge.className = 'clm-quality-badge clm-text-quality';
+                        textContainer.appendChild(badge);
+                    }
+                    updateQualityBadgeElement(badge, qualityTag);
                 });
-                header.appendChild(title);
-                header.appendChild(deleteBtn);
-                item.appendChild(header);
+            }
 
-                item.appendChild(createInputRow('名稱', preset.name, (val) => {
-                    preset.name = val;
-                    title.textContent = val || ('預設路徑 ' + (index + 1));
-                }));
-                item.appendChild(createInputRow('儲存路徑（savepath）', preset.savePath, (val) => {
-                    preset.savePath = val;
-                }));
-                item.appendChild(createInputRow('標籤（tags，逗號分隔）', preset.tags, (val) => {
-                    preset.tags = val;
-                }));
+            attachCoverDownloadButtons();
+            attachTextOnlyQualityBadges();
 
-                presetsWrap.appendChild(item);
+            const coverObserver = new MutationObserver(() => {
+                attachCoverDownloadButtons();
+                attachTextOnlyQualityBadges();
             });
+            coverObserver.observe(document.body, { childList: true, subtree: true });
         }
 
-        renderPresets();
+        /**
+         * -------------------------------
+         *   手机端支持
+         * -------------------------------
+         */
+        const pageType = detectPageType();
+        const isMobile = isMobilePage();
 
-        const addPresetBtn = document.createElement('button');
-        addPresetBtn.className = 'clm-small-btn';
-        addPresetBtn.textContent = '新增儲存位置';
-        addPresetBtn.addEventListener('click', () => {
-            const id = 'preset_' + Date.now();
-            settings.qb.savePresets.push({
-                id,
-                name: '新建儲存位置',
-                savePath: '',
-                tags: ''
-            });
-            renderPresets();
-        });
+        // 手机端板块页面（thread0806.php 图文模式）
+        if (isMobile && href.indexOf('thread0806.php') !== -1) {
+            // 手机端图文模式，添加触控优化的画廊按钮，禁用放大
+            injectStyle(`
+                .wf_item .image-big {
+                    overflow: hidden !important;
+                    position: relative;
+                }
+                .wf_item .image-big img {
+                    transition: none !important;
+                    transform: none !important;
+                }
+                .wf_item .image-big:hover img {
+                    transform: none !important;
+                }
+                .wf_item .clm-cover-gallery-btn {
+                    position: absolute;
+                    left: 50%;
+                    bottom: 35%;
+                    transform: translateX(-50%);
+                    padding: 10px 20px;
+                    font-size: 15px;
+                    font-weight: 600;
+                    border-radius: 8px;
+                    border: 1px solid rgba(255, 255, 255, 0.6);
+                    background: rgba(0, 0, 0, 0.85);
+                    color: #fff;
+                    cursor: pointer;
+                    display: inline-flex;
+                    align-items: center;
+                    z-index: 10000;
+                    touch-action: manipulation;
+                    -webkit-tap-highlight-color: transparent;
+                    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+                }
+                .wf_item .clm-cover-gallery-btn:active {
+                    background: rgba(0, 0, 0, 0.95);
+                    transform: translateX(-50%) scale(0.95);
+                }
+                .wf_item .clm-cover-download {
+                    position: absolute;
+                    top: 8px;
+                    right: 8px;
+                    padding: 6px 12px;
+                    font-size: 13px;
+                    border-radius: 6px;
+                    border: 1px solid rgba(255, 255, 255, 0.4);
+                    background: rgba(0, 0, 0, 0.75);
+                    color: #fff;
+                    cursor: pointer;
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 6px;
+                    z-index: 2;
+                    touch-action: manipulation;
+                    -webkit-tap-highlight-color: transparent;
+                }
+                .wf_item .clm-cover-download:active {
+                    background: rgba(0, 0, 0, 0.9);
+                    transform: scale(0.95);
+                }
+                .wf_item .clm-cover-download.clm-downloaded {
+                    background: rgba(16, 185, 129, 0.9);
+                    border-color: rgba(255, 255, 255, 0.55);
+                }
+                .wf_item .clm-cover-download::before {
+                    content: '⬇';
+                    font-size: 13px;
+                }
+                .wf_item .clm-cover-quality {
+                    position: absolute;
+                    left: 8px;
+                    top: 8px;
+                    z-index: 10000;
+                    max-width: 50px;
+                    font-size: 9px;
+                    padding: 2px 5px;
+                }
+                .wf_item .clm-text-quality {
+                    position: relative;
+                    left: auto;
+                    bottom: auto;
+                    display: inline-flex;
+                    margin-top: 6px;
+                    transform: none;
+                }
+                .wf_item.clm-thread-downloaded {
+                    position: relative;
+                    box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.25);
+                    border-radius: 6px;
+                }
+                .wf_item.clm-thread-downloaded::after {
+                    content: '已下載';
+                    position: absolute;
+                    top: 8px;
+                    left: 8px;
+                    background: rgba(34, 197, 94, 0.85);
+                    color: #fff;
+                    font-size: 10px;
+                    padding: 2px 6px;
+                    border-radius: 999px;
+                    letter-spacing: 0.08em;
+                    z-index: 2;
+                }
+            `);
 
-        presetsRow.appendChild(presetsWrap);
-        presetsRow.appendChild(addPresetBtn);
-        body.appendChild(presetsRow);
+            function attachMobileCoverButtons() {
+                const covers = document.querySelectorAll('.wf_item .image-big');
+                covers.forEach(cover => {
+                    if (cover.dataset.clmMobileBtnAttached === '1') return;
+                    cover.dataset.clmMobileBtnAttached = '1';
+                    const wfItem = cover.closest('.wf_item');
 
-        const webdavEnableRow = document.createElement('div');
-        webdavEnableRow.className = 'clm-form-row';
-        const webdavEnableLabel = document.createElement('label');
-        const webdavEnableCheckbox = document.createElement('input');
-        webdavEnableCheckbox.type = 'checkbox';
-        webdavEnableCheckbox.checked = !!settings.webdav.enabled;
-        webdavEnableCheckbox.addEventListener('change', () => {
-            settings.webdav.enabled = !!webdavEnableCheckbox.checked;
-        });
-        webdavEnableLabel.appendChild(webdavEnableCheckbox);
-        webdavEnableLabel.appendChild(document.createTextNode('啟用 WebDAV 同步（已下載/瀏覽記錄與設置）'));
-        webdavEnableRow.appendChild(webdavEnableLabel);
-        body.appendChild(webdavEnableRow);
+                    // 添加画廊按钮
+                    const galleryBtn = document.createElement('button');
+                    galleryBtn.type = 'button';
+                    galleryBtn.className = 'clm-cover-gallery-btn';
+                    galleryBtn.textContent = '画廊';
+                    cover.appendChild(galleryBtn);
 
-        body.appendChild(createInputRow('WebDAV 目錄地址（例如：https://example.com/webdav/）', settings.webdav.url, (val) => {
-            settings.webdav.url = val.trim();
-        }));
+                    // 添加下载按钮
+                    const downloadBtn = document.createElement('button');
+                    downloadBtn.type = 'button';
+                    downloadBtn.className = 'clm-cover-download';
+                    downloadBtn.textContent = '下載';
+                    cover.appendChild(downloadBtn);
 
-        body.appendChild(createInputRow('WebDAV 用戶名', settings.webdav.username, (val) => {
-            const v = val.trim();
-            settings.webdav.username = v;
-            webdavAuthDraft.username = v;
-        }));
+                    // 添加品质徽章
+                    const qualityBadge = document.createElement('div');
+                    qualityBadge.className = 'clm-quality-badge clm-cover-quality';
+                    cover.appendChild(qualityBadge);
 
-        const webdavPwdRow = document.createElement('div');
-        webdavPwdRow.className = 'clm-form-row';
-        const webdavPwdLabel = document.createElement('label');
-        webdavPwdLabel.textContent = 'WebDAV 密碼';
-        const webdavPwdInput = document.createElement('input');
-        webdavPwdInput.type = 'password';
-        webdavPwdInput.value = webdavAuthDraft.password || '';
-        webdavPwdInput.addEventListener('input', () => {
-            settings.webdav.password = webdavPwdInput.value;
-            webdavAuthDraft.password = webdavPwdInput.value;
-        });
-        webdavPwdRow.appendChild(webdavPwdLabel);
-        webdavPwdRow.appendChild(webdavPwdInput);
-        body.appendChild(webdavPwdRow);
+                    const threadAnchor = wfItem.querySelector('a[href]');
+                    const threadUrl = threadAnchor ? getAbsoluteUrl(threadAnchor.getAttribute('href') || threadAnchor.href) : null;
+                    const qualityTag = resolveQualityTagFromListItem(wfItem, threadAnchor);
+                    updateQualityBadgeElement(qualityBadge, qualityTag);
 
-        const webdavSyncRow = document.createElement('div');
-        webdavSyncRow.className = 'clm-form-row clm-test-row';
-        const webdavSyncBtn = document.createElement('button');
-        webdavSyncBtn.type = 'button';
-        webdavSyncBtn.className = 'clm-small-btn';
-        webdavSyncBtn.textContent = '立即同步 WebDAV';
-        const webdavStatus = document.createElement('span');
-        webdavStatus.className = 'clm-test-status';
-        webdavStatusEl = webdavStatus;
-        webdavSyncBtn.addEventListener('click', async () => {
-            webdavStatus.textContent = '';
-            webdavSyncBtn.disabled = true;
-            webdavSyncBtn.textContent = '同步中…';
-            try {
-                saveWebdavAuth(webdavAuthDraft);
-                const ok = await syncDownloadRecordsWithWebdav({
-                    silent: false,
-                    statusCallback: (msg) => {
-                        if (webdavStatusEl) {
-                            webdavStatusEl.textContent = msg;
-                        }
+                    if (threadUrl) {
+                        cover.dataset.clmThreadKey = threadUrl;
+                        bindGalleryVisitedIndicator(cover, threadUrl, 'cover');
+
+                        // 画廊按钮点击事件
+                        galleryBtn.addEventListener('click', (ev) => {
+                            ev.preventDefault();
+                            ev.stopPropagation();
+                            openGalleryForThread(threadUrl, { instant: true, qualityTag });
+                        });
+
+                        // 设置下载按钮
+                        const threadTitle = (threadAnchor?.textContent || '').trim();
+                        setupThreadDownloadButton(downloadBtn, {
+                            threadUrl,
+                            container: wfItem,
+                            containerClass: 'clm-thread-downloaded',
+                            label: '下載',
+                            downloadedLabel: '已下載',
+                            threadTitle
+                        });
                     }
                 });
-                if (!ok && webdavStatusEl && !webdavStatusEl.textContent) {
-                    webdavStatusEl.textContent = '同步未完成，請檢查日誌或提示。';
-                }
-            } finally {
-                webdavSyncBtn.disabled = false;
-                webdavSyncBtn.textContent = '立即同步 WebDAV';
             }
-        });
-        webdavSyncRow.appendChild(webdavSyncBtn);
-        webdavSyncRow.appendChild(webdavStatus);
-        body.appendChild(webdavSyncRow);
 
-        const webdavSafeNote = document.createElement('div');
-        webdavSafeNote.className = 'clm-test-status';
-        webdavSafeNote.textContent = '安全說明：WebDAV 賬號密碼在保存前會使用本機固定密鑰進行 XOR+Base64 對稱加密，僅存放於瀏覽器本地（腳本存儲 / localStorage），主要用於避免明文直接暴露；不會寫入同步到 WebDAV 的數據文件，也不會發送給除目標 WebDAV 服務以外的第三方。請避免在公共或不可信設備上保存密碼。';
-        body.appendChild(webdavSafeNote);
+            function attachMobileTextOnlyQualityBadges() {
+                const items = document.querySelectorAll('.wf_item');
+                items.forEach(item => {
+                    if (item.querySelector('.image-big')) {
+                        return;
+                    }
+                    const threadAnchor = item.querySelector('a[href]');
+                    const qualityTag = resolveQualityTagFromListItem(item, threadAnchor);
+                    let badge = item.querySelector('.clm-text-quality');
+                    if (!qualityTag) {
+                        if (badge) {
+                            badge.remove();
+                        }
+                        return;
+                    }
+                    const textContainer = item.querySelector('.wf_text');
+                    if (!textContainer) {
+                        return;
+                    }
+                    if (!badge) {
+                        badge = document.createElement('div');
+                        badge.className = 'clm-quality-badge clm-text-quality';
+                        textContainer.appendChild(badge);
+                    }
+                    updateQualityBadgeElement(badge, qualityTag);
+                });
+            }
 
-        function openQbLogDialog() {
-            const logMask = document.createElement('div');
-            logMask.className = 'clm-settings-panel-mask';
+            attachMobileCoverButtons();
+            attachMobileTextOnlyQualityBadges();
 
-            const logPanel = document.createElement('div');
-            logPanel.className = 'clm-settings-panel';
+            const mobileObserver = new MutationObserver(() => {
+                attachMobileCoverButtons();
+                attachMobileTextOnlyQualityBadges();
+            });
+            mobileObserver.observe(document.body, { childList: true, subtree: true });
+        }
 
-            const logHeader = document.createElement('div');
-            logHeader.className = 'clm-settings-header';
-            logHeader.innerHTML = '<span>qBittorrent 調試日誌</span>';
+        // 手机端页面 - 画廊模式适配
+        // 只要是手机端，就注入抖音风格样式（不限于 htm_mob 页面）
+        if (isMobile) {
+            // 手机端画廊模式适配 - 抖音短视频风格
+            injectStyle(`
+                html.clm-mobile-gallery-root,
+                html.clm-mobile-gallery-root body {
+                    overflow: hidden !important;
+                    overscroll-behavior: none !important;
+                    height: 100% !important;
+                }
+                body.clm-mobile-gallery {
+                    overflow: hidden !important;
+                    overscroll-behavior: contain !important;
+                }
+                /* 手机端画廊模式 - 抖音风格布局 - 覆盖所有桌面端样式 */
+                body.clm-mobile-gallery .clm-gallery-overlay {
+                    padding: 0 !important;
+                    background: #000 !important;
+                    transform: none !important;
+                    align-items: stretch !important;
+                    justify-content: stretch !important;
+                }
+                body.clm-mobile-gallery .clm-gallery-layout {
+                    display: flex !important;
+                    flex-direction: column !important;
+                    gap: 0 !important;
+                    width: 100vw !important;
+                    height: 100vh !important;
+                    max-width: 100vw !important;
+                    max-height: 100vh !important;
+                    position: relative !important;
+                    grid-template-columns: none !important;
+                }
+                
+                /* 隐藏所有桌面端元素（手机端下保留 actions 作为下载按钮区域） */
+                body.clm-mobile-gallery .clm-gallery-panel-topic,
+                body.clm-mobile-gallery .clm-gallery-panel-comments {
+                    display: none !important;
+                }
+                body.clm-mobile-gallery .clm-gallery-arrow,
+                body.clm-mobile-gallery .clm-gallery-meta,
+                body.clm-mobile-gallery .clm-gallery-hint,
+                /* 隐藏底部的viewer广告区域 */
+                .clm-gallery-ads-slot-viewer-bottom {
+                    display: none !important;
+                }
+                
+                /* 顶部广告区域 - ftad-ct（手机端：带浅色背景条，贴近顶部） */
+                body.clm-mobile-gallery .clm-gallery-ads-slot-viewer-top {
+                    position: fixed !important;
+                    top: 8px !important;
+                    left: 0 !important;
+                    right: 0 !important;
+                    width: 100% !important;
+                    max-width: 100vw !important;
+                    background: #f9f9ec !important;
+                    z-index: 100001 !important;
+                    padding: 6px 8px !important;
+                    max-height: 96px !important;
+                    overflow-y: auto !important;
+                    -webkit-overflow-scrolling: touch !important;
+                    box-sizing: border-box !important;
+                }
+                
+                /* 修复手机端帖子内广告样式 */
+                body.clm-mobile-gallery .clm-panel-entry-tips {
+                    width: 100% !important;
+                    margin-top: 10px !important;
+                }
+                
+                body.clm-mobile-gallery .clm-panel-entry-tips .sptable_do_not_remove {
+                    width: 100% !important;
+                    background: rgba(255, 255, 255, 0.05) !important;
+                    border-radius: 8px !important;
+                    overflow: hidden !important;
+                    margin-bottom: 8px !important;
+                }
+                
+                body.clm-mobile-gallery .clm-panel-entry-tips .f_one {
+                    padding: 10px !important;
+                    background: rgba(255, 255, 255, 0.08) !important;
+                    border-radius: 8px !important;
+                    margin-bottom: 8px !important;
+                    cursor: pointer !important;
+                }
+                
+                body.clm-mobile-gallery .clm-panel-entry-tips .f_one:active {
+                    background: rgba(255, 255, 255, 0.12) !important;
+                }
+                
+                body.clm-mobile-gallery .clm-gallery-ads table.sptable_do_not_remove {
+                    width: 100% !important;
+                    background: rgba(255, 255, 255, 0.05) !important;
+                    border-radius: 8px !important;
+                    overflow: hidden !important;
+                }
+                
+                body.clm-mobile-gallery .clm-panel-entry-tips table.sptable_do_not_remove td,
+                body.clm-mobile-gallery .clm-gallery-ads table.sptable_do_not_remove td {
+                    padding: 10px !important;
+                    font-size: 13px !important;
+                    line-height: 1.4 !important;
+                    color: #fff !important;
+                    background: transparent !important;
+                }
+                
+                body.clm-mobile-gallery .clm-panel-entry-tips #ti,
+                body.clm-mobile-gallery .clm-gallery-ads table.sptable_do_not_remove #ti {
+                    font-weight: 600 !important;
+                    margin-bottom: 4px !important;
+                    font-size: 14px !important;
+                }
+                
+                body.clm-mobile-gallery .clm-panel-entry-tips #ti a,
+                body.clm-mobile-gallery .clm-gallery-ads table.sptable_do_not_remove #ti a {
+                    color: #fff !important;
+                    text-decoration: none !important;
+                }
+                
+                body.clm-mobile-gallery .clm-panel-entry-tips a,
+                body.clm-mobile-gallery .clm-gallery-panel-comments .clm-panel-entry-tips a,
+                body.clm-mobile-gallery .clm-gallery-ads table.sptable_do_not_remove a {
+                    color: #9db4ff !important;
+                    text-decoration: none !important;
+                }
+                
+                /* 不再在手机端展示 sptable_info AD 小标签（DOM 层已不创建） */
+                
+                /* 关闭按钮移到顶部右上角 */
+                body.clm-mobile-gallery .clm-gallery-close {
+                    position: fixed !important;
+                    top: 8px !important;
+                    right: 8px !important;
+                    z-index: 100004 !important;
+                    width: 40px !important;
+                    height: 40px !important;
+                    background: rgba(0, 0, 0, 0.7) !important;
+                    border-radius: 50% !important;
+                    font-size: 22px !important;
+                    border: none !important;
+                    color: #fff !important;
+                    display: flex !important;
+                    align-items: center !important;
+                    justify-content: center !important;
+                    touch-action: manipulation !important;
+                    -webkit-tap-highlight-color: transparent !important;
+                }
+                
+                body.clm-mobile-gallery .clm-gallery-close:active {
+                    transform: scale(0.9) !important;
+                    background: rgba(0, 0, 0, 0.9) !important;
+                }
+                
+                /* 中央图片查看器 - 屏幕正中央 */
+                body.clm-mobile-gallery .clm-gallery-viewer-column {
+                    position: fixed !important;
+                    left: 0 !important;
+                    top: 0 !important;
+                    width: 100vw !important;
+                    height: 100vh !important;
+                    display: flex !important;
+                    flex-direction: column !important;
+                    align-items: center !important;
+                    justify-content: center !important;
+                    z-index: 1 !important;
+                    gap: 0 !important;
+                    min-height: 100vh !important;
+                }
+                
+                body.clm-mobile-gallery .clm-gallery-viewer {
+                    width: 100% !important;
+                    height: 100% !important;
+                    max-width: 100vw !important;
+                    max-height: 100vh !important;
+                    display: flex !important;
+                    align-items: center !important;
+                    justify-content: center !important;
+                    position: relative !important;
+                    flex: 1 !important;
+                    background: transparent !important;
+                    border-radius: 0 !important;
+                }
+                
+                body.clm-mobile-gallery .clm-gallery-viewer img {
+                    max-width: 100vw !important;
+                    max-height: 100vh !important;
+                    width: auto !important;
+                    height: auto !important;
+                    object-fit: contain !important;
+                    touch-action: pan-x pan-y pinch-zoom !important;
+                    border-radius: 0 !important;
+                    box-shadow: none !important;
+                    cursor: default !important;
+                }
+                
+                /* 隐藏加载指示器和其他viewer内元素，只保留图片 */
+                body.clm-mobile-gallery .clm-gallery-loading-indicator {
+                    position: fixed !important;
+                    top: 50% !important;
+                    left: 50% !important;
+                    transform: translate(-50%, -50%) !important;
+                    z-index: 100002 !important;
+                    color: #fff !important;
+                    font-size: 16px !important;
+                }
+                
+                /* 主题内容底部抽屉（Bottom Sheet） - 黑色毛玻璃渐变背景 */
+                body.clm-mobile-gallery .clm-gallery-panel-topic {
+                    display: block !important;
+                    position: fixed !important;
+                    left: 0 !important;
+                    bottom: 0 !important;
+                    width: 100% !important;
+                    max-width: 100vw !important;
+                    background: linear-gradient(to top, rgba(15, 23, 42, 0.96), rgba(15, 23, 42, 0.6)) !important;
+                    backdrop-filter: blur(16px) !important;
+                    -webkit-backdrop-filter: blur(16px) !important;
+                    border-radius: 0 !important;
+                    padding: 0 30px 24px !important;
+                    z-index: 100002 !important;
+                    overflow: visible !important;
+                    color: #f9fafb !important;
+                    box-shadow: 0 -5px 30px rgba(0, 0, 0, 0.5) !important;
+                    border: none !important;
+                    flex-direction: column !important;
+                    cursor: pointer !important;
+                    transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+                    transform-origin: bottom !important;
+                    user-select: none !important;
+                    -webkit-user-select: none !important;
+                    -moz-user-select: none !important;
+                    -ms-user-select: none !important;
+                }
+                
+                /* 折叠状态下：高度约占屏幕底部四分之一，便于点击 */
+                body.clm-mobile-gallery .clm-gallery-panel-topic.clm-topic-collapsed {
+                    min-height: 25vh !important;
+                    max-height: 25vh !important;
+                    transform: translateY(0) !important;
+                }
+                
+                /* 展开状态下：根据内容自适应高度，最大70vh */
+                body.clm-mobile-gallery .clm-gallery-panel-topic.clm-topic-expanded {
+                    min-height: auto !important;
+                    max-height: 70vh !important;
+                    height: auto !important;
+                    transform: translateY(0) !important;
+                }
 
-            const logClose = document.createElement('span');
-            logClose.className = 'clm-settings-close';
-            logClose.textContent = '✕';
-            logHeader.appendChild(logClose);
+                /* 顶部中间的箭头图标（与手机端画廊.html 的 arrow-large 风格一致） */
+                body.clm-mobile-gallery .clm-gallery-panel-topic.clm-topic-collapsed::after,
+                body.clm-mobile-gallery .clm-gallery-panel-topic.clm-topic-expanded::after {
+                    content: '' !important;
+                    position: absolute !important;
+                    top: 0 !important;
+                    left: 50% !important;
+                    width: 24px !important;
+                    height: 24px !important;
+                    border-radius: 0 !important;
+                    border-right: 4px solid #333 !important;
+                    border-bottom: 4px solid #333 !important;
+                    transform: translate(-50%, -50%) rotate(225deg) !important;
+                    background: transparent !important;
+                    box-shadow: none !important;
+                    pointer-events: none !important;
+                    opacity: 0.7 !important;
+                    transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+                }
 
-            const logBody = document.createElement('div');
-            logBody.className = 'clm-settings-body';
+                /* 展开状态：箭头向上（整体图标旋转） */
+                body.clm-mobile-gallery .clm-gallery-panel-topic.clm-topic-expanded::after {
+                    transform: translate(-50%, -50%) rotate(45deg) !important;
+                }
+                
+                body.clm-mobile-gallery .clm-gallery-panel-topic .clm-gallery-panel-header {
+                    display: none !important;
+                }
+                
+                body.clm-mobile-gallery .clm-gallery-panel-topic .clm-gallery-panel-body {
+                    font-size: 14px !important;
+                    line-height: 1.5 !important;
+                    color: #f9fafb !important;
+                    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9) !important;
+                    overflow-y: auto !important;
+                    max-height: 100% !important;
+                    padding: 24px 0 24px !important;
+                    background: transparent !important;
+                    border-radius: 0 !important;
+                    border: none !important;
+                    backdrop-filter: none !important;
+                    -webkit-backdrop-filter: none !important;
+                    position: relative !important;
+                }
+                
+                body.clm-mobile-gallery .clm-gallery-panel-topic.clm-topic-collapsed .clm-gallery-panel-body {
+                    overflow: hidden !important;
+                    max-height: 25vh !important; /* 抽屉收起时约显示屏幕 1/4 的内容 */
+                }
+                
+                /* 渐变遮罩，提示下方还有更多内容（深色渐变） */
+                body.clm-mobile-gallery .clm-gallery-panel-topic .clm-gallery-panel-body::after {
+                    content: '' !important;
+                    position: absolute !important;
+                    bottom: 0 !important;
+                    left: 0 !important;
+                    width: 100% !important;
+                    height: 80px !important;
+                    background: linear-gradient(to bottom, rgba(15, 23, 42, 0) 0%, rgba(15, 23, 42, 0.95) 100%) !important;
+                    pointer-events: none !important;
+                    opacity: 1 !important;
+                    transition: opacity 0.4s ease !important;
+                }
+                
+                body.clm-mobile-gallery .clm-gallery-panel-topic.clm-topic-expanded .clm-gallery-panel-body::after {
+                    opacity: 0 !important;
+                }
+                
+                body.clm-mobile-gallery .clm-gallery-panel-topic .clm-gallery-panel-body p {
+                    margin: 4px 0 !important;
+                }
+                
+                body.clm-mobile-gallery .clm-gallery-panel-topic .clm-gallery-panel-body .clm-panel-entry-title {
+                    margin-bottom: 8px !important;
+                }
+                
+                body.clm-mobile-gallery .clm-gallery-panel-topic .clm-gallery-panel-body .clm-panel-entry-title-tags {
+                    display: flex !important;
+                    flex-wrap: wrap !important;
+                    gap: 6px !important;
+                    margin-bottom: 6px !important;
+                }
+                
+                body.clm-mobile-gallery .clm-gallery-panel-topic .clm-gallery-panel-body .clm-panel-entry-title-tag {
+                    padding: 3px 8px !important;
+                    border-radius: 4px !important;
+                    font-size: 12px !important;
+                    font-weight: 600 !important;
+                    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8) !important;
+                }
+                
+                body.clm-mobile-gallery .clm-gallery-panel-topic .clm-gallery-panel-body .clm-panel-entry-title-text {
+                    font-size: 16px !important;
+                    font-weight: 700 !important;
+                    line-height: 1.4 !important;
+                    color: #f9fafb !important;
+                    text-shadow: 0 2px 6px rgba(0, 0, 0, 0.9) !important;
+                }
+                
+                /* 隐藏评论面板（不再作为按钮容器使用） */
+                body.clm-mobile-gallery .clm-gallery-panel-comments {
+                    display: none !important;
+                }
+                
+                /* 评论按钮样式（与下载按钮统一） */
+                .clm-mobile-comment-btn {
+                    width: 72px !important;
+                    height: 72px !important;
+                    min-width: 72px !important;
+                    max-width: 72px !important;
+                    min-height: 72px !important;
+                    max-height: 72px !important;
+                    border-radius: 50% !important;
+                    background: rgba(40, 40, 40, 0.8) !important;
+                    backdrop-filter: blur(10px) !important;
+                    -webkit-backdrop-filter: blur(10px) !important;
+                    border: 2px solid rgba(255, 255, 255, 0.25) !important;
+                    color: #fff !important;
+                    display: flex !important;
+                    flex-direction: column !important;
+                    align-items: center !important;
+                    justify-content: center !important;
+                    cursor: pointer !important;
+                    touch-action: manipulation !important;
+                    -webkit-tap-highlight-color: transparent !important;
+                    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5) !important;
+                    transition: all 0.2s ease !important;
+                    pointer-events: auto !important;
+                    overflow: hidden !important;
+                    box-sizing: border-box !important;
+                    font-size: 11px !important;
+                    font-weight: 500 !important;
+                }
+                
+                .clm-mobile-comment-btn:active {
+                    transform: scale(0.9) !important;
+                    background: rgba(60, 60, 60, 0.9) !important;
+                }
+                
+                /* 点击评论按钮后展开的评论面板 */
+                body.clm-mobile-gallery .clm-gallery-panel-comments.clm-comments-expanded {
+                    display: flex !important;
+                    flex-direction: column !important;
+                    position: fixed !important;
+                    left: 0 !important;
+                    bottom: 0 !important;
+                    right: 0 !important;
+                    top: auto !important;
+                    width: 100% !important;
+                    max-width: 100vw !important;
+                    max-height: 80vh !important;
+                    background: rgba(255, 255, 255, 0.98) !important;
+                    backdrop-filter: none !important;
+                    -webkit-backdrop-filter: none !important;
+                    border-radius: 20px 20px 0 0 !important;
+                    padding: 20px 20px 10px 20px !important;
+                    z-index: 100004 !important;
+                    overflow: hidden !important;
+                    transform: none !important;
+                    box-sizing: border-box !important;
+                    margin: 0 !important;
+                }
+                
+                body.clm-mobile-gallery .clm-gallery-panel-comments.clm-comments-expanded .clm-gallery-panel-header {
+                    display: flex !important;
+                    justify-content: space-between !important;
+                    align-items: center !important;
+                    margin-bottom: 16px !important;
+                    padding-bottom: 12px !important;
+                    border-bottom: 1px solid rgba(0, 0, 0, 0.1) !important;
+                    font-size: 18px !important;
+                    font-weight: 600 !important;
+                    color: #333 !important;
+                }
+                
+                body.clm-mobile-gallery .clm-gallery-panel-comments.clm-comments-expanded .clm-gallery-panel-body {
+                    display: block !important;
+                    flex: 1 1 auto !important;
+                    max-height: none !important;
+                    overflow-y: auto !important;
+                    touch-action: pan-y !important;
+                    -webkit-overflow-scrolling: touch !important;
+                    padding: 0 !important;
+                    background: transparent !important;
+                    backdrop-filter: none !important;
+                    -webkit-backdrop-filter: none !important;
+                }
+                
+                body.clm-mobile-gallery .clm-gallery-panel-comments .clm-panel-entry {
+                    background: transparent !important;
+                    border-radius: 0 !important;
+                    padding: 12px 0 !important;
+                    margin-bottom: 0 !important;
+                    border-bottom: 1px solid rgba(0, 0, 0, 0.08) !important;
+                }
+                
+                body.clm-mobile-gallery .clm-gallery-panel-comments .clm-panel-entry:last-child {
+                    border-bottom: none !important;
+                }
+                
+                body.clm-mobile-gallery .clm-gallery-panel-comments .clm-panel-entry-user {
+                    color: #666 !important;
+                    font-size: 12px !important;
+                    margin-bottom: 6px !important;
+                    font-weight: 500 !important;
+                }
+                
+                body.clm-mobile-gallery .clm-gallery-panel-comments .clm-panel-entry-content {
+                    color: #111827 !important;
+                    font-size: 14px !important;
+                    line-height: 1.6 !important;
+                }
+
+                /* 手机端评论面板中的番号标签/FC2 标签：提升对比度且以小芯片形式展示 */
+                body.clm-mobile-gallery .clm-gallery-panel-comments .clm-panel-entry-content .clm-title-tag-code,
+                body.clm-mobile-gallery .clm-gallery-panel-comments .clm-panel-entry-content .clm-inline-code-tag {
+                    background: #ede9fe !important;
+                    border-color: #a855f7 !important;
+                    color: #4c1d95 !important;
+                    display: inline-block !important;
+                    white-space: nowrap !important;
+                    margin-right: 6px !important;
+                    margin-bottom: 4px !important;
+                }
+                
+                body.clm-mobile-gallery .clm-gallery-panel-comments.clm-comments-expanded .clm-gallery-panel-body .clm-panel-entry {
+                    margin-bottom: 20px !important;
+                    padding-bottom: 16px !important;
+                    border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+                }
+                
+                .clm-gallery-panel-comments.clm-comments-expanded .clm-gallery-panel-body .clm-panel-entry:last-child {
+                    border-bottom: none !important;
+                }
+                
+                .clm-gallery-panel-comments.clm-comments-expanded .clm-gallery-panel-body .clm-panel-entry-user {
+                    color: rgba(156, 163, 175, 1) !important;
+                    font-size: 13px !important;
+                    margin-bottom: 8px !important;
+                }
+                
+                .clm-gallery-panel-comments.clm-comments-expanded .clm-gallery-panel-body .clm-panel-entry-text {
+                    color: #111827 !important;
+                    font-size: 14px !important;
+                    line-height: 1.7 !important;
+                }
+                
+                .clm-gallery-panel-comments.clm-comments-expanded .clm-gallery-ads {
+                    margin: 12px 0 !important;
+                    padding: 12px !important;
+                    background: rgba(255, 255, 255, 0.05) !important;
+                    border-radius: 8px !important;
+                }
+                
+                .clm-gallery-panel-comments.clm-comments-expanded .clm-mobile-comment-btn {
+                    position: absolute !important;
+                    top: 16px !important;
+                    right: 16px !important;
+                    width: 36px !important;
+                    height: 36px !important;
+                    font-size: 20px !important;
+                }
+                
+                /* 隐藏翻页箭头按钮（使用滑动手势） */
+                .clm-gallery-arrow-left,
+                .clm-gallery-arrow-right {
+                    display: none !important;
+                }
+                
+                /* 隐藏底部的viewer广告区域 */
+                .clm-gallery-ads-slot-viewer-bottom {
+                    display: none !important;
+                }
+                
+                /* 隐藏 meta、hint 等桌面端提示元素（下载按钮 actions 在手机端保留） */
+                .clm-gallery-meta,
+                .clm-gallery-hint {
+                    display: none !important;
+                }
+
+                /* 手机端：将下载和评论按钮一起放在右侧中下，采用圆形样式 */
+                body.clm-mobile-gallery .clm-gallery-actions {
+                    position: fixed !important;
+                    right: 16px !important;
+                    bottom: 35% !important;
+                    top: auto !important;
+                    width: auto !important;
+                    max-width: none !important;
+                    padding: 0 !important;
+                    box-sizing: border-box !important;
+                    display: flex !important;
+                    flex-direction: column !important;
+                    justify-content: center !important;
+                    align-items: center !important;
+                    gap: 16px !important;
+                    z-index: 100003 !important;
+                    pointer-events: none !important;
+                }
+
+                body.clm-mobile-gallery .clm-gallery-actions .clm-gallery-download-btn {
+                    pointer-events: auto !important;
+                    width: 72px !important;
+                    height: 72px !important;
+                    min-width: 72px !important;
+                    max-width: 72px !important;
+                    min-height: 72px !important;
+                    max-height: 72px !important;
+                    padding: 0 !important;
+                    border-radius: 50% !important;
+                    background: rgba(40, 40, 40, 0.8) !important;
+                    backdrop-filter: blur(10px) !important;
+                    -webkit-backdrop-filter: blur(10px) !important;
+                    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5) !important;
+                    border: 2px solid rgba(255, 255, 255, 0.25) !important;
+                    color: #fff !important;
+                    font-weight: 600 !important;
+                    font-size: 11px !important;
+                    display: flex !important;
+                    flex-direction: column !important;
+                    align-items: center !important;
+                    justify-content: center !important;
+                    transition: all 0.2s ease !important;
+                    touch-action: manipulation !important;
+                    -webkit-tap-highlight-color: transparent !important;
+                    overflow: hidden !important;
+                    box-sizing: border-box !important;
+                }
+                
+                body.clm-mobile-gallery .clm-gallery-actions .clm-gallery-download-btn:active {
+                    transform: scale(0.9) !important;
+                    background: rgba(60, 60, 60, 0.9) !important;
+                }
+                
+                body.clm-mobile-gallery .clm-gallery-actions .clm-gallery-download-btn:disabled {
+                    opacity: 0.5 !important;
+                    cursor: not-allowed !important;
+                }
+                
+                /* 手机端：下载窗口占满全屏 */
+                body.clm-mobile-gallery .clm-gallery-download-preview {
+                    inset: 0 !important;
+                    border-radius: 0 !important;
+                }
+                
+                /* 使用媒体查询确保手机端下载窗口全屏 */
+                @media (max-width: 768px) {
+                    .clm-gallery-download-preview {
+                        position: fixed !important;
+                        inset: 0 !important;
+                        top: 0 !important;
+                        left: 0 !important;
+                        right: 0 !important;
+                        bottom: 0 !important;
+                        width: 100vw !important;
+                        height: 100vh !important;
+                        border-radius: 0 !important;
+                        margin: 0 !important;
+                    }
+                }
+                
+                /* 手机端：preset-picker适配小屏幕 */
+                body.clm-mobile-gallery .clm-preset-picker {
+                    width: 95vw !important;
+                    max-width: 95vw !important;
+                    margin: 10px !important;
+                }
+                
+                /* 品质徽章 */
+                .clm-gallery-quality {
+                    position: fixed !important;
+                    top: 60px !important;
+                    left: 12px !important;
+                    z-index: 100002 !important;
+                    font-size: 11px !important;
+                    padding: 4px 8px !important;
+                    border-radius: 6px !important;
+                    background: rgba(0, 0, 0, 0.7) !important;
+                    color: #fff !important;
+                    backdrop-filter: blur(8px) !important;
+                    -webkit-backdrop-filter: blur(8px) !important;
+                }
+                
+                /* 下载预览面板 */
+                @media (min-width: 769px) {
+                    body:not(.clm-mobile-gallery) .clm-gallery-download-preview {
+                        position: fixed !important;
+                        left: 50% !important;
+                        top: 50% !important;
+                        transform: translate(-50%, -50%) !important;
+                        width: 90vw !important;
+                        max-width: 500px !important;
+                        max-height: 80vh !important;
+                        padding: 20px !important;
+                        background: rgba(0, 0, 0, 0.95) !important;
+                        backdrop-filter: blur(15px) !important;
+                        -webkit-backdrop-filter: blur(15px) !important;
+                        border-radius: 16px !important;
+                        z-index: 100004 !important;
+                        overflow-y: auto !important;
+                        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6) !important;
+                    }
+                }
+                
+                .clm-gallery-download-preview h3 {
+                    font-size: 18px !important;
+                    margin-bottom: 16px !important;
+                    color: #fff !important;
+                }
+                
+                .clm-gallery-download-preview .clm-download-item {
+                    padding: 12px !important;
+                    margin-bottom: 12px !important;
+                    font-size: 14px !important;
+                }
+                
+                .clm-gallery-download-preview button {
+                    padding: 12px 18px !important;
+                    font-size: 15px !important;
+                    min-height: 48px !important;
+                    border-radius: 12px !important;
+                    touch-action: manipulation !important;
+                    -webkit-tap-highlight-color: transparent !important;
+                }
+                
+                .clm-gallery-download-preview button:active {
+                    transform: scale(0.97) !important;
+                }
+                
+                /* 点击指示器动画 */
+                @keyframes tapFade {
+                    0% {
+                        opacity: 0;
+                        transform: translateY(-50%) scale(0.5);
+                    }
+                    50% {
+                        opacity: 1;
+                        transform: translateY(-50%) scale(1);
+                    }
+                    100% {
+                        opacity: 0;
+                        transform: translateY(-50%) scale(1.2);
+                    }
+                }
+            `);
+            injectStyle(`
+                /* 主题内容抽屉内边距：顶部保留空隙，底部尽量贴近屏幕 */
+                body.clm-mobile-gallery .clm-gallery-panel-topic {
+                    padding: 0 0 0 !important; /* 减小左右留白，让内容更居中 */
+                }
+
+                body.clm-mobile-gallery .clm-gallery-panel-topic .clm-gallery-panel-body {
+                    padding: 24px 16px 12px !important; /* 顶部 24px，左右 16px，底部 12px，更接近屏幕底部且留出左右空隙 */
+                    overflow-x: hidden !important; /* 禁止出现左右滚动条 */
+                }
+
+                /* 主题内容：去掉内部卡片感，占满抽屉宽度，避免左侧/底部空白 */
+                body.clm-mobile-gallery .clm-gallery-panel-topic .clm-panel-entry {
+                    background: transparent !important;
+                    border-radius: 0 !important;
+                    padding: 0 0 8px !important;
+                    margin: 0 !important;
+                    width: 100% !important;
+                }
+
+                body.clm-mobile-gallery .clm-gallery-panel-topic .clm-panel-entry-title {
+                    margin-bottom: 6px !important;
+                }
+
+                body.clm-mobile-gallery .clm-gallery-panel-topic .clm-panel-entry-title-tags {
+                    margin-bottom: 4px !important;
+                }
+
+                body.clm-mobile-gallery .clm-gallery-panel-topic .clm-panel-entry-title-tag {
+                    text-shadow: none !important;
+                }
+
+                /* 标题文字使用浅色并带阴影，适配深色毛玻璃背景 */
+                body.clm-mobile-gallery .clm-gallery-panel-topic .clm-panel-entry-title-text {
+                    color: #f9fafb !important;
+                    text-shadow: 0 2px 6px rgba(0, 0, 0, 0.9) !important;
+                }
+
+                /* 去掉 tips 的上边框，避免在抽屉顶部看到一条“分割线” */
+                body.clm-mobile-gallery .clm-gallery-panel-topic .clm-panel-entry-tips {
+                    border-top: none !important;
+                    padding-top: 0 !important;
+                    margin-top: 8px !important;
+                    color: #e5e7eb !important;
+                }
+
+                /* 折叠状态下不再强制 25vh 高度，只让内容自己决定高度 */
+                body.clm-mobile-gallery .clm-gallery-panel-topic.clm-topic-collapsed {
+                    min-height: 25vh !important;
+                    max-height: 25vh !important;
+                }
+
+                /* 画廊 viewer 区域禁止文本选中和图片拖动，避免拖动时出现选中效果 */
+                body.clm-mobile-gallery .clm-gallery-viewer,
+                body.clm-mobile-gallery .clm-gallery-viewer * {
+                    -webkit-user-select: none !important;
+                    user-select: none !important;
+                }
+
+                body.clm-mobile-gallery .clm-gallery-viewer img {
+                    -webkit-user-drag: none !important;
+                    user-drag: none !important;
+                }
+
+                /* 评论抽屉：白底深色文字，提升可读性 */
+                body.clm-mobile-gallery .clm-gallery-panel-comments.clm-comments-expanded {
+                    background: rgba(255, 255, 255, 0.98) !important;
+                }
+
+                body.clm-mobile-gallery .clm-gallery-panel-comments.clm-comments-expanded .clm-gallery-panel-body {
+                    background: rgba(245, 245, 245, 0.95) !important;
+                    border-radius: 12px !important;
+                    overflow: hidden !important;
+                }
+
+                body.clm-mobile-gallery .clm-gallery-panel-comments.clm-comments-expanded .clm-gallery-panel-header {
+                    color: #333 !important;
+                }
+
+                /* 手机端评论弹窗右上角关闭按钮样式 */
+                body.clm-mobile-gallery .clm-mobile-comment-close {
+                    font-size: 22px !important;
+                    margin-left: auto !important;
+                    cursor: pointer !important;
+                    padding: 0 6px !important;
+                    color: #666 !important;
+                }
+
+                body.clm-mobile-gallery .clm-mobile-comment-close:active {
+                    transform: scale(0.9) !important;
+                }
+
+
+                body.clm-mobile-gallery .clm-gallery-panel-comments .clm-panel-entry-user {
+                    color: #666 !important;
+                }
+
+                body.clm-mobile-gallery .clm-gallery-panel-comments .clm-panel-entry-content {
+                    color: #333 !important;
+                }
+
+                body.clm-mobile-gallery .clm-gallery-panel-comments.clm-comments-expanded .clm-gallery-panel-body .clm-panel-entry-user {
+                    color: #666 !important;
+                }
+
+                body.clm-mobile-gallery .clm-gallery-panel-comments.clm-comments-expanded .clm-gallery-panel-body .clm-panel-entry-content,
+                body.clm-mobile-gallery .clm-gallery-panel-comments.clm-comments-expanded .clm-gallery-panel-body .clm-panel-entry-text {
+                    color: #333 !important;
+                }
+
+
+                body.clm-mobile-gallery .clm-gallery-close {
+                    top: 12px !important;
+                    right: 12px !important;
+                }
+            `);
+        }
+
+        /**
+         * -------------------------------
+         *   全局：右下角設置面板 & qBittorrent
+         * -------------------------------
+         */
+
+        const STORAGE_KEY = '草榴ManagerSettings';
+
+        const DEFAULT_SETTINGS = {
+            qb: {
+                enabled: false,
+                baseUrl: '',
+                username: '',
+                password: '',
+                defaultCategory: '',
+                savePresets: [
+                    {
+                        id: 'default',
+                        name: '預設下載目錄',
+                        savePath: '',
+                        tags: ''
+                    }
+                ]
+            },
+            webdav: {
+                enabled: false,
+                url: '',
+                username: '',
+                password: ''
+            }
+        };
+
+        function loadSettings() {
+            let settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
+            try {
+                const raw = localStorage.getItem(STORAGE_KEY);
+                if (raw) {
+                    const parsed = JSON.parse(raw);
+                    if (parsed && typeof parsed === 'object') {
+                        if (parsed.qb) {
+                            Object.assign(settings.qb, parsed.qb);
+                            if (Array.isArray(parsed.qb.savePresets)) {
+                                settings.qb.savePresets = parsed.qb.savePresets.map((preset) => Object.assign({}, preset));
+                            }
+                        }
+                        if (parsed.webdav) {
+                            Object.assign(settings.webdav, parsed.webdav);
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error('草榴Manager: 設置讀取失敗，使用默認值', e);
+                settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
+            }
+            normalizeSavePresets(settings);
+            return settings;
+        }
+
+        function saveSettings(settings) {
+            try {
+                if (settings && typeof settings === 'object') {
+                    settings.updatedAt = Date.now();
+                    if (settings.webdav) {
+                        delete settings.webdav.username;
+                        delete settings.webdav.password;
+                    }
+                }
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+            } catch (e) {
+                console.error('草榴Manager: 設置保存失敗', e);
+            }
+        }
+
+        function normalizeSavePresets(settings) {
+            const list = Array.isArray(settings.qb.savePresets) ? settings.qb.savePresets : [];
+            if (!list.length) {
+                settings.qb.savePresets = DEFAULT_SETTINGS.qb.savePresets.map((preset) => Object.assign({}, preset));
+                return;
+            }
+            let mutated = false;
+            settings.qb.savePresets = list.map((preset, index) => {
+                const cloned = Object.assign({}, preset);
+                if (!cloned.id) {
+                    cloned.id = index === 0 ? 'default' : `preset_${Date.now()}_${index}`;
+                    mutated = true;
+                }
+                return cloned;
+            });
+            if (mutated) {
+                saveSettings(settings);
+            }
+        }
+
+        /**
+         * 向頁面注入右下角的設置按鈕與面板
+         */
+        function createSettingsUI() {
+            injectStyle(`
+                .clm-settings-btn {
+                    position: fixed;
+                    right: 16px;
+                    bottom: 16px;
+                    z-index: 10001;
+                    background: rgba(0, 0, 0, 0.7);
+                    color: #fff;
+                    border-radius: 20px;
+                    padding: 10px 18px;
+                    cursor: pointer;
+                    font-size: 16px;
+                    line-height: 1.4;
+                    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+                    user-select: none;
+                }
+                .clm-settings-btn.clm-settings-btn-hidden {
+                    opacity: 0;
+                    pointer-events: none;
+                }
+                .clm-settings-btn:hover {
+                    background: rgba(0, 0, 0, 0.85);
+                }
+                .clm-settings-panel-mask {
+                    position: fixed;
+                    inset: 0;
+                    background: rgba(0, 0, 0, 0.4);
+                    z-index: 10000;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                }
+                .clm-settings-panel {
+                    width: 420px;
+                    max-width: 95vw;
+                    max-height: 85vh;
+                    background: #f5f5f5;
+                    color: #333;
+                    border-radius: 8px;
+                    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+                    font-size: 12px;
+                    display: flex;
+                    flex-direction: column;
+                }
+                .clm-settings-header {
+                    padding: 10px 12px;
+                    border-bottom: 1px solid #ddd;
+                    font-weight: bold;
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    background: #fafafa;
+                }
+                .clm-settings-close {
+                    cursor: pointer;
+                    padding: 0 6px;
+                }
+                .clm-settings-body {
+                    padding: 10px 12px;
+                    overflow: auto;
+                }
+                .clm-settings-footer {
+                    padding: 8px 12px;
+                    border-top: 1px solid #ddd;
+                    text-align: right;
+                    background: #fafafa;
+                }
+                .clm-form-row {
+                    margin-bottom: 8px;
+                }
+                .clm-form-row label {
+                    display: block;
+                    margin-bottom: 2px;
+                    font-weight: bold;
+                }
+                .clm-form-row input[type="text"],
+                .clm-form-row input[type="password"] {
+                    width: 100%;
+                    box-sizing: border-box;
+                    padding: 4px 6px;
+                    border: 1px solid #ccc;
+                    border-radius: 3px;
+                    font-size: 12px;
+                }
+                .clm-form-row input[type="checkbox"] {
+                    margin-right: 4px;
+                }
+                .clm-presets-list {
+                    border: 1px solid #ddd;
+                    border-radius: 4px;
+                    padding: 6px;
+                    background: #fff;
+                    max-height: 200px;
+                    overflow: auto;
+                }
+                .clm-test-row {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                }
+                .clm-test-status {
+                    font-size: 11px;
+                    color: #555;
+                }
+                .clm-test-status.clm-ok {
+                    color: #15803d;
+                }
+                .clm-test-status.clm-failed {
+                    color: #b91c1c;
+                }
+                .clm-preset-item {
+                    border-bottom: 1px dashed #eee;
+                    padding-bottom: 6px;
+                    margin-bottom: 6px;
+                }
+                .clm-preset-item:last-child {
+                    border-bottom: none;
+                    padding-bottom: 0;
+                    margin-bottom: 0;
+                }
+                .clm-preset-item-header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    margin-bottom: 4px;
+                    font-weight: bold;
+                }
+                .clm-small-btn {
+                    display: inline-block;
+                    padding: 2px 6px;
+                    font-size: 11px;
+                    border-radius: 3px;
+                    border: 1px solid #aaa;
+                    background: #f7f7f7;
+                    cursor: pointer;
+                    margin-left: 4px;
+                }
+                .clm-small-btn:hover {
+                    background: #eee;
+                }
+                .clm-primary-btn {
+                    border-color: #2b7cff;
+                    background: #2b7cff;
+                    color: #fff;
+                }
+                .clm-primary-btn:hover {
+                    background: #1f5ecc;
+                }
+                .clm-log-toolbar {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    margin-bottom: 4px;
+                }
+                .clm-log-box {
+                    max-height: 160px;
+                    overflow: auto;
+                    border: 1px solid #ddd;
+                    border-radius: 4px;
+                    padding: 6px;
+                    background: #fff;
+                    font-family: Consolas, monospace;
+                    font-size: 11px;
+                    line-height: 1.5;
+                }
+                .clm-log-entry {
+                    display: flex;
+                    gap: 6px;
+                    border-bottom: 1px dotted #eee;
+                    padding: 2px 0;
+                }
+                .clm-log-entry:last-child {
+                    border-bottom: none;
+                }
+                .clm-log-time {
+                    color: #6b7280;
+                    flex: 0 0 52px;
+                }
+                .clm-log-message {
+                    flex: 1;
+                    color: #111827;
+                }
+                .clm-log-entry.clm-log-info .clm-log-message {
+                    color: #1f2937;
+                }
+                .clm-log-entry.clm-log-success .clm-log-message {
+                    color: #15803d;
+                }
+                .clm-log-entry.clm-log-warning .clm-log-message {
+                    color: #b45309;
+                }
+                .clm-log-entry.clm-log-error .clm-log-message {
+                    color: #b91c1c;
+                }
+                .clm-log-empty {
+                    color: #9ca3af;
+                    text-align: center;
+                    padding: 8px 0;
+                }
+                .clm-transfer-textarea {
+                    width: 100%;
+                    box-sizing: border-box;
+                    padding: 6px 8px;
+                    border: 1px solid #ccc;
+                    border-radius: 4px;
+                    font-size: 11px;
+                    font-family: Consolas, monospace;
+                    resize: vertical;
+                    min-height: 100px;
+                    background: #fff;
+                }
+                .clm-transfer-buttons {
+                    display: flex;
+                    gap: 8px;
+                    margin-top: 6px;
+                }
+            `);
+
+            const btn = document.createElement('div');
+            btn.className = 'clm-settings-btn';
+            btn.textContent = '草榴Manager 設置';
+            btn.addEventListener('click', () => {
+                btn.classList.add('clm-settings-btn-hidden');
+                openSettingsPanel();
+            });
+            document.body.appendChild(btn);
+        }
+
+        function openSettingsPanel() {
+            const settings = loadSettings();
+            const settingsBtn = document.querySelector('.clm-settings-btn');
+            let logUnsubscribe = null;
+            let connectivityStatusEl = null;
+            let webdavStatusEl = null;
+            const webdavAuth = loadWebdavAuth();
+            const webdavAuthDraft = {
+                username: (webdavAuth && webdavAuth.username) || settings.webdav.username || '',
+                password: (webdavAuth && webdavAuth.password) || settings.webdav.password || ''
+            };
+            settings.webdav.username = webdavAuthDraft.username;
+            settings.webdav.password = webdavAuthDraft.password;
+
+            function buildSettingsTransferSnapshot() {
+                const cloned = JSON.parse(JSON.stringify(settings));
+                if (cloned.webdav) {
+                    delete cloned.webdav.username;
+                    delete cloned.webdav.password;
+                }
+                return cloned;
+            }
+            function clearConnectivityStatus() {
+                if (!connectivityStatusEl) return;
+                connectivityStatusEl.textContent = '';
+                connectivityStatusEl.classList.remove('clm-ok', 'clm-failed');
+            }
+
+            const mask = document.createElement('div');
+            mask.className = 'clm-settings-panel-mask';
+
+            const panel = document.createElement('div');
+            panel.className = 'clm-settings-panel';
+
+            function closePanel() {
+                if (logUnsubscribe) {
+                    logUnsubscribe();
+                    logUnsubscribe = null;
+                }
+                if (settingsBtn) {
+                    settingsBtn.classList.remove('clm-settings-btn-hidden');
+                }
+                mask.remove();
+            }
+
+            const header = document.createElement('div');
+            header.className = 'clm-settings-header';
+            header.innerHTML = '<span>草榴Manager 設置</span>';
+
+            const closeBtn = document.createElement('span');
+            closeBtn.className = 'clm-settings-close';
+            closeBtn.textContent = '✕';
+            closeBtn.addEventListener('click', () => {
+                closePanel();
+            });
+            header.appendChild(closeBtn);
+
+            const body = document.createElement('div');
+            body.className = 'clm-settings-body';
+
+            // qBittorrent 開關
+            const rowEnable = document.createElement('div');
+            rowEnable.className = 'clm-form-row';
+            const enableLabel = document.createElement('label');
+            const enableCheckbox = document.createElement('input');
+            enableCheckbox.type = 'checkbox';
+            enableCheckbox.checked = !!settings.qb.enabled;
+            enableCheckbox.addEventListener('change', () => clearConnectivityStatus());
+            enableLabel.appendChild(enableCheckbox);
+            enableLabel.appendChild(document.createTextNode('啟用 qBittorrent 集成'));
+            rowEnable.appendChild(enableLabel);
+            body.appendChild(rowEnable);
+
+            // 基本連接信息
+            body.appendChild(createInputRow('qBittorrent WebUI 地址（如：http://127.0.0.1:8080）', settings.qb.baseUrl, (val) => {
+                settings.qb.baseUrl = val.trim();
+                clearConnectivityStatus();
+            }));
+            body.appendChild(createInputRow('qBittorrent 用戶名', settings.qb.username, (val) => {
+                settings.qb.username = val.trim();
+                clearConnectivityStatus();
+            }));
+
+            const rowPwd = document.createElement('div');
+            rowPwd.className = 'clm-form-row';
+            const pwdLabel = document.createElement('label');
+            pwdLabel.textContent = 'qBittorrent 密碼';
+            const pwdInput = document.createElement('input');
+            pwdInput.type = 'password';
+            pwdInput.value = settings.qb.password || '';
+            pwdInput.addEventListener('input', () => {
+                settings.qb.password = pwdInput.value;
+                clearConnectivityStatus();
+            });
+            rowPwd.appendChild(pwdLabel);
+            rowPwd.appendChild(pwdInput);
+            body.appendChild(rowPwd);
+
+            body.appendChild(createInputRow('統一分類（category）', settings.qb.defaultCategory, (val) => {
+                settings.qb.defaultCategory = val.trim();
+                clearConnectivityStatus();
+            }));
+
+            const testRow = document.createElement('div');
+            testRow.className = 'clm-form-row clm-test-row';
+            const testBtn = document.createElement('button');
+            testBtn.type = 'button';
+            testBtn.className = 'clm-small-btn';
+            testBtn.textContent = '測試連通性';
+            const testStatus = document.createElement('span');
+            testStatus.className = 'clm-test-status';
+            connectivityStatusEl = testStatus;
+            testBtn.addEventListener('click', async () => {
+                clearConnectivityStatus();
+                testBtn.disabled = true;
+                testBtn.textContent = '測試中…';
+                try {
+                    const snapshot = JSON.parse(JSON.stringify(settings));
+                    snapshot.qb.enabled = enableCheckbox.checked;
+                    const version = await testQbittorrentConnectivity(snapshot);
+                    testStatus.textContent = '連通成功，版本：' + version;
+                    testStatus.classList.add('clm-ok');
+                } catch (err) {
+                    testStatus.textContent = '連通失敗：' + (err?.message || err);
+                    testStatus.classList.add('clm-failed');
+                } finally {
+                    testBtn.disabled = false;
+                    testBtn.textContent = '測試連通性';
+                }
+            });
+            testRow.appendChild(testBtn);
+            testRow.appendChild(testStatus);
+            body.appendChild(testRow);
+
+            // 多個儲存位置預設
+            const presetsRow = document.createElement('div');
+            presetsRow.className = 'clm-form-row';
+            const presetsLabel = document.createElement('label');
+            presetsLabel.textContent = '儲存位置預設（可為每個路徑設置標籤）';
+            presetsRow.appendChild(presetsLabel);
+
+            const presetsWrap = document.createElement('div');
+            presetsWrap.className = 'clm-presets-list';
+
+            function renderPresets() {
+                presetsWrap.innerHTML = '';
+                settings.qb.savePresets.forEach((preset, index) => {
+                    const item = document.createElement('div');
+                    item.className = 'clm-preset-item';
+
+                    const header = document.createElement('div');
+                    header.className = 'clm-preset-item-header';
+                    const title = document.createElement('span');
+                    title.textContent = preset.name || ('預設路徑 ' + (index + 1));
+                    const deleteBtn = document.createElement('span');
+                    deleteBtn.className = 'clm-small-btn';
+                    deleteBtn.textContent = '刪除';
+                    deleteBtn.addEventListener('click', () => {
+                        if (settings.qb.savePresets.length <= 1) {
+                            alert('至少保留一個儲存位置。');
+                            return;
+                        }
+                        settings.qb.savePresets.splice(index, 1);
+                        renderPresets();
+                    });
+                    header.appendChild(title);
+                    header.appendChild(deleteBtn);
+                    item.appendChild(header);
+
+                    item.appendChild(createInputRow('名稱', preset.name, (val) => {
+                        preset.name = val;
+                        title.textContent = val || ('預設路徑 ' + (index + 1));
+                    }));
+                    item.appendChild(createInputRow('儲存路徑（savepath）', preset.savePath, (val) => {
+                        preset.savePath = val;
+                    }));
+                    item.appendChild(createInputRow('標籤（tags，逗號分隔）', preset.tags, (val) => {
+                        preset.tags = val;
+                    }));
+
+                    presetsWrap.appendChild(item);
+                });
+            }
+
+            renderPresets();
+
+            const addPresetBtn = document.createElement('button');
+            addPresetBtn.className = 'clm-small-btn';
+            addPresetBtn.textContent = '新增儲存位置';
+            addPresetBtn.addEventListener('click', () => {
+                const id = 'preset_' + Date.now();
+                settings.qb.savePresets.push({
+                    id,
+                    name: '新建儲存位置',
+                    savePath: '',
+                    tags: ''
+                });
+                renderPresets();
+            });
+
+            presetsRow.appendChild(presetsWrap);
+            presetsRow.appendChild(addPresetBtn);
+            body.appendChild(presetsRow);
+
+            const webdavEnableRow = document.createElement('div');
+            webdavEnableRow.className = 'clm-form-row';
+            const webdavEnableLabel = document.createElement('label');
+            const webdavEnableCheckbox = document.createElement('input');
+            webdavEnableCheckbox.type = 'checkbox';
+            webdavEnableCheckbox.checked = !!settings.webdav.enabled;
+            webdavEnableCheckbox.addEventListener('change', () => {
+                settings.webdav.enabled = !!webdavEnableCheckbox.checked;
+            });
+            webdavEnableLabel.appendChild(webdavEnableCheckbox);
+            webdavEnableLabel.appendChild(document.createTextNode('啟用 WebDAV 同步（已下載/瀏覽記錄與設置）'));
+            webdavEnableRow.appendChild(webdavEnableLabel);
+            body.appendChild(webdavEnableRow);
+
+            body.appendChild(createInputRow('WebDAV 目錄地址（例如：https://example.com/webdav/）', settings.webdav.url, (val) => {
+                settings.webdav.url = val.trim();
+            }));
+
+            body.appendChild(createInputRow('WebDAV 用戶名', settings.webdav.username, (val) => {
+                const v = val.trim();
+                settings.webdav.username = v;
+                webdavAuthDraft.username = v;
+            }));
+
+            const webdavPwdRow = document.createElement('div');
+            webdavPwdRow.className = 'clm-form-row';
+            const webdavPwdLabel = document.createElement('label');
+            webdavPwdLabel.textContent = 'WebDAV 密碼';
+            const webdavPwdInput = document.createElement('input');
+            webdavPwdInput.type = 'password';
+            webdavPwdInput.value = webdavAuthDraft.password || '';
+            webdavPwdInput.addEventListener('input', () => {
+                settings.webdav.password = webdavPwdInput.value;
+                webdavAuthDraft.password = webdavPwdInput.value;
+            });
+            webdavPwdRow.appendChild(webdavPwdLabel);
+            webdavPwdRow.appendChild(webdavPwdInput);
+            body.appendChild(webdavPwdRow);
+
+            const webdavSyncRow = document.createElement('div');
+            webdavSyncRow.className = 'clm-form-row clm-test-row';
+            const webdavSyncBtn = document.createElement('button');
+            webdavSyncBtn.type = 'button';
+            webdavSyncBtn.className = 'clm-small-btn';
+            webdavSyncBtn.textContent = '立即同步 WebDAV';
+            const webdavStatus = document.createElement('span');
+            webdavStatus.className = 'clm-test-status';
+            webdavStatusEl = webdavStatus;
+            webdavSyncBtn.addEventListener('click', async () => {
+                webdavStatus.textContent = '';
+                webdavSyncBtn.disabled = true;
+                webdavSyncBtn.textContent = '同步中…';
+                try {
+                    saveWebdavAuth(webdavAuthDraft);
+                    const ok = await syncDownloadRecordsWithWebdav({
+                        silent: false,
+                        statusCallback: (msg) => {
+                            if (webdavStatusEl) {
+                                webdavStatusEl.textContent = msg;
+                            }
+                        }
+                    });
+                    if (!ok && webdavStatusEl && !webdavStatusEl.textContent) {
+                        webdavStatusEl.textContent = '同步未完成，請檢查日誌或提示。';
+                    }
+                } finally {
+                    webdavSyncBtn.disabled = false;
+                    webdavSyncBtn.textContent = '立即同步 WebDAV';
+                }
+            });
+            webdavSyncRow.appendChild(webdavSyncBtn);
+            webdavSyncRow.appendChild(webdavStatus);
+            body.appendChild(webdavSyncRow);
+
+            const webdavSafeNote = document.createElement('div');
+            webdavSafeNote.className = 'clm-test-status';
+            webdavSafeNote.textContent = '安全說明：WebDAV 賬號密碼在保存前會使用本機固定密鑰進行 XOR+Base64 對稱加密，僅存放於瀏覽器本地（腳本存儲 / localStorage），主要用於避免明文直接暴露；不會寫入同步到 WebDAV 的數據文件，也不會發送給除目標 WebDAV 服務以外的第三方。請避免在公共或不可信設備上保存密碼。';
+            body.appendChild(webdavSafeNote);
+
+            function openQbLogDialog() {
+                const logMask = document.createElement('div');
+                logMask.className = 'clm-settings-panel-mask';
+
+                const logPanel = document.createElement('div');
+                logPanel.className = 'clm-settings-panel';
+
+                const logHeader = document.createElement('div');
+                logHeader.className = 'clm-settings-header';
+                logHeader.innerHTML = '<span>qBittorrent 調試日誌</span>';
+
+                const logClose = document.createElement('span');
+                logClose.className = 'clm-settings-close';
+                logClose.textContent = '✕';
+                logHeader.appendChild(logClose);
+
+                const logBody = document.createElement('div');
+                logBody.className = 'clm-settings-body';
+
+                const logToolbar = document.createElement('div');
+                logToolbar.className = 'clm-log-toolbar';
+                const logHint = document.createElement('span');
+                logHint.textContent = '僅保留最近 80 條記錄';
+                const clearLogBtn = document.createElement('button');
+                clearLogBtn.type = 'button';
+                clearLogBtn.className = 'clm-small-btn';
+                clearLogBtn.textContent = '清空日誌';
+                clearLogBtn.addEventListener('click', () => {
+                    clearQbLogs();
+                    showToast('日志已清空', 'success');
+                });
+                logToolbar.appendChild(logHint);
+                logToolbar.appendChild(clearLogBtn);
+                logBody.appendChild(logToolbar);
+
+                const logBox = document.createElement('div');
+                logBox.className = 'clm-log-box';
+                logBody.appendChild(logBox);
+
+                function renderLogs(entries) {
+                    const logs = (entries || getQbLogs()).slice().reverse();
+                    logBox.innerHTML = '';
+                    if (!logs.length) {
+                        const empty = document.createElement('div');
+                        empty.className = 'clm-log-empty';
+                        empty.textContent = '暫無日誌';
+                        logBox.appendChild(empty);
+                        return;
+                    }
+                    logs.forEach((log) => {
+                        const item = document.createElement('div');
+                        item.className = `clm-log-entry clm-log-${log.level || 'info'}`;
+
+                        const timeEl = document.createElement('span');
+                        timeEl.className = 'clm-log-time';
+                        timeEl.textContent = formatLogTime(log.time);
+
+                        const msgEl = document.createElement('span');
+                        msgEl.className = 'clm-log-message';
+                        msgEl.textContent = log.message;
+
+                        item.appendChild(timeEl);
+                        item.appendChild(msgEl);
+                        logBox.appendChild(item);
+                    });
+                }
+                renderLogs();
+
+                if (logUnsubscribe) {
+                    logUnsubscribe();
+                    logUnsubscribe = null;
+                }
+                logUnsubscribe = subscribeQbLogs(renderLogs);
+
+                function closeLogDialog() {
+                    if (logUnsubscribe) {
+                        logUnsubscribe();
+                        logUnsubscribe = null;
+                    }
+                    if (logMask.parentNode) {
+                        logMask.parentNode.removeChild(logMask);
+                    }
+                }
+
+                logClose.addEventListener('click', () => {
+                    closeLogDialog();
+                });
+                logMask.addEventListener('click', (e) => {
+                    if (e.target === logMask) {
+                        closeLogDialog();
+                    }
+                });
+
+                logPanel.appendChild(logHeader);
+                logPanel.appendChild(logBody);
+                logMask.appendChild(logPanel);
+                document.body.appendChild(logMask);
+            }
+
+            const logRow = document.createElement('div');
+            logRow.className = 'clm-form-row';
+            const logLabel = document.createElement('label');
+            logLabel.textContent = 'qBittorrent 調試日誌';
+            logRow.appendChild(logLabel);
 
             const logToolbar = document.createElement('div');
             logToolbar.className = 'clm-log-toolbar';
             const logHint = document.createElement('span');
             logHint.textContent = '僅保留最近 80 條記錄';
-            const clearLogBtn = document.createElement('button');
-            clearLogBtn.type = 'button';
-            clearLogBtn.className = 'clm-small-btn';
-            clearLogBtn.textContent = '清空日誌';
-            clearLogBtn.addEventListener('click', () => {
-                clearQbLogs();
-                showToast('日志已清空', 'success');
+            const openLogBtn = document.createElement('button');
+            openLogBtn.type = 'button';
+            openLogBtn.className = 'clm-small-btn';
+            openLogBtn.textContent = '打開日誌彈窗';
+            openLogBtn.addEventListener('click', () => {
+                openQbLogDialog();
             });
             logToolbar.appendChild(logHint);
-            logToolbar.appendChild(clearLogBtn);
-            logBody.appendChild(logToolbar);
+            logToolbar.appendChild(openLogBtn);
+            logRow.appendChild(logToolbar);
 
-            const logBox = document.createElement('div');
-            logBox.className = 'clm-log-box';
-            logBody.appendChild(logBox);
+            body.appendChild(logRow);
 
-            function renderLogs(entries) {
-                const logs = (entries || getQbLogs()).slice().reverse();
-                logBox.innerHTML = '';
-                if (!logs.length) {
-                    const empty = document.createElement('div');
-                    empty.className = 'clm-log-empty';
-                    empty.textContent = '暫無日誌';
-                    logBox.appendChild(empty);
-                    return;
-                }
-                logs.forEach((log) => {
-                    const item = document.createElement('div');
-                    item.className = `clm-log-entry clm-log-${log.level || 'info'}`;
+            // 設置轉移功能
+            const transferRow = document.createElement('div');
+            transferRow.className = 'clm-form-row';
+            const transferLabel = document.createElement('label');
+            transferLabel.textContent = '設置轉移';
+            transferRow.appendChild(transferLabel);
 
-                    const timeEl = document.createElement('span');
-                    timeEl.className = 'clm-log-time';
-                    timeEl.textContent = formatLogTime(log.time);
+            const transferHint = document.createElement('div');
+            transferHint.style.fontSize = '11px';
+            transferHint.style.color = '#666';
+            transferHint.style.marginBottom = '6px';
+            transferHint.textContent = '將下方內容複製到另一台設備的此框內，即可轉移設置';
+            transferRow.appendChild(transferHint);
 
-                    const msgEl = document.createElement('span');
-                    msgEl.className = 'clm-log-message';
-                    msgEl.textContent = log.message;
-
-                    item.appendChild(timeEl);
-                    item.appendChild(msgEl);
-                    logBox.appendChild(item);
-                });
-            }
-            renderLogs();
-
-            if (logUnsubscribe) {
-                logUnsubscribe();
-                logUnsubscribe = null;
-            }
-            logUnsubscribe = subscribeQbLogs(renderLogs);
-
-            function closeLogDialog() {
-                if (logUnsubscribe) {
-                    logUnsubscribe();
-                    logUnsubscribe = null;
-                }
-                if (logMask.parentNode) {
-                    logMask.parentNode.removeChild(logMask);
-                }
-            }
-
-            logClose.addEventListener('click', () => {
-                closeLogDialog();
-            });
-            logMask.addEventListener('click', (e) => {
-                if (e.target === logMask) {
-                    closeLogDialog();
-                }
-            });
-
-            logPanel.appendChild(logHeader);
-            logPanel.appendChild(logBody);
-            logMask.appendChild(logPanel);
-            document.body.appendChild(logMask);
-        }
-
-        const logRow = document.createElement('div');
-        logRow.className = 'clm-form-row';
-        const logLabel = document.createElement('label');
-        logLabel.textContent = 'qBittorrent 調試日誌';
-        logRow.appendChild(logLabel);
-
-        const logToolbar = document.createElement('div');
-        logToolbar.className = 'clm-log-toolbar';
-        const logHint = document.createElement('span');
-        logHint.textContent = '僅保留最近 80 條記錄';
-        const openLogBtn = document.createElement('button');
-        openLogBtn.type = 'button';
-        openLogBtn.className = 'clm-small-btn';
-        openLogBtn.textContent = '打開日誌彈窗';
-        openLogBtn.addEventListener('click', () => {
-            openQbLogDialog();
-        });
-        logToolbar.appendChild(logHint);
-        logToolbar.appendChild(openLogBtn);
-        logRow.appendChild(logToolbar);
-
-        body.appendChild(logRow);
-
-        // 設置轉移功能
-        const transferRow = document.createElement('div');
-        transferRow.className = 'clm-form-row';
-        const transferLabel = document.createElement('label');
-        transferLabel.textContent = '設置轉移';
-        transferRow.appendChild(transferLabel);
-
-        const transferHint = document.createElement('div');
-        transferHint.style.fontSize = '11px';
-        transferHint.style.color = '#666';
-        transferHint.style.marginBottom = '6px';
-        transferHint.textContent = '將下方內容複製到另一台設備的此框內，即可轉移設置';
-        transferRow.appendChild(transferHint);
-
-        const transferTextarea = document.createElement('textarea');
-        transferTextarea.className = 'clm-transfer-textarea';
-        transferTextarea.value = JSON.stringify(buildSettingsTransferSnapshot(), null, 2);
-        transferRow.appendChild(transferTextarea);
-
-        const transferButtons = document.createElement('div');
-        transferButtons.className = 'clm-transfer-buttons';
-
-        const exportBtn = document.createElement('button');
-        exportBtn.type = 'button';
-        exportBtn.className = 'clm-small-btn';
-        exportBtn.textContent = '導出當前設置';
-        exportBtn.addEventListener('click', () => {
+            const transferTextarea = document.createElement('textarea');
+            transferTextarea.className = 'clm-transfer-textarea';
             transferTextarea.value = JSON.stringify(buildSettingsTransferSnapshot(), null, 2);
-            transferTextarea.select();
-            document.execCommand('copy');
-            showToast('設置已複製到剪貼板', 'success');
-        });
+            transferRow.appendChild(transferTextarea);
 
-        const importBtn = document.createElement('button');
-        importBtn.type = 'button';
-        importBtn.className = 'clm-small-btn clm-primary-btn';
-        importBtn.textContent = '導入設置';
-        importBtn.addEventListener('click', () => {
-            try {
-                const imported = JSON.parse(transferTextarea.value);
-                if (imported && typeof imported === 'object') {
-                    Object.assign(settings, imported);
-                    normalizeSavePresets(settings);
-                    showToast('設置導入成功，請點擊保存按鈕', 'success');
-                    // 刷新界面顯示
-                    transferTextarea.value = JSON.stringify(settings, null, 2);
-                } else {
-                    showToast('導入失敗：格式不正確', 'error');
-                }
-            } catch (e) {
-                showToast('導入失敗：' + e.message, 'error');
-            }
-        });
+            const transferButtons = document.createElement('div');
+            transferButtons.className = 'clm-transfer-buttons';
 
-        transferButtons.appendChild(exportBtn);
-        transferButtons.appendChild(importBtn);
-        transferRow.appendChild(transferButtons);
-
-        body.appendChild(transferRow);
-
-        const footer = document.createElement('div');
-        footer.className = 'clm-settings-footer';
-
-        const saveBtn = document.createElement('button');
-        saveBtn.className = 'clm-small-btn clm-primary-btn';
-        saveBtn.textContent = '保存並關閉';
-        saveBtn.addEventListener('click', () => {
-            settings.qb.enabled = enableCheckbox.checked;
-            saveSettings(settings);
-            if (settings.webdav) {
-                saveWebdavAuth(webdavAuthDraft);
-            }
-            if (settings.webdav && settings.webdav.enabled) {
-                scheduleWebdavSync();
-            }
-            closePanel();
-        });
-
-        const cancelBtn = document.createElement('button');
-        cancelBtn.className = 'clm-small-btn';
-        cancelBtn.textContent = '取消';
-        cancelBtn.addEventListener('click', () => {
-            closePanel();
-        });
-
-        footer.appendChild(cancelBtn);
-        footer.appendChild(saveBtn);
-
-        panel.appendChild(header);
-        panel.appendChild(body);
-        panel.appendChild(footer);
-
-        mask.appendChild(panel);
-        mask.addEventListener('click', (e) => {
-            if (e.target === mask) {
-                closePanel();
-            }
-        });
-
-        document.body.appendChild(mask);
-    }
-
-    function createInputRow(labelText, value, onChange) {
-        const row = document.createElement('div');
-        row.className = 'clm-form-row';
-        const label = document.createElement('label');
-        label.textContent = labelText;
-        const input = document.createElement('input');
-        input.type = 'text';
-        input.value = value || '';
-        input.addEventListener('input', () => {
-            onChange(input.value);
-        });
-        row.appendChild(label);
-        row.appendChild(input);
-        return row;
-    }
-
-    function openPresetPickerDialog(settingsOverride) {
-        const settings = settingsOverride || loadSettings();
-        normalizeSavePresets(settings);
-        const presets = Array.isArray(settings.qb.savePresets) ? settings.qb.savePresets : [];
-        if (!settings.qb.enabled) {
-            showToast('請先啟用 qBittorrent 集成。', 'warning');
-            return Promise.resolve(null);
-        }
-        if (!presets.length) {
-            showToast('請先在設置中新增至少一個儲存位置。', 'warning');
-            return Promise.resolve(null);
-        }
-        return new Promise((resolve) => {
-            const mask = document.createElement('div');
-            mask.className = 'clm-preset-picker-mask';
-
-            const panel = document.createElement('div');
-            panel.className = 'clm-preset-picker';
-            let finished = false;
-
-            const title = document.createElement('div');
-            title.className = 'clm-preset-picker-title';
-            title.textContent = '選擇儲存位置';
-            panel.appendChild(title);
-
-            const list = document.createElement('div');
-            list.className = 'clm-preset-picker-list';
-
-            presets.forEach((preset, index) => {
-                const option = document.createElement('button');
-                option.type = 'button';
-                option.className = 'clm-preset-picker-option';
-                const nameEl = document.createElement('strong');
-                nameEl.textContent = preset.name || ('預設路徑 ' + (index + 1));
-                const pathEl = document.createElement('span');
-                pathEl.textContent = preset.savePath || '使用 qBittorrent 默認路徑';
-                option.appendChild(nameEl);
-                option.appendChild(pathEl);
-                option.addEventListener('click', () => {
-                    finish(preset);
-                });
-                list.appendChild(option);
+            const exportBtn = document.createElement('button');
+            exportBtn.type = 'button';
+            exportBtn.className = 'clm-small-btn';
+            exportBtn.textContent = '導出當前設置';
+            exportBtn.addEventListener('click', () => {
+                transferTextarea.value = JSON.stringify(buildSettingsTransferSnapshot(), null, 2);
+                transferTextarea.select();
+                document.execCommand('copy');
+                showToast('設置已複製到剪貼板', 'success');
             });
 
-            panel.appendChild(list);
+            const importBtn = document.createElement('button');
+            importBtn.type = 'button';
+            importBtn.className = 'clm-small-btn clm-primary-btn';
+            importBtn.textContent = '導入設置';
+            importBtn.addEventListener('click', () => {
+                try {
+                    const imported = JSON.parse(transferTextarea.value);
+                    if (imported && typeof imported === 'object') {
+                        Object.assign(settings, imported);
+                        normalizeSavePresets(settings);
+                        showToast('設置導入成功，請點擊保存按鈕', 'success');
+                        // 刷新界面顯示
+                        transferTextarea.value = JSON.stringify(settings, null, 2);
+                    } else {
+                        showToast('導入失敗：格式不正確', 'error');
+                    }
+                } catch (e) {
+                    showToast('導入失敗：' + e.message, 'error');
+                }
+            });
+
+            transferButtons.appendChild(exportBtn);
+            transferButtons.appendChild(importBtn);
+            transferRow.appendChild(transferButtons);
+
+            body.appendChild(transferRow);
+
+            const footer = document.createElement('div');
+            footer.className = 'clm-settings-footer';
+
+            const saveBtn = document.createElement('button');
+            saveBtn.className = 'clm-small-btn clm-primary-btn';
+            saveBtn.textContent = '保存並關閉';
+            saveBtn.addEventListener('click', () => {
+                settings.qb.enabled = enableCheckbox.checked;
+                saveSettings(settings);
+                if (settings.webdav) {
+                    saveWebdavAuth(webdavAuthDraft);
+                }
+                if (settings.webdav && settings.webdav.enabled) {
+                    scheduleWebdavSync();
+                }
+                closePanel();
+            });
 
             const cancelBtn = document.createElement('button');
-            cancelBtn.type = 'button';
-            cancelBtn.className = 'clm-preset-picker-cancel';
+            cancelBtn.className = 'clm-small-btn';
             cancelBtn.textContent = '取消';
             cancelBtn.addEventListener('click', () => {
-                finish(null);
+                closePanel();
             });
-            panel.appendChild(cancelBtn);
+
+            footer.appendChild(cancelBtn);
+            footer.appendChild(saveBtn);
+
+            panel.appendChild(header);
+            panel.appendChild(body);
+            panel.appendChild(footer);
 
             mask.appendChild(panel);
+            mask.addEventListener('click', (e) => {
+                if (e.target === mask) {
+                    closePanel();
+                }
+            });
+
             document.body.appendChild(mask);
+        }
 
-            // 点击 mask 区域（但不是 panel）时关闭
-            mask.addEventListener('click', (ev) => {
-                if (ev.target === mask) {
+        function createInputRow(labelText, value, onChange) {
+            const row = document.createElement('div');
+            row.className = 'clm-form-row';
+            const label = document.createElement('label');
+            label.textContent = labelText;
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.value = value || '';
+            input.addEventListener('input', () => {
+                onChange(input.value);
+            });
+            row.appendChild(label);
+            row.appendChild(input);
+            return row;
+        }
+
+        function openPresetPickerDialog(settingsOverride) {
+            const settings = settingsOverride || loadSettings();
+            normalizeSavePresets(settings);
+            const presets = Array.isArray(settings.qb.savePresets) ? settings.qb.savePresets : [];
+            if (!settings.qb.enabled) {
+                showToast('請先啟用 qBittorrent 集成。', 'warning');
+                return Promise.resolve(null);
+            }
+            if (!presets.length) {
+                showToast('請先在設置中新增至少一個儲存位置。', 'warning');
+                return Promise.resolve(null);
+            }
+            return new Promise((resolve) => {
+                const mask = document.createElement('div');
+                mask.className = 'clm-preset-picker-mask';
+
+                const panel = document.createElement('div');
+                panel.className = 'clm-preset-picker';
+                let finished = false;
+
+                const title = document.createElement('div');
+                title.className = 'clm-preset-picker-title';
+                title.textContent = '選擇儲存位置';
+                panel.appendChild(title);
+
+                const list = document.createElement('div');
+                list.className = 'clm-preset-picker-list';
+
+                presets.forEach((preset, index) => {
+                    const option = document.createElement('button');
+                    option.type = 'button';
+                    option.className = 'clm-preset-picker-option';
+                    const nameEl = document.createElement('strong');
+                    nameEl.textContent = preset.name || ('預設路徑 ' + (index + 1));
+                    const pathEl = document.createElement('span');
+                    pathEl.textContent = preset.savePath || '使用 qBittorrent 默認路徑';
+                    option.appendChild(nameEl);
+                    option.appendChild(pathEl);
+                    option.addEventListener('click', () => {
+                        finish(preset);
+                    });
+                    list.appendChild(option);
+                });
+
+                panel.appendChild(list);
+
+                const cancelBtn = document.createElement('button');
+                cancelBtn.type = 'button';
+                cancelBtn.className = 'clm-preset-picker-cancel';
+                cancelBtn.textContent = '取消';
+                cancelBtn.addEventListener('click', () => {
                     finish(null);
+                });
+                panel.appendChild(cancelBtn);
+
+                mask.appendChild(panel);
+                document.body.appendChild(mask);
+
+                // 点击 mask 区域（但不是 panel）时关闭
+                mask.addEventListener('click', (ev) => {
+                    if (ev.target === mask) {
+                        finish(null);
+                    }
+                });
+                
+                // 阻止 panel 内的点击事件冒泡到 mask
+                panel.addEventListener('click', (ev) => {
+                    ev.stopPropagation();
+                });
+
+                function handleKeydown(ev) {
+                    if (ev.key === 'Escape') {
+                        ev.preventDefault();
+                        finish(null);
+                    }
                 }
+
+                function cleanup() {
+                    if (mask.parentNode) {
+                        mask.parentNode.removeChild(mask);
+                    }
+                    document.removeEventListener('keydown', handleKeydown);
+                }
+
+                function finish(result) {
+                    if (finished) return;
+                    finished = true;
+                    cleanup();
+                    resolve(result);
+                }
+
+                document.addEventListener('keydown', handleKeydown);
             });
-            
-            // 阻止 panel 内的点击事件冒泡到 mask
-            panel.addEventListener('click', (ev) => {
-                ev.stopPropagation();
-            });
+        }
 
-            function handleKeydown(ev) {
-                if (ev.key === 'Escape') {
-                    ev.preventDefault();
-                    finish(null);
-                }
+        async function ensureQbittorrentLogin(baseUrl, qbSettings, options = {}) {
+            const { throwOnFail = false } = options;
+            if (!qbSettings?.username || !qbSettings?.password) {
+                return true;
             }
-
-            function cleanup() {
-                if (mask.parentNode) {
-                    mask.parentNode.removeChild(mask);
-                }
-                document.removeEventListener('keydown', handleKeydown);
-            }
-
-            function finish(result) {
-                if (finished) return;
-                finished = true;
-                cleanup();
-                resolve(result);
-            }
-
-            document.addEventListener('keydown', handleKeydown);
-        });
-    }
-
-    async function ensureQbittorrentLogin(baseUrl, qbSettings, options = {}) {
-        const { throwOnFail = false } = options;
-        if (!qbSettings?.username || !qbSettings?.password) {
-            return true;
-        }
-        const body = new URLSearchParams();
-        body.set('username', qbSettings.username);
-        body.set('password', qbSettings.password);
-        try {
-            const resp = await gmCompatibleFetch(baseUrl + '/api/v2/auth/login', {
-                method: 'POST',
-                credentials: 'include',
-                body
-            });
-            if (!resp.ok) {
-                const errMsg = 'HTTP ' + resp.status;
-                if (throwOnFail) {
-                    throw new Error('登錄失敗：' + errMsg);
-                }
-                console.error('草榴Manager: qBittorrent 登錄失敗', errMsg);
-                return false;
-            }
-            const text = (await resp.text()).trim().toLowerCase();
-            if (text.includes('fail')) {
-                if (throwOnFail) {
-                    throw new Error('登錄失敗，請確認帳號密碼');
-                }
-                console.error('草榴Manager: qBittorrent 登錄失敗 - 憑證錯誤');
-                return false;
-            }
-            return true;
-        } catch (err) {
-            if (throwOnFail) {
-                throw err;
-            }
-            console.error('草榴Manager: qBittorrent 登錄失敗', err);
-            return false;
-        }
-    }
-
-    async function testQbittorrentConnectivity(settings) {
-        if (!settings?.qb?.baseUrl) {
-            throw new Error('請先填寫 qBittorrent WebUI 地址。');
-        }
-        const base = settings.qb.baseUrl.replace(/\/+$/, '');
-        appendQbLog('開始測試 qBittorrent 連線：' + base, 'info');
-        await ensureQbittorrentLogin(base, settings.qb, { throwOnFail: true });
-        try {
-            const resp = await gmCompatibleFetch(base + '/api/v2/app/version', {
-                method: 'GET',
-                credentials: 'include'
-            });
-            if (!resp.ok) {
-                throw new Error('HTTP ' + resp.status);
-            }
-            const version = (await resp.text()).trim();
-            appendQbLog('連線測試成功，版本：' + (version || 'Unknown'), 'success');
-            return version || 'Unknown';
-        } catch (err) {
-            const msg = err?.message || err;
-            appendQbLog('連線測試失敗：' + msg, 'error');
-            throw new Error('連線失敗：' + msg);
-        }
-    }
-
-    /**
-     * 對外導出：調用 qBittorrent 添加種子 / 磁力的函數
-     * 可在 console 中調用：
-     *   window.草榴ManagerSendToQb('magnet:?xt=urn:btih:....', '某個預設ID');
-     */
-    async function sendToQbittorrent(torrentSource, presetId) {
-        const settings = loadSettings();
-        const sourceDescriptor = typeof torrentSource === 'string'
-            ? torrentSource
-            : (torrentSource?.filename || torrentSource?.url || '');
-        const resourceLabel = summarizeResource(sourceDescriptor);
-        appendQbLog('收到下載請求：' + resourceLabel, 'info');
-        if (!settings.qb.enabled) {
-            appendQbLog('qBittorrent 集成未啟用，已取消請求。', 'warning');
-            showToast('請先在設置中啟用 qBittorrent 集成。', 'warning');
-            return false;
-        }
-        if (!settings.qb.baseUrl) {
-            appendQbLog('未配置 qBittorrent WebUI 地址，已取消請求。', 'warning');
-            showToast('請在設置中填寫 qBittorrent WebUI 地址。', 'warning');
-            return false;
-        }
-
-        const base = settings.qb.baseUrl.replace(/\/+$/, '');
-        appendQbLog('使用 WebUI 地址：' + base, 'info');
-
-        try {
-            await ensureQbittorrentLogin(base, settings.qb, { throwOnFail: true });
-            appendQbLog('與 qBittorrent 會話建立成功。', 'success');
-        } catch (err) {
-            const msg = err?.message || err;
-            appendQbLog('登入 qBittorrent 失敗：' + msg, 'error');
-            showToast('登入 qBittorrent 失敗：' + msg, 'error');
-            return false;
-        }
-
-        let preset = null;
-        if (presetId) {
-            preset = (settings.qb.savePresets || []).find(p => p.id === presetId);
-        }
-        if (!preset) {
-            preset = settings.qb.savePresets && settings.qb.savePresets[0];
-        }
-
-        if (!preset) {
-            appendQbLog('沒有可用的儲存位置預設，請先在設置中新增。', 'warning');
-            showToast('請先新增儲存位置預設。', 'warning');
-            return false;
-        }
-
-        appendQbLog('使用儲存預設：' + (preset.name || preset.id || '未命名') +
-            (preset.savePath ? ` | 路徑：${preset.savePath}` : ''), 'info');
-
-        const isBinaryPayload = typeof torrentSource === 'object' && !!torrentSource?.torrentBinary;
-        let torrentUrl = null;
-        let qbPayload = null;
-
-        if (isBinaryPayload) {
-            const buffer = ensureArrayBuffer(torrentSource.torrentBinary);
-            if (!buffer || !buffer.byteLength) {
-                appendQbLog('種子文件內容無效，已取消。', 'error');
-                showToast('種子文件內容無效，無法發送。', 'error');
-                return false;
-            }
-            const blob = new Blob([buffer], { type: 'application/x-bittorrent' });
-            qbPayload = new FormData();
-            qbPayload.append('torrents', blob, torrentSource.filename || 'download.torrent');
-            appendQbLog('已取得種子文件，準備以上傳方式提交。', 'info');
-        } else {
-            torrentUrl = typeof torrentSource === 'string' ? torrentSource : torrentSource?.url;
-            if (!torrentUrl) {
-                appendQbLog('缺少有效的下載地址，已取消。', 'error');
-                showToast('沒有可用的下載地址。', 'error');
-                return false;
-            }
-            qbPayload = new URLSearchParams();
-            qbPayload.append('urls', torrentUrl);
-            appendQbLog('將以遠程 URL 方式提交種子。', 'info');
-        }
-
-        const appendCommonField = (key, value) => {
-            if (!value) return;
-            qbPayload.append(key, value);
-        };
-        appendCommonField('category', settings.qb.defaultCategory);
-        appendCommonField('savepath', preset.savePath);
-        appendCommonField('tags', preset.tags);
-
-        appendQbLog(isBinaryPayload ? '正在以上傳方式向 qBittorrent 發送種子…' : '正在向 qBittorrent 發送下載請求…', 'info');
-
-        // 尝试发送请求，如果失败则重试一次（重新登录后）
-        let lastError = null;
-        for (let attempt = 0; attempt < 2; attempt++) {
-            if (attempt > 0) {
-                appendQbLog('請求失敗，嘗試重新登錄後重試…', 'info');
-                try {
-                    await ensureQbittorrentLogin(base, settings.qb, { throwOnFail: true });
-                    appendQbLog('重新登錄成功，正在重試…', 'success');
-                } catch (loginErr) {
-                    appendQbLog('重新登錄失敗：' + (loginErr?.message || loginErr), 'error');
-                    break;
-                }
-            }
-
+            const body = new URLSearchParams();
+            body.set('username', qbSettings.username);
+            body.set('password', qbSettings.password);
             try {
-                const resp = await gmCompatibleFetch(base + '/api/v2/torrents/add', {
+                const resp = await gmCompatibleFetch(baseUrl + '/api/v2/auth/login', {
                     method: 'POST',
                     credentials: 'include',
-                    body: qbPayload
+                    body
                 });
-                const bodyText = (await resp.text()).trim();
-                const lowered = bodyText.toLowerCase();
-                
-                if (!resp.ok || lowered.includes('fail')) {
-                    const msg = `HTTP ${resp.status}` + (bodyText ? `，響應：${bodyText}` : '');
-                    lastError = msg;
-                    
-                    // 检查是否是任务已存在的情况（HTTP 200 + "Fails."）
-                    // qBittorrent 在任务已存在时会返回 HTTP 200 但响应内容是 "Fails."
-                    if (resp.status === 200 && (bodyText === 'Fails.' || lowered === 'fails.')) {
-                        // 这通常意味着任务已存在，不是真正的错误
-                        appendQbLog('qBittorrent 回覆：任務可能已存在（' + bodyText + '）。請在 qBittorrent 客戶端檢查是否已有該下載任務。', 'warning');
-                        showToast('任務可能已存在於 qBittorrent 中，請在客戶端確認。', 'warning');
-                        return true; // 返回 true，因为这不是真正的错误
+                if (!resp.ok) {
+                    const errMsg = 'HTTP ' + resp.status;
+                    if (throwOnFail) {
+                        throw new Error('登錄失敗：' + errMsg);
                     }
-                    
-                    // 如果是第一次尝试且响应是"Fails."，尝试重新登录后重试
-                    if (attempt === 0 && lowered.includes('fail') && resp.status === 200) {
-                        appendQbLog('下載請求被拒：' + msg + '，將嘗試重新登錄後重試…', 'warning');
-                        continue; // 重试
-                    }
-                    
-                    // 第二次尝试仍然失败，或者不是认证问题
-                    let errorDetail = msg;
-                    if (lowered.includes('fail')) {
-                        if (!isBinaryPayload && torrentUrl) {
-                            errorDetail += '。可能原因：1) 磁力鏈接無效或無法訪問；2) qBittorrent 無法連接到該 URL；3) 種子文件已損壞。';
-                        } else if (isBinaryPayload) {
-                            errorDetail += '。可能原因：1) 種子文件格式錯誤或已損壞；2) qBittorrent 配置問題。';
-                        } else {
-                            errorDetail += '。請檢查 qBittorrent 設置和日誌。';
-                        }
-                    }
-                    appendQbLog('下載請求被拒：' + errorDetail, 'error');
-                    showToast('發送到 qBittorrent 失敗：' + msg, 'error');
+                    console.error('草榴Manager: qBittorrent 登錄失敗', errMsg);
                     return false;
                 }
-                
-                // 成功
-                appendQbLog('qBittorrent 回覆成功：' + (bodyText || 'Ok'), 'success');
-                showToast(`【${resourceLabel}】已提交至 qBittorrent，請在客戶端確認。`, 'success');
-                
-                // 在成功响应后 0.5 秒触发跳转到广告页面
-                setTimeout(() => {
+                const text = (await resp.text()).trim().toLowerCase();
+                if (text.includes('fail')) {
+                    if (throwOnFail) {
+                        throw new Error('登錄失敗，請確認帳號密碼');
+                    }
+                    console.error('草榴Manager: qBittorrent 登錄失敗 - 憑證錯誤');
+                    return false;
+                }
+                return true;
+            } catch (err) {
+                if (throwOnFail) {
+                    throw err;
+                }
+                console.error('草榴Manager: qBittorrent 登錄失敗', err);
+                return false;
+            }
+        }
+
+        async function testQbittorrentConnectivity(settings) {
+            if (!settings?.qb?.baseUrl) {
+                throw new Error('請先填寫 qBittorrent WebUI 地址。');
+            }
+            const base = settings.qb.baseUrl.replace(/\/+$/, '');
+            appendQbLog('開始測試 qBittorrent 連線：' + base, 'info');
+            await ensureQbittorrentLogin(base, settings.qb, { throwOnFail: true });
+            try {
+                const resp = await gmCompatibleFetch(base + '/api/v2/app/version', {
+                    method: 'GET',
+                    credentials: 'include'
+                });
+                if (!resp.ok) {
+                    throw new Error('HTTP ' + resp.status);
+                }
+                const version = (await resp.text()).trim();
+                appendQbLog('連線測試成功，版本：' + (version || 'Unknown'), 'success');
+                return version || 'Unknown';
+            } catch (err) {
+                const msg = err?.message || err;
+                appendQbLog('連線測試失敗：' + msg, 'error');
+                throw new Error('連線失敗：' + msg);
+            }
+        }
+
+        /**
+         * 對外導出：調用 qBittorrent 添加種子 / 磁力的函數
+         * 可在 console 中調用：
+         *   window.草榴ManagerSendToQb('magnet:?xt=urn:btih:....', '某個預設ID');
+         */
+        async function sendToQbittorrent(torrentSource, presetId) {
+            const settings = loadSettings();
+            const sourceDescriptor = typeof torrentSource === 'string'
+                ? torrentSource
+                : (torrentSource?.filename || torrentSource?.url || '');
+            const resourceLabel = summarizeResource(sourceDescriptor);
+            appendQbLog('收到下載請求：' + resourceLabel, 'info');
+            if (!settings.qb.enabled) {
+                appendQbLog('qBittorrent 集成未啟用，已取消請求。', 'warning');
+                showToast('請先在設置中啟用 qBittorrent 集成。', 'warning');
+                return false;
+            }
+            if (!settings.qb.baseUrl) {
+                appendQbLog('未配置 qBittorrent WebUI 地址，已取消請求。', 'warning');
+                showToast('請在設置中填寫 qBittorrent WebUI 地址。', 'warning');
+                return false;
+            }
+
+            const base = settings.qb.baseUrl.replace(/\/+$/, '');
+            appendQbLog('使用 WebUI 地址：' + base, 'info');
+
+            try {
+                await ensureQbittorrentLogin(base, settings.qb, { throwOnFail: true });
+                appendQbLog('與 qBittorrent 會話建立成功。', 'success');
+            } catch (err) {
+                const msg = err?.message || err;
+                appendQbLog('登入 qBittorrent 失敗：' + msg, 'error');
+                showToast('登入 qBittorrent 失敗：' + msg, 'error');
+                return false;
+            }
+
+            let preset = null;
+            if (presetId) {
+                preset = (settings.qb.savePresets || []).find(p => p.id === presetId);
+            }
+            if (!preset) {
+                preset = settings.qb.savePresets && settings.qb.savePresets[0];
+            }
+
+            if (!preset) {
+                appendQbLog('沒有可用的儲存位置預設，請先在設置中新增。', 'warning');
+                showToast('請先新增儲存位置預設。', 'warning');
+                return false;
+            }
+
+            appendQbLog('使用儲存預設：' + (preset.name || preset.id || '未命名') +
+                (preset.savePath ? ` | 路徑：${preset.savePath}` : ''), 'info');
+
+            const isBinaryPayload = typeof torrentSource === 'object' && !!torrentSource?.torrentBinary;
+            let torrentUrl = null;
+            let qbPayload = null;
+
+            if (isBinaryPayload) {
+                const buffer = ensureArrayBuffer(torrentSource.torrentBinary);
+                if (!buffer || !buffer.byteLength) {
+                    appendQbLog('種子文件內容無效，已取消。', 'error');
+                    showToast('種子文件內容無效，無法發送。', 'error');
+                    return false;
+                }
+                const blob = new Blob([buffer], { type: 'application/x-bittorrent' });
+                qbPayload = new FormData();
+                qbPayload.append('torrents', blob, torrentSource.filename || 'download.torrent');
+                appendQbLog('已取得種子文件，準備以上傳方式提交。', 'info');
+            } else {
+                torrentUrl = typeof torrentSource === 'string' ? torrentSource : torrentSource?.url;
+                if (!torrentUrl) {
+                    appendQbLog('缺少有效的下載地址，已取消。', 'error');
+                    showToast('沒有可用的下載地址。', 'error');
+                    return false;
+                }
+                qbPayload = new URLSearchParams();
+                qbPayload.append('urls', torrentUrl);
+                appendQbLog('將以遠程 URL 方式提交種子。', 'info');
+            }
+
+            const appendCommonField = (key, value) => {
+                if (!value) return;
+                qbPayload.append(key, value);
+            };
+            appendCommonField('category', settings.qb.defaultCategory);
+            appendCommonField('savepath', preset.savePath);
+            appendCommonField('tags', preset.tags);
+
+            appendQbLog(isBinaryPayload ? '正在以上傳方式向 qBittorrent 發送種子…' : '正在向 qBittorrent 發送下載請求…', 'info');
+
+            // 尝试发送请求，如果失败则重试一次（重新登录后）
+            let lastError = null;
+            for (let attempt = 0; attempt < 2; attempt++) {
+                if (attempt > 0) {
+                    appendQbLog('請求失敗，嘗試重新登錄後重試…', 'info');
                     try {
-                        // 获取 iframe（通过全局变量或参数传递）
-                        const frame = window.clmInlineDownloadWindow?.getFrame?.();
-                        if (!frame) {
-                            console.warn('草榴Manager: 无法获取 iframe，跳转可能不会发生');
-                            return;
+                        await ensureQbittorrentLogin(base, settings.qb, { throwOnFail: true });
+                        appendQbLog('重新登錄成功，正在重試…', 'success');
+                    } catch (loginErr) {
+                        appendQbLog('重新登錄失敗：' + (loginErr?.message || loginErr), 'error');
+                        break;
+                    }
+                }
+
+                try {
+                    const resp = await gmCompatibleFetch(base + '/api/v2/torrents/add', {
+                        method: 'POST',
+                        credentials: 'include',
+                        body: qbPayload
+                    });
+                    const bodyText = (await resp.text()).trim();
+                    const lowered = bodyText.toLowerCase();
+                    
+                    if (!resp.ok || lowered.includes('fail')) {
+                        const msg = `HTTP ${resp.status}` + (bodyText ? `，響應：${bodyText}` : '');
+                        lastError = msg;
+                        
+                        // 检查是否是任务已存在的情况（HTTP 200 + "Fails."）
+                        // qBittorrent 在任务已存在时会返回 HTTP 200 但响应内容是 "Fails."
+                        if (resp.status === 200 && (bodyText === 'Fails.' || lowered === 'fails.')) {
+                            // 这通常意味着任务已存在，不是真正的错误
+                            appendQbLog('qBittorrent 回覆：任務可能已存在（' + bodyText + '）。請在 qBittorrent 客戶端檢查是否已有該下載任務。', 'warning');
+                            showToast('任務可能已存在於 qBittorrent 中，請在客戶端確認。', 'warning');
+                            return true; // 返回 true，因为这不是真正的错误
                         }
                         
-                        const iframeWindow = frame.contentWindow;
-                        const iframeDoc = frame.contentDocument || iframeWindow.document;
+                        // 如果是第一次尝试且响应是"Fails."，尝试重新登录后重试
+                        if (attempt === 0 && lowered.includes('fail') && resp.status === 200) {
+                            appendQbLog('下載請求被拒：' + msg + '，將嘗試重新登錄後重試…', 'warning');
+                            continue; // 重试
+                        }
                         
-                        // 提取 poData
-                        let poData = null;
-                        
-                        // 方法1: 直接从 window 对象获取
-                        if (iframeWindow.poData && Array.isArray(iframeWindow.poData) && iframeWindow.poData.length > 0) {
-                            poData = iframeWindow.poData;
-                        } else {
-                            // 方法2: 从 script 标签中提取 poData
-                            const scripts = iframeDoc.querySelectorAll('script');
-                            for (let script of scripts) {
-                                const scriptText = script.textContent || script.innerHTML;
-                                // 查找 poJson 的定义（支持单引号和双引号）
-                                const poJsonMatch = scriptText.match(/var\s+poJson\s*=\s*['"]([^'"]+)['"]/);
-                                if (poJsonMatch) {
-                                    try {
-                                        // 处理转义字符
-                                        let poJson = poJsonMatch[1]
-                                            .replace(/\\\//g, '/')
-                                            .replace(/\\"/g, '"')
-                                            .replace(/\\'/g, "'")
-                                            .replace(/\\\\/g, '\\');
-                                        const parsed = JSON.parse(poJson);
-                                        if (Array.isArray(parsed) && parsed.length > 0) {
-                                            poData = parsed;
-                                            break;
+                        // 第二次尝试仍然失败，或者不是认证问题
+                        let errorDetail = msg;
+                        if (lowered.includes('fail')) {
+                            if (!isBinaryPayload && torrentUrl) {
+                                errorDetail += '。可能原因：1) 磁力鏈接無效或無法訪問；2) qBittorrent 無法連接到該 URL；3) 種子文件已損壞。';
+                            } else if (isBinaryPayload) {
+                                errorDetail += '。可能原因：1) 種子文件格式錯誤或已損壞；2) qBittorrent 配置問題。';
+                            } else {
+                                errorDetail += '。請檢查 qBittorrent 設置和日誌。';
+                            }
+                        }
+                        appendQbLog('下載請求被拒：' + errorDetail, 'error');
+                        showToast('發送到 qBittorrent 失敗：' + msg, 'error');
+                        return false;
+                    }
+                    
+                    // 成功
+                    appendQbLog('qBittorrent 回覆成功：' + (bodyText || 'Ok'), 'success');
+                    // 提示文案中去掉資源標題，避免在不同編碼頁面下出現亂碼
+                    showToast('下載任務已提交至 qBittorrent，請在客戶端確認。', 'success');
+                    
+                    // 在成功响应后 0.5 秒触发跳转到广告页面
+                    setTimeout(() => {
+                        try {
+                            // 获取 iframe（通过全局变量或参数传递）
+                            const frame = window.clmInlineDownloadWindow?.getFrame?.();
+                            if (!frame) {
+                                console.warn('草榴Manager: 无法获取 iframe，跳转可能不会发生');
+                                return;
+                            }
+                            
+                            const iframeWindow = frame.contentWindow;
+                            const iframeDoc = frame.contentDocument || iframeWindow.document;
+                            
+                            // 提取 poData
+                            let poData = null;
+                            
+                            // 方法1: 直接从 window 对象获取
+                            if (iframeWindow.poData && Array.isArray(iframeWindow.poData) && iframeWindow.poData.length > 0) {
+                                poData = iframeWindow.poData;
+                            } else {
+                                // 方法2: 从 script 标签中提取 poData
+                                const scripts = iframeDoc.querySelectorAll('script');
+                                for (let script of scripts) {
+                                    const scriptText = script.textContent || script.innerHTML;
+                                    // 查找 poJson 的定义（支持单引号和双引号）
+                                    const poJsonMatch = scriptText.match(/var\s+poJson\s*=\s*['"]([^'"]+)['"]/);
+                                    if (poJsonMatch) {
+                                        try {
+                                            // 处理转义字符
+                                            let poJson = poJsonMatch[1]
+                                                .replace(/\\\//g, '/')
+                                                .replace(/\\"/g, '"')
+                                                .replace(/\\'/g, "'")
+                                                .replace(/\\\\/g, '\\');
+                                            const parsed = JSON.parse(poJson);
+                                            if (Array.isArray(parsed) && parsed.length > 0) {
+                                                poData = parsed;
+                                                break;
+                                            }
+                                        } catch (e) {
+                                            console.warn('草榴Manager: 解析 poJson 失败', e);
                                         }
-                                    } catch (e) {
-                                        console.warn('草榴Manager: 解析 poJson 失败', e);
                                     }
+                                }
+                                
+                                // 方法3: 如果 poData 为空，尝试从 rmData 获取
+                                if (!poData && iframeWindow.rmData && Array.isArray(iframeWindow.rmData) && iframeWindow.rmData.length > 0) {
+                                    poData = iframeWindow.rmData;
                                 }
                             }
                             
-                            // 方法3: 如果 poData 为空，尝试从 rmData 获取
-                            if (!poData && iframeWindow.rmData && Array.isArray(iframeWindow.rmData) && iframeWindow.rmData.length > 0) {
-                                poData = iframeWindow.rmData;
+                            // 如果找到了 poData，触发跳转
+                            if (poData && poData.length > 0) {
+                                const randomIndex = Math.floor(Math.random() * poData.length);
+                                const adUrl = poData[randomIndex].u;
+                                if (adUrl) {
+                                    console.log('草榴Manager: qBittorrent 成功响应，跳转到广告页面:', adUrl);
+                                    iframeWindow.location.href = adUrl;
+                                }
+                            } else {
+                                console.warn('草榴Manager: 未找到 poData，跳转可能不会发生');
                             }
+                        } catch (e) {
+                            console.warn('草榴Manager: 跳转失败', e);
                         }
-                        
-                        // 如果找到了 poData，触发跳转
-                        if (poData && poData.length > 0) {
-                            const randomIndex = Math.floor(Math.random() * poData.length);
-                            const adUrl = poData[randomIndex].u;
-                            if (adUrl) {
-                                console.log('草榴Manager: qBittorrent 成功响应，跳转到广告页面:', adUrl);
-                                iframeWindow.location.href = adUrl;
-                            }
-                        } else {
-                            console.warn('草榴Manager: 未找到 poData，跳转可能不会发生');
-                        }
-                    } catch (e) {
-                        console.warn('草榴Manager: 跳转失败', e);
+                    }, 500); // 0.5秒后触发
+                    
+                    return true;
+                } catch (e) {
+                    const msg = e?.message || e;
+                    lastError = msg;
+                    console.error('草榴Manager: 發送到 qBittorrent 時出錯', e);
+                    
+                    // 如果是第一次尝试，且可能是认证问题，则重试
+                    if (attempt === 0 && (msg.includes('401') || msg.includes('403') || msg.includes('認證') || msg.includes('登錄'))) {
+                        appendQbLog('發送過程發生錯誤：' + msg + '，將嘗試重新登錄後重試…', 'warning');
+                        continue; // 重试
                     }
-                }, 500); // 0.5秒后触发
-                
-                return true;
-            } catch (e) {
-                const msg = e?.message || e;
-                lastError = msg;
-                console.error('草榴Manager: 發送到 qBittorrent 時出錯', e);
-                
-                // 如果是第一次尝试，且可能是认证问题，则重试
-                if (attempt === 0 && (msg.includes('401') || msg.includes('403') || msg.includes('認證') || msg.includes('登錄'))) {
-                    appendQbLog('發送過程發生錯誤：' + msg + '，將嘗試重新登錄後重試…', 'warning');
-                    continue; // 重试
+                    
+                    // 其他错误或第二次尝试失败
+                    appendQbLog('發送過程發生錯誤：' + msg, 'error');
+                    showToast('發送到 qBittorrent 時出錯：' + msg, 'error');
+                    return false;
                 }
-                
-                // 其他错误或第二次尝试失败
-                appendQbLog('發送過程發生錯誤：' + msg, 'error');
-                showToast('發送到 qBittorrent 時出錯：' + msg, 'error');
-                return false;
             }
+            
+            // 如果所有重试都失败
+            if (lastError) {
+                appendQbLog('重試後仍然失敗：' + lastError, 'error');
+                showToast('發送到 qBittorrent 失敗：' + lastError, 'error');
+            }
+            return false;
         }
-        
-        // 如果所有重试都失败
-        if (lastError) {
-            appendQbLog('重試後仍然失敗：' + lastError, 'error');
-            showToast('發送到 qBittorrent 失敗：' + lastError, 'error');
+
+        // 開始一次靜默 WebDAV 同步（如已配置）
+        syncDownloadRecordsWithWebdav({ silent: true });
+
+        // 對外暴露到 window，方便後續與頁面其他腳本集成
+        pageWindow.草榴ManagerSendToQb = sendToQbittorrent;
+
+        // 在所有匹配頁面中創建右下角設置入口
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', createSettingsUI);
+        } else {
+            createSettingsUI();
         }
-        return false;
-    }
-
-    // 開始一次靜默 WebDAV 同步（如已配置）
-    syncDownloadRecordsWithWebdav({ silent: true });
-
-    // 對外暴露到 window，方便後續與頁面其他腳本集成
-    pageWindow.草榴ManagerSendToQb = sendToQbittorrent;
-
-    // 在所有匹配頁面中創建右下角設置入口
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', createSettingsUI);
-    } else {
-        createSettingsUI();
-    }
-})();
+    })();
 
 
