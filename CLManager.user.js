@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         草榴Manager
 // @namespace    http://tampermonkey.net/
-// @version      1.9.26
+// @version      1.9.29
 // @description  草榴搜索/板块悬停放大封面、标题预览图、品质徽章与 qBittorrent 一键发送和下载按钮。
 // @author       truclocphung1713
 // @match        https://t66y.com/search.php*
@@ -40,10 +40,11 @@
     const downloadResolveCache = new Map();
     const DOWNLOAD_RECORDS_KEY = '草榴ManagerDownloadedThreads';
     const WEBDAV_AUTH_STORAGE_KEY = '草榴ManagerWebdavAuth';
+    const WEBDAV_AUTH_SECRET_KEY = 'clm-webdav-key-v1';
     let downloadRecordsCache = null;
     const downloadStatusListeners = new Map();
     
-    debugLog('脚本启动，版本: 1.9.26');
+    debugLog('脚本启动，版本: 1.9.29');
     debugLog('当前URL:', window.location.href);
     debugLog('User Agent:', navigator.userAgent);
 
@@ -712,6 +713,42 @@
         return settings.webdav || {};
     }
 
+    function encryptWebdavField(plain) {
+        if (!plain) return '';
+        const key = WEBDAV_AUTH_SECRET_KEY;
+        let out = '';
+        for (let i = 0; i < plain.length; i++) {
+            const c = plain.charCodeAt(i) ^ key.charCodeAt(i % key.length);
+            out += String.fromCharCode(c);
+        }
+        try {
+            return btoa(unescape(encodeURIComponent(out)));
+        } catch (e) {
+            return btoa(out);
+        }
+    }
+
+    function decryptWebdavField(cipher) {
+        if (!cipher) return '';
+        let decoded = '';
+        try {
+            decoded = decodeURIComponent(escape(atob(cipher)));
+        } catch (e) {
+            try {
+                decoded = atob(cipher);
+            } catch (e2) {
+                return '';
+            }
+        }
+        const key = WEBDAV_AUTH_SECRET_KEY;
+        let out = '';
+        for (let i = 0; i < decoded.length; i++) {
+            const c = decoded.charCodeAt(i) ^ key.charCodeAt(i % key.length);
+            out += String.fromCharCode(c);
+        }
+        return out;
+    }
+
     function loadWebdavAuth() {
         try {
             let raw = '';
@@ -723,6 +760,12 @@
             if (raw) {
                 const parsed = JSON.parse(raw);
                 if (parsed && typeof parsed === 'object') {
+                    if (parsed.v === 1) {
+                        return {
+                            username: decryptWebdavField(parsed.username || ''),
+                            password: decryptWebdavField(parsed.password || '')
+                        };
+                    }
                     return {
                         username: parsed.username || '',
                         password: parsed.password || ''
@@ -737,8 +780,9 @@
 
     function saveWebdavAuth(auth) {
         const payload = {
-            username: (auth && auth.username) || '',
-            password: (auth && auth.password) || ''
+            v: 1,
+            username: encryptWebdavField((auth && auth.username) || ''),
+            password: encryptWebdavField((auth && auth.password) || '')
         };
         const serialized = JSON.stringify(payload);
         try {
@@ -4410,6 +4454,7 @@
             overlay.classList.remove('clm-active');
             // 移除手机端特殊class
             document.body.classList.remove('clm-mobile-gallery');
+            document.documentElement.classList.remove('clm-mobile-gallery-root');
             viewerImg.removeAttribute('src');
             resetImageTransform();
             currentThreadKey = null;
@@ -4427,6 +4472,7 @@
             const isMobileLayout = isMobilePage() || window.innerWidth <= 768;
             if (isMobileLayout) {
                 document.body.classList.add('clm-mobile-gallery');
+                document.documentElement.classList.add('clm-mobile-gallery-root');
             }
             items = [];
             currentIndex = 0;
@@ -4476,6 +4522,7 @@
             if (isMobileLayout) {
                 debugLog('添加clm-mobile-gallery类到body');
                 document.body.classList.add('clm-mobile-gallery');
+                document.documentElement.classList.add('clm-mobile-gallery-root');
                 debugLog('body.classList:', Array.from(document.body.classList));
             } else {
                 debugLog('不是手机端，不添加clm-mobile-gallery类');
@@ -7413,6 +7460,12 @@
     if (isMobile) {
         // 手机端画廊模式适配 - 抖音短视频风格
         injectStyle(`
+            html.clm-mobile-gallery-root,
+            html.clm-mobile-gallery-root body {
+                overflow: hidden !important;
+                overscroll-behavior: none !important;
+                height: 100% !important;
+            }
             body.clm-mobile-gallery {
                 overflow: hidden !important;
                 overscroll-behavior: contain !important;
@@ -8311,6 +8364,10 @@
                 box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
                 user-select: none;
             }
+            .clm-settings-btn.clm-settings-btn-hidden {
+                opacity: 0;
+                pointer-events: none;
+            }
             .clm-settings-btn:hover {
                 background: rgba(0, 0, 0, 0.85);
             }
@@ -8513,6 +8570,7 @@
         btn.className = 'clm-settings-btn';
         btn.textContent = '草榴Manager 設置';
         btn.addEventListener('click', () => {
+            btn.classList.add('clm-settings-btn-hidden');
             openSettingsPanel();
         });
         document.body.appendChild(btn);
@@ -8520,6 +8578,7 @@
 
     function openSettingsPanel() {
         const settings = loadSettings();
+        const settingsBtn = document.querySelector('.clm-settings-btn');
         let logUnsubscribe = null;
         let connectivityStatusEl = null;
         let webdavStatusEl = null;
@@ -8556,9 +8615,10 @@
                 logUnsubscribe();
                 logUnsubscribe = null;
             }
-            if (mask.parentNode) {
-                mask.parentNode.removeChild(mask);
+            if (settingsBtn) {
+                settingsBtn.classList.remove('clm-settings-btn-hidden');
             }
+            mask.remove();
         }
 
         const header = document.createElement('div');
@@ -8793,6 +8853,11 @@
         webdavSyncRow.appendChild(webdavSyncBtn);
         webdavSyncRow.appendChild(webdavStatus);
         body.appendChild(webdavSyncRow);
+
+        const webdavSafeNote = document.createElement('div');
+        webdavSafeNote.className = 'clm-test-status';
+        webdavSafeNote.textContent = '安全說明：WebDAV 賬號密碼在保存前會使用本機固定密鑰進行 XOR+Base64 對稱加密，僅存放於瀏覽器本地（腳本存儲 / localStorage），主要用於避免明文直接暴露；不會寫入同步到 WebDAV 的數據文件，也不會發送給除目標 WebDAV 服務以外的第三方。請避免在公共或不可信設備上保存密碼。';
+        body.appendChild(webdavSafeNote);
 
         function openQbLogDialog() {
             const logMask = document.createElement('div');
