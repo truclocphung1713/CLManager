@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         草榴Manager
 // @namespace    http://tampermonkey.net/
-// @version      1.9.25
+// @version      1.9.26
 // @description  草榴搜索/板块悬停放大封面、标题预览图、品质徽章与 qBittorrent 一键发送和下载按钮。
 // @author       truclocphung1713
 // @match        https://t66y.com/search.php*
@@ -43,7 +43,7 @@
     let downloadRecordsCache = null;
     const downloadStatusListeners = new Map();
     
-    debugLog('脚本启动，版本: 1.9.25');
+    debugLog('脚本启动，版本: 1.9.26');
     debugLog('当前URL:', window.location.href);
     debugLog('User Agent:', navigator.userAgent);
 
@@ -3198,6 +3198,7 @@
             let topicTouchStartY = 0;
             let topicIsTouchDragging = false;
             let topicTouchFromBody = false;
+            let topicBodyScrollStart = 0;
             
             // 桌面端：鼠标拖动
             topicPanel.addEventListener('mousedown', (e) => {
@@ -3248,23 +3249,25 @@
             topicPanel.addEventListener('touchstart', (e) => {
                 if (e.touches.length !== 1) return;
                 const target = e.target;
-                // 在可滚动内容区域内开始触摸时，不启用抽屉手势，避免与内容滚动冲突
-                if (target.closest('.clm-gallery-panel-body')) {
-                    topicTouchFromBody = true;
-                    topicTouchStartY = 0;
-                    topicIsTouchDragging = false;
-                    return;
-                }
-                topicTouchFromBody = false;
+                topicTouchFromBody = !!target.closest('.clm-gallery-panel-body');
                 topicTouchStartY = e.touches[0].clientY;
                 topicIsTouchDragging = false;
+                topicBodyScrollStart = topicTouchFromBody ? (topicBody.scrollTop || 0) : 0;
             }, { passive: true });
 
             topicPanel.addEventListener('touchmove', (e) => {
-                if (topicTouchFromBody || topicTouchStartY === 0) return;
+                if (topicTouchStartY === 0) return;
                 const currentY = e.touches[0].clientY;
-                const moveDistance = Math.abs(currentY - topicTouchStartY);
+                const deltaY = currentY - topicTouchStartY;
+                const moveDistance = Math.abs(deltaY);
                 if (moveDistance > 10) {
+                    const isExpanded = topicPanel.classList.contains('clm-topic-expanded');
+                    if (topicTouchFromBody) {
+                        const atTop = (topicBody.scrollTop || 0) <= 0 && topicBodyScrollStart <= 0;
+                        if (!(isExpanded && atTop && deltaY > 0)) {
+                            return;
+                        }
+                    }
                     topicIsTouchDragging = true;
                     // 阻止背景页面跟随滚动
                     e.preventDefault();
@@ -3272,9 +3275,11 @@
             }, { passive: false });
 
             topicPanel.addEventListener('touchend', (e) => {
-                if (topicTouchFromBody || topicTouchStartY === 0) {
+                if (topicTouchStartY === 0) {
                     topicTouchStartY = 0;
                     topicIsTouchDragging = false;
+                    topicTouchFromBody = false;
+                    topicBodyScrollStart = 0;
                     return;
                 }
 
@@ -3300,6 +3305,8 @@
 
                 topicTouchStartY = 0;
                 topicIsTouchDragging = false;
+                topicTouchFromBody = false;
+                topicBodyScrollStart = 0;
             });
         }
 
@@ -7406,6 +7413,10 @@
     if (isMobile) {
         // 手机端画廊模式适配 - 抖音短视频风格
         injectStyle(`
+            body.clm-mobile-gallery {
+                overflow: hidden !important;
+                overscroll-behavior: contain !important;
+            }
             /* 手机端画廊模式 - 抖音风格布局 - 覆盖所有桌面端样式 */
             body.clm-mobile-gallery .clm-gallery-overlay {
                 padding: 0 !important;
