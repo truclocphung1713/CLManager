@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         草榴Manager
 // @namespace    http://tampermonkey.net/
-// @version      1.9.29
+// @version      1.9.30
 // @description  草榴搜索/板块悬停放大封面、标题预览图、品质徽章与 qBittorrent 一键发送和下载按钮。
 // @author       truclocphung1713
 // @match        https://t66y.com/search.php*
@@ -44,7 +44,7 @@
     let downloadRecordsCache = null;
     const downloadStatusListeners = new Map();
     
-    debugLog('脚本启动，版本: 1.9.29');
+    debugLog('脚本启动，版本: 1.9.30');
     debugLog('当前URL:', window.location.href);
     debugLog('User Agent:', navigator.userAgent);
 
@@ -9050,6 +9050,9 @@
         saveBtn.addEventListener('click', () => {
             settings.qb.enabled = enableCheckbox.checked;
             saveSettings(settings);
+            if (settings.webdav) {
+                saveWebdavAuth(webdavAuthDraft);
+            }
             if (settings.webdav && settings.webdav.enabled) {
                 scheduleWebdavSync();
             }
