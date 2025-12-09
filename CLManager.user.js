@@ -1,7 +1,7 @@
     // ==UserScript==
     // @name         草榴Manager
     // @namespace    http://tampermonkey.net/
-    // @version      1.9.38
+    // @version      1.9.39
     // @description  草榴搜索/板块悬停放大封面、标题预览图、品质徽章与 qBittorrent 一键发送和下载按钮。
     // @author       truclocphung1713
     // @match        https://t66y.com/search.php*
@@ -7191,6 +7191,128 @@
             getTailControls();
 
             // 将搜索结果转换为卡片布局
+            const SEARCH_FORM_BACKUP_KEY = 'clmSearchFormBackup';
+
+            const saveSearchFormBackup = (params) => {
+                try {
+                    localStorage.setItem(SEARCH_FORM_BACKUP_KEY, JSON.stringify(params));
+                } catch (e) {
+                    console.warn('草榴Manager: 保存搜索表单备份失败', e);
+                }
+            };
+
+            const loadSearchFormBackup = () => {
+                try {
+                    const raw = localStorage.getItem(SEARCH_FORM_BACKUP_KEY);
+                    if (!raw) return null;
+                    const parsed = JSON.parse(raw);
+                    return parsed && typeof parsed === 'object' ? parsed : null;
+                } catch (e) {
+                    console.warn('草榴Manager: 读取搜索表单备份失败', e);
+                    return null;
+                }
+            };
+
+            function collectFormParams(formEl) {
+                const params = new URLSearchParams();
+                params.set('step', '2');
+                params.set('s_type', 'forum');
+
+                const getVal = (selector, attr = 'value', trim = true) => {
+                    const el = formEl ? formEl.querySelector(selector) : document.querySelector(selector);
+                    if (!el) return '';
+                    let v = attr === 'checked' ? (el.checked ? '1' : '') : (el[attr] ?? '');
+                    if (trim && typeof v === 'string') v = v.trim();
+                    return v;
+                };
+                const getRadio = (name, defVal = '') => {
+                    const el = formEl ? formEl.querySelector(`input[name="${name}"]:checked`) : document.querySelector(`input[name="${name}"]:checked`);
+                    if (el && el.value) return el.value;
+                    const any = formEl ? formEl.querySelector(`input[name="${name}"]`) : document.querySelector(`input[name="${name}"]`);
+                    return any?.value || defVal;
+                };
+                const getSelect = (name, defVal = '') => {
+                    const el = formEl ? formEl.querySelector(`select[name="${name}"]`) : document.querySelector(`select[name="${name}"]`);
+                    return (el && el.value) ? el.value : defVal;
+                };
+
+                const keyword = getVal('input[name="keyword"]');
+                const f_fid = getSelect('f_fid');
+                const sch_area = getRadio('sch_area', '0');
+                const sch_time = getSelect('sch_time', 'all');
+                const method = getRadio('method', 'AND');
+                const orderway = getSelect('orderway', 'postdate');
+                const asc = getRadio('asc', 'DESC');
+                const pwuser = getVal('input[name="pwuser"]');
+                const digest = getVal('input[name="digest"]', 'checked');
+
+                if (keyword) params.set('keyword', keyword);
+                if (f_fid) params.set('f_fid', f_fid);
+                if (sch_area) params.set('sch_area', sch_area);
+                if (sch_time) params.set('sch_time', sch_time);
+                if (method) params.set('method', method);
+                if (orderway) params.set('orderway', orderway);
+                if (asc) params.set('asc', asc);
+                if (pwuser) params.set('pwuser', pwuser);
+                if (digest) params.set('digest', '1');
+
+                return params;
+            }
+
+            // 绑定手机端/搜索页表单，提交时记录搜索参数，便于无查询串的结果页补齐
+            function bindSearchFormBackup() {
+                const forms = document.querySelectorAll('form[action*="search.php"]');
+                forms.forEach((form) => {
+                    if (form.__clmBackupBound) return;
+                    form.__clmBackupBound = true;
+                    form.addEventListener('submit', () => {
+                        const params = collectFormParams(form);
+                        const plain = {};
+                        for (const [k, v] of params.entries()) {
+                            plain[k] = v;
+                        }
+                        saveSearchFormBackup(plain);
+                    }, true);
+                });
+            }
+
+            // 构造搜索参数：优先用 URL 查询串；无查询串时，从页面上的搜索表单控件读取；再无则读上次提交备份
+            function buildSearchParamsForSearchPage() {
+                try {
+                    const currentParams = new URLSearchParams(window.location.search || '');
+                    // 如果已有关键字段，直接返回
+                    if (currentParams.has('keyword') || currentParams.has('step') || currentParams.has('sid')) {
+                        return currentParams;
+                    }
+                } catch (e) {
+                    // ignore
+                }
+
+                // 1) 试图从当前页面控件读取
+                const paramsFromForm = collectFormParams(null);
+                const hasKeyword = paramsFromForm.has('keyword');
+                if (hasKeyword) return paramsFromForm;
+
+                // 2) 回退到上次提交时记录的表单
+                const backup = loadSearchFormBackup();
+                if (backup) {
+                    const params = new URLSearchParams();
+                    Object.entries(backup).forEach(([k, v]) => {
+                        if (v) params.set(k, v);
+                    });
+                    // 确保必要字段
+                    if (!params.has('step')) params.set('step', '2');
+                    if (!params.has('s_type')) params.set('s_type', 'forum');
+                    return params;
+                }
+
+                // 3) 最终兜底：只返回基础参数
+                const params = new URLSearchParams();
+                params.set('step', '2');
+                params.set('s_type', 'forum');
+                return params;
+            }
+
             function convertSearchToCards() {
                 const search = window.location.search || '';
                 let isSearchResultPage = false;
@@ -7204,19 +7326,26 @@
                 } catch (e) {
                     debugLog('convertSearchToCards: 解析 URLSearchParams 失败，fallback 到内容检测', e);
                 }
+
+                const tableContainer = document.querySelector('div.t');
+                const table = tableContainer?.querySelector('table');
+                const rows = table
+                    ? Array.from(table.querySelectorAll('tr.tr3')).filter(row =>
+                        row.querySelector('a[href*="htm_data"], a[href*="htm_mob"], a[href*="read.php?tid="]')
+                    )
+                    : [];
+
+                // 兼容没有 querystring（POST 提交）的搜索结果页：通过页面结构检测
+                if (!isSearchResultPage && rows.length > 0) {
+                    isSearchResultPage = true;
+                }
+
                 if (!isSearchResultPage) {
                     debugLog('convertSearchToCards: 检测到搜索选项页或非结果页，跳过转换', search);
                     return;
                 }
 
-                const tableContainer = document.querySelector('div.t');
-                if (!tableContainer) return;
-                const table = tableContainer.querySelector('table');
-                if (!table || table.dataset.clmConverted === '1') return;
-
-                const rows = Array.from(table.querySelectorAll('tr.tr3')).filter(row =>
-                    row.querySelector('a[href*="htm_data"], a[href*="htm_mob"], a[href*="read.php?tid="]')
-                );
+                if (!tableContainer || !table || table.dataset.clmConverted === '1') return;
                 if (rows.length === 0) {
                     debugLog('convertSearchToCards: 未找到包含帖子链接的结果行，跳过');
                     return;
@@ -7377,6 +7506,26 @@
                             return;
                         }
 
+                        // 兜底设图工具：直接塞一张图并处理状态
+                        const setCoverImage = (imgUrl) => {
+                            if (!imgUrl) return false;
+                            const img = document.createElement('img');
+                            img.alt = threadTitle;
+                            img.loading = 'lazy';
+                            img.src = imgUrl;
+                            coverDiv.insertBefore(img, coverDiv.firstChild);
+                            img.onload = () => {
+                                loadingDiv.remove();
+                            };
+                            img.onerror = () => {
+                                loadingDiv.textContent = '無法獲取封面';
+                            };
+                            if (img.complete && img.naturalWidth > 0) {
+                                loadingDiv.remove();
+                            }
+                            return true;
+                        };
+
                         // 內部幫助函數：給定 d 值，按統一策略從 a.gac2 加載封面
                         const loadCoverByD = (dValueToUse) => {
                             if (!dValueToUse) return;
@@ -7455,8 +7604,9 @@
                                         // 等待一段時間讓 cookie 生效，並避免觸發論壇 2 秒刷新限制
                                         await new Promise(resolve => setTimeout(resolve, 2500));
 
-                                        // 2. 构造电脑端搜索URL
-                                        const desktopSearchUrl = window.location.href.replace(/\?.*$/, '') + window.location.search;
+                                        // 2. 构造电脑端搜索URL（无查询串时从页面表单/备份补齐）
+                                        const searchParamsForPc = buildSearchParamsForSearchPage();
+                                        const desktopSearchUrl = 'https://t66y.com/search.php?' + searchParamsForPc.toString();
                                         console.log('草榴Manager: 获取电脑端搜索页:', desktopSearchUrl);
 
                                         // 3. 获取电脑端搜索页HTML
@@ -7514,7 +7664,7 @@
                                     }
                                 }
 
-                                // 如果电脑端也没有找到[圖]标签，直接標記為無圖（不再從帖子內容兜底）
+                                // 如果电脑端也没有找到[圖]标签，直接标记为无图（不再兜底抓帖子页）
                                 console.warn('草榴Manager: 电脑端搜索页也未找到[圖]标签');
                                 loadingDiv.textContent = '无图';
                             } catch (err) {
@@ -7549,11 +7699,13 @@
                 runCoverBatchesSequential();
             }
             
-            // 初始转换
+            // 初始转换 & 绑定表单备份
+            bindSearchFormBackup();
             convertSearchToCards();
             
             // 监听DOM变化
             const searchObserver = new MutationObserver(() => {
+                bindSearchFormBackup();
                 convertSearchToCards();
             });
             searchObserver.observe(document.body, { childList: true, subtree: true });
