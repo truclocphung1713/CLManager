@@ -1,7 +1,7 @@
     // ==UserScript==
     // @name         草榴Manager
     // @namespace    http://tampermonkey.net/
-    // @version      1.9.39
+    // @version      1.9.40
     // @description  草榴搜索/板块悬停放大封面、标题预览图、品质徽章与 qBittorrent 一键发送和下载按钮。
     // @author       truclocphung1713
     // @match        https://t66y.com/search.php*
@@ -3647,9 +3647,17 @@
             viewerAdsBottom.appendChild(viewerAdsBottomTitle);
             viewerAdsBottom.appendChild(viewerAdsBottomContainer);
 
-            viewerColumn.appendChild(viewerAdsTop);
-            viewerColumn.appendChild(viewer);
-            viewerColumn.appendChild(viewerAdsBottom);
+            // 手机端：将广告区域独立出来，不放在viewerColumn内
+            if (isMobilePage()) {
+                // 手机端：广告区域独立，只将viewer放入viewerColumn
+                viewerColumn.appendChild(viewer);
+                // 广告区域直接添加到layout，放在viewerColumn之前
+            } else {
+                // 桌面端：保持原有结构
+                viewerColumn.appendChild(viewerAdsTop);
+                viewerColumn.appendChild(viewer);
+                viewerColumn.appendChild(viewerAdsBottom);
+            }
 
             const commentsPanel = document.createElement('section');
             commentsPanel.className = 'clm-gallery-panel clm-gallery-panel-comments';
@@ -3672,7 +3680,7 @@
             commentsPanel.appendChild(commentsHeader);
             commentsPanel.appendChild(commentsBody);
 
-            // 手机端：为评论内容区域单独绑定触摸滚动逻辑，避免被画廊左右翻页手势“吃掉”
+            // 手机端：为评论内容区域单独绑定触摸滚动逻辑，避免被画廊左右翻页手势"吃掉"
             if (isMobilePage()) {
                 let commentsTouchStartY = 0;
                 let commentsScrollStart = 0;
@@ -3701,6 +3709,10 @@
             let mobileCommentBtn = null;
 
             layout.appendChild(topicPanel);
+            // 手机端：广告区域独立添加到layout
+            if (isMobilePage()) {
+                layout.appendChild(viewerAdsTop);
+            }
             layout.appendChild(viewerColumn);
             layout.appendChild(commentsPanel);
             
@@ -4879,8 +4891,8 @@
             function closeOverlay() {
                 overlay.classList.remove('clm-active');
                 // 移除手机端特殊class
+                const isMobileLayout = document.body.classList.contains('clm-mobile-gallery');
                 document.body.classList.remove('clm-mobile-gallery');
-                document.documentElement.classList.remove('clm-mobile-gallery-root');
 
                 // 确保手机端评论面板在关闭画廊时一并关闭
                 if (commentsPanel) {
@@ -4895,28 +4907,16 @@
                 clearGallerySourceHighlight();
                 preloadImageCache.clear();
                 closeInlineDownloadWindowIfOpen();
-
-                // 恢复手机端页面原本的滚动位置
-                if (previousScrollY !== null) {
-                    try {
-                        window.scrollTo(0, previousScrollY);
-                    } catch (e) {
-                        console.warn('草榴Manager: 恢复滚动位置失败', e);
-                    }
-                    previousScrollY = null;
-                }
             }
 
             function openLoadingState(message = '正在載入畫廊…') {
                 overlay.classList.add('clm-active');
-                // 手机端添加特殊class以应用抖音风格样式：
+                // 手机端添加特殊class以应用浮动窗口样式：
                 // 只要是手机版页面，或视口宽度较窄（<=768px），都按手机画廊布局处理
                 const isMobileLayout = isMobilePage() || window.innerWidth <= 768;
                 if (isMobileLayout) {
-                    // 记录当前页面滚动位置，稍后关闭画廊时恢复
-                    previousScrollY = window.scrollY || window.pageYOffset || document.documentElement.scrollTop || 0;
+                    // 手机端使用浮动窗口，不需要设置 body position: fixed
                     document.body.classList.add('clm-mobile-gallery');
-                    document.documentElement.classList.add('clm-mobile-gallery-root');
                 }
                 items = [];
                 currentIndex = 0;
@@ -4963,16 +4963,14 @@
                 debugLog('添加clm-active类到overlay');
                 overlay.classList.add('clm-active');
                 
-                // 手机端添加特殊class以应用抖音风格样式
+                // 手机端添加特殊class以应用浮动窗口样式
                 const isMobile = isMobilePage();
                 const isMobileLayout = isMobile || window.innerWidth <= 768;
                 debugLog('isMobilePage()返回:', isMobile, '窗口宽度:', window.innerWidth);
                 if (isMobileLayout) {
                     debugLog('添加clm-mobile-gallery类到body');
-                    // 记录当前页面滚动位置，稍后关闭画廊时恢复
-                    previousScrollY = window.scrollY || window.pageYOffset || document.documentElement.scrollTop || 0;
+                    // 手机端使用浮动窗口，不需要设置 body position: fixed
                     document.body.classList.add('clm-mobile-gallery');
-                    document.documentElement.classList.add('clm-mobile-gallery-root');
                     debugLog('body.classList:', Array.from(document.body.classList));
                 } else {
                     debugLog('不是手机端，不添加clm-mobile-gallery类');
@@ -5057,6 +5055,57 @@
             });
 
             closeBtn.addEventListener('click', () => closeOverlay());
+            // 手机端：防止画廊内滚动穿透到页面
+            overlay.addEventListener('wheel', (ev) => {
+                if (document.body.classList.contains('clm-mobile-gallery')) {
+                    // 检查滚动是否在画廊布局内
+                    const target = ev.target;
+                    const inLayout = target.closest('.clm-gallery-layout');
+                    const inAds = target.closest('.clm-gallery-ads-slot-viewer-top');
+                    const inComments = target.closest('.clm-gallery-panel-comments');
+                    
+                    // 如果滚动在画廊布局内（除了广告区域和评论面板），阻止事件冒泡
+                    if (inLayout && !inAds && !inComments) {
+                        ev.stopPropagation();
+                    }
+                }
+            }, { passive: false });
+            
+            // 手机端：防止触摸滚动穿透到页面
+            overlay.addEventListener('touchmove', (ev) => {
+                if (document.body.classList.contains('clm-mobile-gallery')) {
+                    const target = ev.target;
+                    const inLayout = target.closest('.clm-gallery-layout');
+                    const inAds = target.closest('.clm-gallery-ads-slot-viewer-top');
+                    const inComments = target.closest('.clm-gallery-panel-comments');
+                    const inViewer = target.closest('.clm-gallery-viewer');
+                    const inTopicPanel = target.closest('.clm-gallery-panel-topic');
+                    
+                    // 如果触摸在画廊布局内（除了广告区域、评论面板），阻止事件冒泡和默认行为
+                    // 图片查看器也需要阻止事件传播，避免向上滑动时触发页面滚动
+                    // 主题面板在展开状态下允许滚动，折叠状态下阻止传播
+                    if (inLayout && !inAds && !inComments) {
+                        // 如果在主题面板中，检查是否在可滚动的内容区域
+                        if (inTopicPanel) {
+                            const topicBody = target.closest('.clm-gallery-panel-body');
+                            const isTopicExpanded = inTopicPanel.classList.contains('clm-topic-expanded');
+                            // 如果主题面板展开且在内容区域，允许滚动
+                            if (isTopicExpanded && topicBody) {
+                                // 检查是否可以滚动
+                                const canScroll = topicBody.scrollHeight > topicBody.clientHeight;
+                                if (canScroll) {
+                                    // 允许滚动，不阻止事件
+                                    return;
+                                }
+                            }
+                        }
+                        // 其他情况：阻止事件传播和默认行为，防止页面滚动
+                        ev.stopPropagation();
+                        ev.preventDefault();
+                    }
+                }
+            }, { passive: false });
+            
             overlay.addEventListener('click', (ev) => {
                 if (ev.target === overlay) {
                     closeOverlay();
@@ -5165,8 +5214,19 @@
                             const scale = currentDistance / initialPinchDistance;
                             console.log('草榴Manager: 双指缩放比例:', scale);
                         }
+                    } else if (e.touches.length === 1 && !isZooming) {
+                        // 单指移动 - 如果是垂直滑动，阻止事件传播，避免触发页面滚动
+                        const currentY = e.touches[0].clientY;
+                        const deltaY = currentY - touchStartY;
+                        const absDeltaY = Math.abs(deltaY);
+                        
+                        // 如果垂直滑动距离超过阈值，阻止事件传播和默认行为
+                        if (absDeltaY > 10) {
+                            e.stopPropagation();
+                            e.preventDefault();
+                        }
                     }
-                }, { passive: true });
+                }, { passive: false });
 
                 viewer.addEventListener('touchend', (e) => {
                     if (!overlay.classList.contains('clm-active')) {
@@ -8191,36 +8251,33 @@
         // 手机端页面 - 画廊模式适配
         // 只要是手机端，就注入抖音风格样式（不限于 htm_mob 页面）
         if (isMobile) {
-            // 手机端画廊模式适配 - 抖音短视频风格
+            // 手机端画廊模式适配 - 浮动窗口风格
             injectStyle(`
-                html.clm-mobile-gallery-root,
-                html.clm-mobile-gallery-root body {
-                    overflow: hidden !important;
-                    overscroll-behavior: none !important;
-                    height: 100% !important;
-                }
-                body.clm-mobile-gallery {
-                    overflow: hidden !important;
-                    overscroll-behavior: contain !important;
-                }
-                /* 手机端画廊模式 - 抖音风格布局 - 覆盖所有桌面端样式 */
+                /* 手机端画廊模式 - 浮动窗口布局 */
                 body.clm-mobile-gallery .clm-gallery-overlay {
-                    padding: 0 !important;
-                    background: #000 !important;
-                    transform: none !important;
-                    align-items: stretch !important;
-                    justify-content: stretch !important;
+                    padding: 16px !important;
+                    background: rgba(0, 0, 0, 0.7) !important;
+                    align-items: center !important;
+                    justify-content: center !important;
+                    /* 防止滚动穿透 */
+                    overflow: hidden !important;
                 }
                 body.clm-mobile-gallery .clm-gallery-layout {
                     display: flex !important;
                     flex-direction: column !important;
                     gap: 0 !important;
-                    width: 100vw !important;
-                    height: 100vh !important;
-                    max-width: 100vw !important;
-                    max-height: 100vh !important;
+                    width: 90vw !important;
+                    max-width: 500px !important;
+                    height: 80vh !important;
+                    max-height: 600px !important;
                     position: relative !important;
                     grid-template-columns: none !important;
+                    background: #000 !important;
+                    border-radius: 12px !important;
+                    overflow: hidden !important;
+                    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5) !important;
+                    /* 防止滚动穿透 */
+                    touch-action: pan-y !important;
                 }
                 
                 /* 隐藏所有桌面端元素（手机端下保留 actions 作为下载按钮区域） */
@@ -8236,21 +8293,22 @@
                     display: none !important;
                 }
                 
-                /* 顶部广告区域 - ftad-ct（手机端：带浅色背景条，贴近顶部） */
+                /* 顶部广告区域 - 浮动窗口内，单独一个框，独立于viewerColumn */
                 body.clm-mobile-gallery .clm-gallery-ads-slot-viewer-top {
                     position: fixed !important;
-                    top: 8px !important;
+                    top: 0 !important;
                     left: 0 !important;
                     right: 0 !important;
                     width: 100% !important;
-                    max-width: 100vw !important;
                     background: #f9f9ec !important;
                     z-index: 100001 !important;
-                    padding: 6px 8px !important;
-                    max-height: 96px !important;
+                    padding: 10px 12px !important;
+                    min-height: 50px !important;
+                    max-height: 120px !important;
                     overflow-y: auto !important;
                     -webkit-overflow-scrolling: touch !important;
                     box-sizing: border-box !important;
+                    border-bottom: 2px solid rgba(0, 0, 0, 0.1) !important;
                 }
                 
                 /* 修复手机端帖子内广告样式 */
@@ -8317,17 +8375,17 @@
                 
                 /* 不再在手机端展示 sptable_info AD 小标签（DOM 层已不创建） */
                 
-                /* 关闭按钮移到顶部右上角 */
+                /* 关闭按钮移到浮动窗口右上角 */
                 body.clm-mobile-gallery .clm-gallery-close {
-                    position: fixed !important;
+                    position: absolute !important;
                     top: 8px !important;
                     right: 8px !important;
                     z-index: 100004 !important;
-                    width: 40px !important;
-                    height: 40px !important;
+                    width: 36px !important;
+                    height: 36px !important;
                     background: rgba(0, 0, 0, 0.7) !important;
                     border-radius: 50% !important;
-                    font-size: 22px !important;
+                    font-size: 20px !important;
                     border: none !important;
                     color: #fff !important;
                     display: flex !important;
@@ -8342,27 +8400,29 @@
                     background: rgba(0, 0, 0, 0.9) !important;
                 }
                 
-                /* 中央图片查看器 - 屏幕正中央 */
+                /* 中央图片查看器 - 浮动窗口内，独立于广告区域 */
                 body.clm-mobile-gallery .clm-gallery-viewer-column {
-                    position: fixed !important;
-                    left: 0 !important;
-                    top: 0 !important;
-                    width: 100vw !important;
-                    height: 100vh !important;
+                    position: relative !important;
+                    width: 100% !important;
                     display: flex !important;
                     flex-direction: column !important;
                     align-items: center !important;
                     justify-content: center !important;
                     z-index: 1 !important;
                     gap: 0 !important;
-                    min-height: 100vh !important;
+                    flex: 1 !important;
+                    min-height: 0 !important;
+                    /* 为顶部广告区域留出空间 */
+                    padding-top: 0 !important;
+                    /* 防止滚动穿透 */
+                    overflow: hidden !important;
                 }
                 
                 body.clm-mobile-gallery .clm-gallery-viewer {
                     width: 100% !important;
                     height: 100% !important;
-                    max-width: 100vw !important;
-                    max-height: 100vh !important;
+                    max-width: 100% !important;
+                    max-height: 100% !important;
                     display: flex !important;
                     align-items: center !important;
                     justify-content: center !important;
@@ -8373,8 +8433,8 @@
                 }
                 
                 body.clm-mobile-gallery .clm-gallery-viewer img {
-                    max-width: 100vw !important;
-                    max-height: 100vh !important;
+                    max-width: 100% !important;
+                    max-height: 100% !important;
                     width: auto !important;
                     height: auto !important;
                     object-fit: contain !important;
@@ -8384,9 +8444,9 @@
                     cursor: default !important;
                 }
                 
-                /* 隐藏加载指示器和其他viewer内元素，只保留图片 */
+                /* 加载指示器 */
                 body.clm-mobile-gallery .clm-gallery-loading-indicator {
-                    position: fixed !important;
+                    position: absolute !important;
                     top: 50% !important;
                     left: 50% !important;
                     transform: translate(-50%, -50%) !important;
@@ -8423,10 +8483,10 @@
                     -ms-user-select: none !important;
                 }
                 
-                /* 折叠状态下：高度约占屏幕底部四分之一，便于点击 */
+                /* 折叠状态下：高度约占屏幕底部10vh，便于点击 */
                 body.clm-mobile-gallery .clm-gallery-panel-topic.clm-topic-collapsed {
-                    min-height: 25vh !important;
-                    max-height: 25vh !important;
+                    min-height: 10vh !important;
+                    max-height: 10vh !important;
                     transform: translateY(0) !important;
                 }
                 
@@ -8485,7 +8545,7 @@
                 
                 body.clm-mobile-gallery .clm-gallery-panel-topic.clm-topic-collapsed .clm-gallery-panel-body {
                     overflow: hidden !important;
-                    max-height: 25vh !important; /* 抽屉收起时约显示屏幕 1/4 的内容 */
+                    max-height: 20vh !important; /* 抽屉收起时显示屏幕20vh的内容，与面板高度一致 */
                 }
                 
                 /* 渐变遮罩，提示下方还有更多内容（深色渐变） */
@@ -8543,13 +8603,13 @@
                 }
                 
                 /* 评论按钮样式（与下载按钮统一） */
-                .clm-mobile-comment-btn {
-                    width: 72px !important;
-                    height: 72px !important;
-                    min-width: 72px !important;
-                    max-width: 72px !important;
-                    min-height: 72px !important;
-                    max-height: 72px !important;
+                body.clm-mobile-gallery .clm-mobile-comment-btn {
+                    width: 60px !important;
+                    height: 60px !important;
+                    min-width: 60px !important;
+                    max-width: 60px !important;
+                    min-height: 60px !important;
+                    max-height: 60px !important;
                     border-radius: 50% !important;
                     background: rgba(40, 40, 40, 0.8) !important;
                     backdrop-filter: blur(10px) !important;
@@ -8568,11 +8628,11 @@
                     pointer-events: auto !important;
                     overflow: hidden !important;
                     box-sizing: border-box !important;
-                    font-size: 11px !important;
-                    font-weight: 500 !important;
+                    font-size: 10px !important;
+                    font-weight: 600 !important;
                 }
                 
-                .clm-mobile-comment-btn:active {
+                body.clm-mobile-gallery .clm-mobile-comment-btn:active {
                     transform: scale(0.9) !important;
                     background: rgba(60, 60, 60, 0.9) !important;
                 }
@@ -8720,9 +8780,9 @@
 
                 /* 手机端：将下载和评论按钮一起放在右侧中下，采用圆形样式 */
                 body.clm-mobile-gallery .clm-gallery-actions {
-                    position: fixed !important;
-                    right: 16px !important;
-                    bottom: 35% !important;
+                    position: absolute !important;
+                    right: 12px !important;
+                    bottom: 12px !important;
                     top: auto !important;
                     width: auto !important;
                     max-width: none !important;
@@ -8732,19 +8792,19 @@
                     flex-direction: column !important;
                     justify-content: center !important;
                     align-items: center !important;
-                    gap: 16px !important;
+                    gap: 12px !important;
                     z-index: 100003 !important;
                     pointer-events: none !important;
                 }
 
                 body.clm-mobile-gallery .clm-gallery-actions .clm-gallery-download-btn {
                     pointer-events: auto !important;
-                    width: 72px !important;
-                    height: 72px !important;
-                    min-width: 72px !important;
-                    max-width: 72px !important;
-                    min-height: 72px !important;
-                    max-height: 72px !important;
+                    width: 60px !important;
+                    height: 60px !important;
+                    min-width: 60px !important;
+                    max-width: 60px !important;
+                    min-height: 60px !important;
+                    max-height: 60px !important;
                     padding: 0 !important;
                     border-radius: 50% !important;
                     background: rgba(40, 40, 40, 0.8) !important;
@@ -8754,7 +8814,7 @@
                     border: 2px solid rgba(255, 255, 255, 0.25) !important;
                     color: #fff !important;
                     font-weight: 600 !important;
-                    font-size: 11px !important;
+                    font-size: 10px !important;
                     display: flex !important;
                     flex-direction: column !important;
                     align-items: center !important;
@@ -8776,10 +8836,10 @@
                     cursor: not-allowed !important;
                 }
                 
-                /* 手机端：下载窗口占满全屏 */
+                /* 手机端：下载窗口占满浮动窗口 */
                 body.clm-mobile-gallery .clm-gallery-download-preview {
                     inset: 0 !important;
-                    border-radius: 0 !important;
+                    border-radius: 12px !important;
                 }
                 
                 /* 使用媒体查询确保手机端下载窗口全屏 */
@@ -8928,10 +8988,10 @@
                     color: #e5e7eb !important;
                 }
 
-                /* 折叠状态下不再强制 25vh 高度，只让内容自己决定高度 */
+                /* 折叠状态下：高度约占屏幕底部20vh，便于点击 */
                 body.clm-mobile-gallery .clm-gallery-panel-topic.clm-topic-collapsed {
-                    min-height: 25vh !important;
-                    max-height: 25vh !important;
+                    min-height: 20vh !important;
+                    max-height: 20vh !important;
                 }
 
                 /* 画廊 viewer 区域禁止文本选中和图片拖动，避免拖动时出现选中效果 */
